@@ -1,0 +1,256 @@
+const { ReviewService: Service,FoodTruckService } = require('../services');
+const CustomNotification = require('../../helper/custom-notification');
+
+const entityName = 'Review';
+
+/**
+ * To list out or find data by id of given collection
+ * Support GET request
+ *
+ * @param req
+ * @param res
+ * @param next
+ * @returns {Promise<*>}
+ */
+exports.list = async (req, res, next) => {
+  try {
+    let {
+      query: { limit = 10, page = 1, search, foodTruckId, rate },
+      params: { id: _id },
+    } = req;
+    if (_id) {
+      let item = await Service.getById(_id);
+      return res.data(
+        { [`${entityName.toLocaleLowerCase()}`]: item },
+        `${entityName} item`
+      );
+    }
+
+    let q = {};
+    if (search && search.trim()) {
+      q = {
+        $or: [{ name: { $regex: search.trim().toLowerCase(), $options: 'i' } }],
+      };
+    }
+    if (rate) {
+      q['rate'] = rate;
+    }
+    q['foodTruckId'] = foodTruckId;
+    const data = (
+      await Service.getByData(
+        { ...q, deletedAt: null },
+        {
+          paging: { limit, page },
+          lean: true,
+          sort: { createdAt: -1 },
+          populate: [
+            {
+              path: 'userId',
+              select: { _id: 1, firstName: 1, lastName: 1, profilePic: 1 },
+            },
+          ],
+        }
+      )
+    ).map((item) => {
+      if (item && typeof item.userId === 'object') {
+        item.user = item.userId;
+        item.userId = item.user._id;
+      }
+      return item;
+    });
+
+    const total = await Service.getCount({
+      ...q,
+      deletedAt: null,
+    });
+    return res.data(
+      {
+        [`${entityName.toLocaleLowerCase()}List`]: data,
+        total,
+        page,
+        totalPages: total < limit ? 1 : Math.ceil(total / limit),
+      },
+      `${entityName} items`
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.stats = async (req, res, next) => {
+  try {
+    let {
+      query: { foodTruckId },
+    } = req;
+
+    const data = (await Service.getStats(foodTruckId))[0];
+
+    return res.data(
+      {
+        [`${entityName.toLocaleLowerCase()}Stats`]: data,
+      },
+      `${entityName} items`
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+/**
+ * To add new entry to given collection
+ * Support POST request
+ *
+ * @param req
+ * @param res
+ * @param next
+ * @returns {Promise<*>}
+ */
+exports.add = async (req, res, next) => {
+  try {
+    const {
+      body: { foodTruckId, rate, review, images, orderId },
+      user,
+    } = req;
+
+    if (orderId) {
+      const item = await Service.getByData(
+        {
+          userId: user._id,
+          orderId,
+          deletedAt: null,
+        },
+        { singleResult: true }
+      );
+
+      if (item) {
+        return res.error(
+          new Error('Can not review twice for the same order'),
+          409
+        );
+      }
+    }
+
+    const data = await Service.create({
+      foodTruckId,
+      rate,
+      review,
+      images,
+      orderId: orderId || null,
+      userId: user._id,
+    });
+
+    if (rate <= 2) { 
+    try {
+      const ft = await FoodTruckService.getById(foodTruckId);
+      if (ft) {
+          await CustomNotification.sendBadReviewNotificationToVendor(
+            { _id: ft.userId },
+            orderId,
+            foodTruckId
+          );
+        }
+        } catch (e) {}
+    }
+    
+
+    return res.data(
+      { [`${entityName.toLocaleLowerCase()}`]: data },
+      `${entityName} added`
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+/**
+ * To add new entry to given collection
+ * Support POST request
+ *
+ * @param req
+ * @param res
+ * @param next
+ * @returns {Promise<*>}
+ */
+exports.update = async (req, res, next) => {
+  try {
+    const {
+      body: { rate, review, images },
+      params: { id },
+      user,
+    } = req;
+
+    const item = await Service.getByData(
+      {
+        ...(user.userType !== 'SUPER_ADMIN' ? { userId: user._id } : {}),
+        _id: id,
+        deletedAt: null,
+      },
+      { singleResult: true }
+    );
+    if (!item) {
+      return res.error(new Error('No review found'), 409);
+    }
+
+    if (rate) {
+      item.rate = rate;
+    }
+
+    if (review) {
+      item.review = review;
+    }
+
+    if (images) {
+      item.images = images;
+    }
+
+    await item.save();
+
+    return res.data(
+      { [`${entityName.toLocaleLowerCase()}`]: item },
+      `${entityName} updated`
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+/**
+ * To add new entry to given collection
+ * Support POST request
+ *
+ * @param req
+ * @param res
+ * @param next
+ * @returns {Promise<*>}
+ */
+exports.destroy = async (req, res, next) => {
+  try {
+    const {
+      params: { id },
+      user,
+    } = req;
+
+    const item = await Service.getByData(
+      {
+        ...(user.userType !== 'SUPER_ADMIN' ? { userId: user._id } : {}),
+        _id: id,
+        deletedAt: null,
+      },
+      { singleResult: true }
+    );
+    if (!item) {
+      return res.error(new Error('No review found'), 409);
+    }
+
+    item.deletedAt = new Date().toISOString();
+
+    await item.save();
+
+    return res.data(
+      { [`${entityName.toLocaleLowerCase()}`]: item },
+      `${entityName} deleted`
+    );
+  } catch (e) {
+    return next(e);
+  }
+};

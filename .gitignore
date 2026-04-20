@@ -1,0 +1,13 @@
+/.idea
+.env
+.env.local
+.env.prod
+.env.dev
+.env.*
+!.env.example
+/node_modules
+/images
+/uploads
+naturebasket.pem
+.DS_Store
+*firebase-adminsdk*.json

@@ -1,0 +1,36 @@
+{
+  "name": "food-truck-be",
+  "version": "1.0.0",
+  "description": "Food truck backend app",
+  "main": "index.js",
+  "scripts": {
+    "start": "nodemon src/app.js"
+  },
+  "author": "Tailor",
+  "license": "MIT",
+  "dependencies": {
+    "@sendgrid/mail": "^8.1.5",
+    "authorizenet": "^1.0.10",
+    "aws-sdk": "^2.1692.0",
+    "bcrypt": "^5.1.1",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "cryptlib": "^1.0.3",
+    "dayjs": "^1.11.11",
+    "disposable-email-domains": "^1.0.62",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-validation": "^4.1.0",
+    "firebase-admin": "^13.4.0",
+    "heic-convert": "^2.1.0",
+    "http": "^0.0.1-security",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.3.3",
+    "multer": "^1.4.5-lts.1",
+    "nodemon": "^3.1.0",
+    "prettier": "^2.7.1",
+    "reshelper": "^1.0.4",
+    "sharp": "^0.34.3",
+    "uuid": "^11.1.0"
+  }
+}
