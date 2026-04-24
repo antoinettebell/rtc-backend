@@ -19,7 +19,7 @@ if (mongo.dbUser && mongo.dbPass) {
 
 /** Main connection */
 mongoose
-  .connect(connectionURL)
+  .connect(process.env.MONGO_URI)
   .then(() => {
     console.log('Database connected');
     Bootstrap.init();

@@ -544,6 +544,10 @@ exports.loginAdmin = async (req, res, next) => {
       },
       { singleResult: true }
     );
+    console.log("=== DB CHECK ===");
+    console.log("Email:", email);
+    console.log("User found:", user);
+    console.log("Password in DB:", user?.password); 
     if (user) {
       if (user.inactive) {
         customError.message = 'User is Inactive';
@@ -561,8 +565,10 @@ exports.loginAdmin = async (req, res, next) => {
         customError.message = 'You have not provided your password yet';
         throw customError;
       }
-
+      console.log("Entered password:", password);
+      console.log("Stored hash:", user.password);
       const isMatching = await bcrypt.compare(password, user.password);
+      console.log("Password match result:", isMatching);
       if (!isMatching) {
         customError.message = 'Invalid credentials';
         throw customError;
