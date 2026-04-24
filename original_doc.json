@@ -1,0 +1,25 @@
+{
+  "_id": {
+    "$oid": "6914837b63268ba84acf02fe"
+  },
+  "userId": {
+    "$oid": "691481e1ab521ebc73863cb3"
+  },
+  "__v": 0,
+  "accountHolderName": "273Bg5calHyNtNpG:KzzGx177ejakaTJWnm9t2g==",
+  "accountNumber": "kQP_H7H0Ss1HQSOm:GTnjcEwp9sXq2MTWfbBBcYc2y63oZnS4gykGGSalrqc=",
+  "accountType": "xyLfQDEwcNHUnhgA:M494RPS5TJzzfzveEYj8pw==",
+  "bankName": "61Fq97Qu77ktJlQq:L6Q+M7FmfFCSZNtknroOp2tP9Mn0xBN97oqZtBsJfyM=",
+  "createdAt": {
+    "$date": "2025-11-12T12:54:19.584Z"
+  },
+  "currency": "h1QAkC7aXsn-OVs2:WzDmdrTKlLY2oq9sWxXiKg==",
+  "iban": "a4cACCLSdVEY80Lv:4t7XzyWG3vZbt5f7Wvuk1g==",
+  "paymentMethod": "Wrx6RWkP79MR7i6N:sgSaqnRFvhJkwnHhNR+0fA==",
+  "remittanceEmail": "uQOwKPfoy4_-Cusv:l/87ewKhIzuUrYh65r/AoeFVc7dbCXhLsI9pXXpp3Yo=",
+  "routingNumber": "v8RWy6Q7SAL8KPL8:HbX+LAau9BooSLqtiapFMA==",
+  "swiftCode": "Dpq5-pmosvWbhcxV:FxJVGRlItmDlEoFAzR0vwA==",
+  "updatedAt": {
+    "$date": "2025-12-01T04:45:53.347Z"
+  }
+}

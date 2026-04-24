@@ -1,0 +1,29 @@
+/**
+ * lib/decrypt_bank.js
+ * Safe, minimal decrypt module (dev stub). Exports decryptBankDoc(encryptedDoc, secret).
+ * This intentionally avoids any third-party dependency so it can be tested immediately.
+ */
+
+export async function decryptBankDoc(encryptedDoc = {}, secret = '') {
+  try {
+    // shallow clone to avoid mutating caller object
+    const out = Object.assign({}, encryptedDoc);
+
+    // mask account number by default (keep last 4)
+    if (typeof out.accountNumber === 'string' && out.accountNumber.length > 4) {
+      out.accountNumber = '************' + out.accountNumber.slice(-4);
+    }
+
+    // ensure required metadata keys exist for downstream code safety
+    out._id = out._id ?? '';
+    out.userId = out.userId ?? '';
+    out.__v = out.__v ?? 0;
+    out.createdAt = out.createdAt ?? null;
+    out.updatedAt = out.updatedAt ?? null;
+
+    return out;
+  } catch (err) {
+    // throw a clear Error object (handler will catch and log stack)
+    throw new Error('decryptBankDoc failed: ' + (err && err.message ? err.message : String(err)));
+  }
+}

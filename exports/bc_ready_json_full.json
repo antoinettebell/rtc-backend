@@ -1,0 +1,27 @@
+[
+  {
+    "_id": {
+      "$oid": "6914837b63268ba84acf02fe"
+    },
+    "userId": {
+      "$oid": "691481e1ab521ebc73863cb3"
+    },
+    "__v": 0,
+    "accountHolderName": "Chetan Bhadarka",
+    "accountNumber": "24695845316928876",
+    "accountType": "CHECKING",
+    "bankName": "Bank of America ",
+    "createdAt": {
+      "$date": "2025-11-12T12:54:19.584Z"
+    },
+    "currency": "USD",
+    "iban": "IVIBIBIVI",
+    "paymentMethod": "ECHECK",
+    "remittanceEmail": "chetanbhadarka@gmail.com",
+    "routingNumber": "546645543",
+    "swiftCode": "HDHSHD",
+    "updatedAt": {
+      "$date": "2025-12-01T04:45:53.347Z"
+    }
+  }
+]
