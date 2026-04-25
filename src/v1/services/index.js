@@ -25,6 +25,9 @@ exports.MenuCategoryService = require('./menu-category-service');
 /** Define menu item service */
 exports.MenuItemService = require('./menu-item-service');
 
+/** Define menu CSV import service */
+exports.MenuCsvImportService = require('./menu-csv-import-service');
+
 /** Define order service */
 exports.OrderService = require('./order-service');
 

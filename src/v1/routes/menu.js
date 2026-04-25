@@ -6,9 +6,18 @@ const router = express.Router();
 const { MenuController: Controller } = require('../controllers');
 const { validate, MenuItemValidation: Validation } = require('../validations');
 const { allowedTo } = require('../../middleware/allow-route');
+const UploadCsv = require('../../middleware/upload-csv');
 
 /** [GET] /api/v1/menu */
 router.get('/', allowedTo(['SUPER_ADMIN', 'VENDOR']), Controller.list);
+
+/** [POST] /api/v1/menu/import-csv */
+router.post(
+  '/import-csv',
+  allowedTo(['SUPER_ADMIN', 'VENDOR']),
+  UploadCsv.single('file'),
+  Controller.importCsv
+);
 
 /** [GET] /api/v1/menu/:id */
 router.get('/:id', allowedTo(['SUPER_ADMIN', 'VENDOR']), Controller.list);

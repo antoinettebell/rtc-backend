@@ -1,4 +1,8 @@
-const { MenuItemService: Service ,CommonDataListService} = require('../services');
+const {
+  MenuItemService: Service,
+  CommonDataListService,
+  MenuCsvImportService,
+} = require('../services');
 const mongoose = require('mongoose');
 const entityName = 'Menu';
 
@@ -59,19 +63,19 @@ exports.list = async (req, res, next) => {
     } = req;
 
     if (_id) {
-    console.log("list call",_id)
+      console.log('list call', _id);
 
       let item = await Service.getByData(
         { _id, userId: user._id },
         {
           singleResult: true,
           populate: [
-              {
+            {
               path: 'categoryId',
               populate: {
                 path: 'categoriesId',
                 model: 'categories',
-                select: { _id: 1, name: 1},
+                select: { _id: 1, name: 1 },
               },
             },
             'meatId',
@@ -79,11 +83,11 @@ exports.list = async (req, res, next) => {
             'diet',
             {
               path: 'bogoItems.itemId',
-              select: { 
-                _id: 1, 
-                name: 1, 
-                description: 1, 
-                imgUrls: 1, 
+              select: {
+                _id: 1,
+                name: 1,
+                description: 1,
+                imgUrls: 1,
                 price: 1,
                 strikePrice: 1,
                 discountType: 1,
@@ -96,16 +100,16 @@ exports.list = async (req, res, next) => {
                 diet: 1,
                 predefinedDiscountId: 1,
                 minQty: 1,
-                maxQty: 1
+                maxQty: 1,
               },
             },
             {
               path: 'subItem.menuItem',
-              select: { 
-                _id: 1, 
-                name: 1, 
-                description: 1, 
-                imgUrls: 1, 
+              select: {
+                _id: 1,
+                name: 1,
+                description: 1,
+                imgUrls: 1,
                 price: 1,
                 strikePrice: 1,
                 discountType: 1,
@@ -118,7 +122,7 @@ exports.list = async (req, res, next) => {
                 diet: 1,
                 predefinedDiscountId: 1,
                 minQty: 1,
-                maxQty: 1
+                maxQty: 1,
               },
             },
           ],
@@ -127,18 +131,25 @@ exports.list = async (req, res, next) => {
 
       if (item) {
         item = item.toObject();
-        console.log('Single item subItem:', JSON.stringify(item.subItem, null, 2));
+        console.log(
+          'Single item subItem:',
+          JSON.stringify(item.subItem, null, 2)
+        );
       }
       if (item && item.categoryId && typeof item.categoryId === 'object') {
-         item.category = item.categoryId;
-          if (item.categoryId?.categoriesId?.name) {
-            item.category.name = item.categoryId.categoriesId.name;
-          }
-         item.categoryId = item.category._id;
+        item.category = item.categoryId;
+        if (item.categoryId?.categoriesId?.name) {
+          item.category.name = item.categoryId.categoriesId.name;
+        }
+        item.categoryId = item.category._id;
       }
 
-      if (item && item.predefinedDiscountId && typeof item.predefinedDiscountId === 'object') {
-        item.predefinedDiscount= item.predefinedDiscountId;
+      if (
+        item &&
+        item.predefinedDiscountId &&
+        typeof item.predefinedDiscountId === 'object'
+      ) {
+        item.predefinedDiscount = item.predefinedDiscountId;
         item.predefinedDiscountId = item.predefinedDiscountId._id;
       }
 
@@ -168,103 +179,106 @@ exports.list = async (req, res, next) => {
     if (user && user.userType !== 'SUPER_ADMIN') {
       q.userId = user._id;
     }
-    if (user && user.userType === 'SUPER_ADMIN' && userId) {  
+    if (user && user.userType === 'SUPER_ADMIN' && userId) {
       q.userId = new mongoose.Types.ObjectId(userId);
     }
-      const data = (
-        await Service.getByData(
-          { ...q, deletedAt: null },
-          {
-            paging: { limit, page },
-            lean: true,
-            populate: [
-              {
-                path: 'categoryId',
-                // match: { categoriesId: { $ne: null } },
-                populate: {
-                  path: 'categoriesId', 
-                  model: 'categories',
-                  select: { _id: 1, name: 1 },
-                },
-              },            
-              'meatId',
-              'predefinedDiscountId',
-              'diet',
-              {
-                path: 'bogoItems.itemId',
-                select: { 
-                  _id: 1, 
-                  name: 1, 
-                  description: 1, 
-                  imgUrls: 1, 
-                  price: 1,
-                  strikePrice: 1,
-                  discountType: 1,
-                  hasDiscount: 1,
-                  discountRules: 1,
-                  available: 1,
-                  itemType: 1,
-                  categoryId: 1,
-                  meatId: 1,
-                  diet: 1,
-                  predefinedDiscountId: 1,
-                  minQty: 1,
-                  maxQty: 1
-                },
+    const data = (
+      await Service.getByData(
+        { ...q, deletedAt: null },
+        {
+          paging: { limit, page },
+          lean: true,
+          populate: [
+            {
+              path: 'categoryId',
+              // match: { categoriesId: { $ne: null } },
+              populate: {
+                path: 'categoriesId',
+                model: 'categories',
+                select: { _id: 1, name: 1 },
               },
-              {
-                path: 'subItem.menuItem',
-                select: { 
-                  _id: 1, 
-                  name: 1, 
-                  description: 1, 
-                  imgUrls: 1, 
-                  price: 1,
-                  strikePrice: 1,
-                  discountType: 1,
-                  hasDiscount: 1,
-                  discountRules: 1,
-                  available: 1,
-                  itemType: 1,
-                  categoryId: 1,
-                  meatId: 1,
-                  diet: 1,
-                  predefinedDiscountId: 1,
-                  minQty: 1,
-                  maxQty: 1
-                },
+            },
+            'meatId',
+            'predefinedDiscountId',
+            'diet',
+            {
+              path: 'bogoItems.itemId',
+              select: {
+                _id: 1,
+                name: 1,
+                description: 1,
+                imgUrls: 1,
+                price: 1,
+                strikePrice: 1,
+                discountType: 1,
+                hasDiscount: 1,
+                discountRules: 1,
+                available: 1,
+                itemType: 1,
+                categoryId: 1,
+                meatId: 1,
+                diet: 1,
+                predefinedDiscountId: 1,
+                minQty: 1,
+                maxQty: 1,
               },
-            ],
-          }
-        )
-      ).map((item) => {
-
-        if (item && item.categoryId && typeof item.categoryId === 'object') {
-          item.category = item.categoryId;
+            },
+            {
+              path: 'subItem.menuItem',
+              select: {
+                _id: 1,
+                name: 1,
+                description: 1,
+                imgUrls: 1,
+                price: 1,
+                strikePrice: 1,
+                discountType: 1,
+                hasDiscount: 1,
+                discountRules: 1,
+                available: 1,
+                itemType: 1,
+                categoryId: 1,
+                meatId: 1,
+                diet: 1,
+                predefinedDiscountId: 1,
+                minQty: 1,
+                maxQty: 1,
+              },
+            },
+          ],
+        }
+      )
+    ).map((item) => {
+      if (item && item.categoryId && typeof item.categoryId === 'object') {
+        item.category = item.categoryId;
         if (item.categoryId?.categoriesId?.name) {
           item.category.name = item.categoryId.categoriesId.name;
         }
         item.categoryId = item.category._id;
-        }
-      if (item && item.predefinedDiscountId && typeof item.predefinedDiscountId === 'object') {
-          item.predefinedDiscount= item.predefinedDiscountId;
-          item.predefinedDiscountId = item.predefinedDiscountId._id;
-        }
+      }
+      if (
+        item &&
+        item.predefinedDiscountId &&
+        typeof item.predefinedDiscountId === 'object'
+      ) {
+        item.predefinedDiscount = item.predefinedDiscountId;
+        item.predefinedDiscountId = item.predefinedDiscountId._id;
+      }
 
-        if (item && item.meatId && typeof item.meatId === 'object') {
-          item.meat = item.meatId;
-          item.meatId = item.meat._id;
-        }
+      if (item && item.meatId && typeof item.meatId === 'object') {
+        item.meat = item.meatId;
+        item.meatId = item.meat._id;
+      }
 
-        // Handle isSameItem logic
-        item = processBogoItems(item);
+      // Handle isSameItem logic
+      item = processBogoItems(item);
 
-        return item;
-      });
-      // console.log("call",data)
+      return item;
+    });
+    // console.log("call",data)
 
-      const total = await Service.getCount({
-        ...q,
+    const total = await Service.getCount({
+      ...q,
       deletedAt: null,
     });
     return res.data(
@@ -294,23 +308,23 @@ exports.checkItems = async (req, res, next) => {
           lean: true,
           populate: [
             {
-                path: 'categoryId',
-                populate: {
-                  path: 'categoriesId', 
-                  model: 'categories',
-                  select: { _id: 1, name: 1 },
-                },
-            },   
+              path: 'categoryId',
+              populate: {
+                path: 'categoriesId',
+                model: 'categories',
+                select: { _id: 1, name: 1 },
+              },
+            },
             'meatId',
             'diet',
             'predefinedDiscountId',
             {
               path: 'bogoItems.itemId',
-              select: { 
-                _id: 1, 
-                name: 1, 
-                description: 1, 
-                imgUrls: 1, 
+              select: {
+                _id: 1,
+                name: 1,
+                description: 1,
+                imgUrls: 1,
                 price: 1,
                 strikePrice: 1,
                 discountType: 1,
@@ -323,16 +337,16 @@ exports.checkItems = async (req, res, next) => {
                 diet: 1,
                 predefinedDiscountId: 1,
                 minQty: 1,
-                maxQty: 1
+                maxQty: 1,
               },
             },
             {
               path: 'subItem.menuItem',
-              select: { 
-                _id: 1, 
-                name: 1, 
-                description: 1, 
-                imgUrls: 1, 
+              select: {
+                _id: 1,
+                name: 1,
+                description: 1,
+                imgUrls: 1,
                 price: 1,
                 strikePrice: 1,
                 discountType: 1,
@@ -345,7 +359,7 @@ exports.checkItems = async (req, res, next) => {
                 diet: 1,
                 predefinedDiscountId: 1,
                 minQty: 1,
-                maxQty: 1
+                maxQty: 1,
               },
             },
           ],
@@ -355,27 +369,30 @@ exports.checkItems = async (req, res, next) => {
       if (item && item.categoryId && typeof item.categoryId === 'object') {
         item.category = item.categoryId;
         if (item.categoryId?.categoriesId?.name) {
-            item.category.name = item.categoryId.categoriesId.name;
+          item.category.name = item.categoryId.categoriesId.name;
         }
         item.categoryId = item.category._id;
-
       }
-     if (item && item.predefinedDiscountId && typeof item.predefinedDiscountId === 'object') {
-        item.predefinedDiscount= item.predefinedDiscountId;
+      if (
+        item &&
+        item.predefinedDiscountId &&
+        typeof item.predefinedDiscountId === 'object'
+      ) {
+        item.predefinedDiscount = item.predefinedDiscountId;
         item.predefinedDiscountId = item.predefinedDiscountId._id;
       }
       if (item && item.meatId && typeof item.meatId === 'object') {
         item.meat = item.meatId;
         item.meatId = item.meat._id;
       }
-      
+
       if (item.discountType === 'BOGOHO' && item.price) {
         item.bogoHoPrice = Number((item.price * 1.5).toFixed(2));
       }
-      
+
       // Handle isSameItem logic
       item = processBogoItems(item);
-      
+
       return item;
     });
     return res.data(
@@ -384,6 +401,40 @@ exports.checkItems = async (req, res, next) => {
       },
       `${entityName} items`
     );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.importCsv = async (req, res, next) => {
+  try {
+    const { body, files, user } = req;
+    const file = req.file || files?.file?.[0];
+    const imageFiles = files?.images || [];
+
+    if (!file?.buffer) {
+      return res.error(new Error('Please upload a CSV file.'), 400);
+    }
+
+    const vendorUserId =
+      user.userType === 'SUPER_ADMIN'
+        ? String(body.vendorUserId || '').trim()
+        : user._id.toString();
+
+    if (!vendorUserId) {
+      return res.error(
+        new Error('vendorUserId is required for admin menu imports.'),
+        400
+      );
+    }
+
+    const importSummary = await MenuCsvImportService.importFromCsv({
+      csvText: file.buffer.toString('utf8'),
+      vendorUserId,
+      imageFiles,
+    });
+
+    return res.data({ importSummary }, 'Menu CSV import completed');
   } catch (e) {
     return next(e);
   }
@@ -445,43 +496,48 @@ exports.add = async (req, res, next) => {
         409
       );
     }
-    let finalDiscountType = discountType || "FIXED";
+    let finalDiscountType = discountType || 'FIXED';
     let finalDiscountValue = discount || 0;
-    let finalDiscountMode = discountMode || "CUSTOM";
+    let finalDiscountMode = discountMode || 'CUSTOM';
     let finalPredefinedId = predefinedDiscountId || null;
-  if (hasDiscount && discountMode === "PREDEFINED" && predefinedDiscountId) {
-        const discountData = await CommonDataListService.getById(predefinedDiscountId);
-        if (discountData) {
-          finalPredefinedId = discountData._id;
+    if (hasDiscount && discountMode === 'PREDEFINED' && predefinedDiscountId) {
+      const discountData = await CommonDataListService.getById(
+        predefinedDiscountId
+      );
+      if (discountData) {
+        finalPredefinedId = discountData._id;
 
-          switch (discountData.key) {
-            case "BOGO":
-              finalDiscountType = "BOGO";
-              finalDiscountValue = 0;
-              break;
-            case "BOGOHO":
-              finalDiscountType = "BOGOHO";
-              finalDiscountValue = 0;
-              break;
-            case "PERCENTAGE":
-              finalDiscountType = "PERCENTAGE";
-              finalDiscountValue = Number(discountData.value);
-              break;  
-            default:
-              finalDiscountType = "FIXED";
-              finalDiscountValue = Number(discountData.value);
-              break;
-          }
+        switch (discountData.key) {
+          case 'BOGO':
+            finalDiscountType = 'BOGO';
+            finalDiscountValue = 0;
+            break;
+          case 'BOGOHO':
+            finalDiscountType = 'BOGOHO';
+            finalDiscountValue = 0;
+            break;
+          case 'PERCENTAGE':
+            finalDiscountType = 'PERCENTAGE';
+            finalDiscountValue = Number(discountData.value);
+            break;
+          default:
+            finalDiscountType = 'FIXED';
+            finalDiscountValue = Number(discountData.value);
+            break;
         }
       }
+    }
     if (
-      (finalDiscountType  || 'FIXED') === 'FIXED' &&
+      (finalDiscountType || 'FIXED') === 'FIXED' &&
       finalDiscountValue > (strikePrice || price)
     ) {
       return res.error(new Error('Discount must be less than the price.'), 409);
     }
 
-    if ((finalDiscountType  || 'FIXED') !== 'FIXED' && finalDiscountValue > 100) {
+    if (
+      (finalDiscountType || 'FIXED') !== 'FIXED' &&
+      finalDiscountValue > 100
+    ) {
       return res.error(new Error('Discount must be less than 100%'), 409);
     }
 
@@ -496,7 +552,7 @@ exports.add = async (req, res, next) => {
       categoryId,
       preparationTime,
       subItem,
-      discount:finalDiscountValue,
+      discount: finalDiscountValue,
       strikePrice: strikePrice || null,
       meatId: meatId || null,
       meatWellness: meatWellness || null,
@@ -571,8 +627,8 @@ exports.update = async (req, res, next) => {
       params: { id },
       user,
     } = req;
-    console.log("Ddd",req.body);
-    
+    console.log('Ddd', req.body);
+
     const existRecord = await Service.getByData(
       {
         name: { $regex: `\\b${name}\\b`, $options: 'i' },
@@ -592,35 +648,41 @@ exports.update = async (req, res, next) => {
 
     const item = await Service.getById(id);
     if (!item || item.deletedAt) {
-      return res.error(new Error("Menu not found."), 404);
+      return res.error(new Error('Menu not found.'), 404);
     }
 
     // ---------- Discount Logic ----------
-    let finalDiscountType = hasDiscount ? discountType : 'FIXED' ;
-    let finalDiscountValue = hasDiscount ? discount ?? item.discount :0;
-    let finalDiscountMode = hasDiscount ? discountMode || item.discountMode :'CUSTOM';
-    let finalPredefinedId = hasDiscount ? predefinedDiscountId || item.predefinedDiscountId: null;
+    let finalDiscountType = hasDiscount ? discountType : 'FIXED';
+    let finalDiscountValue = hasDiscount ? discount ?? item.discount : 0;
+    let finalDiscountMode = hasDiscount
+      ? discountMode || item.discountMode
+      : 'CUSTOM';
+    let finalPredefinedId = hasDiscount
+      ? predefinedDiscountId || item.predefinedDiscountId
+      : null;
 
-    if (hasDiscount && discountMode === "PREDEFINED" && predefinedDiscountId) {
-      const discountData = await CommonDataListService.getById(predefinedDiscountId);
+    if (hasDiscount && discountMode === 'PREDEFINED' && predefinedDiscountId) {
+      const discountData = await CommonDataListService.getById(
+        predefinedDiscountId
+      );
       if (discountData) {
         finalPredefinedId = discountData._id;
 
         switch (discountData.key) {
-          case "BOGO":
-            finalDiscountType = "BOGO";
+          case 'BOGO':
+            finalDiscountType = 'BOGO';
             finalDiscountValue = 0;
             break;
-          case "BOGOHO":
-            finalDiscountType = "BOGOHO";
+          case 'BOGOHO':
+            finalDiscountType = 'BOGOHO';
             finalDiscountValue = 0;
             break;
-          case "PERCENTAGE":
-            finalDiscountType = "PERCENTAGE";
+          case 'PERCENTAGE':
+            finalDiscountType = 'PERCENTAGE';
             finalDiscountValue = Number(discountData.value);
-            break;  
+            break;
           default:
-            finalDiscountType = "FIXED";
+            finalDiscountType = 'FIXED';
             finalDiscountValue = Number(discountData.value);
             break;
         }
@@ -628,23 +690,22 @@ exports.update = async (req, res, next) => {
     }
 
     // ---------- Validation ----------
-    if (hasDiscount && 
-      finalDiscountType === "FIXED" &&
+    if (
+      hasDiscount &&
+      finalDiscountType === 'FIXED' &&
       finalDiscountValue > (strikePrice || price || item.price)
     ) {
-      return res.error(
-        new Error("Discount must be less than the price."),
-        409
-      );
+      return res.error(new Error('Discount must be less than the price.'), 409);
     }
 
-    if (hasDiscount && finalDiscountType !== "FIXED" && finalDiscountValue > 100) {
-      return res.error(
-        new Error("Discount must be less than 100%"),
-        409
-      );
+    if (
+      hasDiscount &&
+      finalDiscountType !== 'FIXED' &&
+      finalDiscountValue > 100
+    ) {
+      return res.error(new Error('Discount must be less than 100%'), 409);
     }
-//    let subItem=[ { menuItem: '6948d65cfb10fe3f1535f7a2', qty: 1 } ];
+    //    let subItem=[ { menuItem: '6948d65cfb10fe3f1535f7a2', qty: 1 } ];
 
     // ---------- Update Fields ----------
     Object.assign(item, {
@@ -655,8 +716,8 @@ exports.update = async (req, res, next) => {
       strikePrice: strikePrice || null,
       minQty,
       maxQty,
-      categoryId :categoryId || item.categoryId,
-      subItem: itemType === "COMBO" ? subItem || item.subItem : [],
+      categoryId: categoryId || item.categoryId,
+      subItem: itemType === 'COMBO' ? subItem || item.subItem : [],
       allowCustomize,
       newDish,
       popularDish,
@@ -665,12 +726,12 @@ exports.update = async (req, res, next) => {
       itemType,
       meatId,
       meatWellness,
-      available :available ? available : item.available,
+      available: available ? available : item.available,
       hasDiscount,
       discountMode: finalDiscountMode,
       discountType: finalDiscountType,
-      discountValue: finalDiscountValue,  
-      discount:finalDiscountValue,
+      discountValue: finalDiscountValue,
+      discount: finalDiscountValue,
       predefinedDiscountId: finalPredefinedId,
       bogoItems: bogoItems || [],
       discountRules: discountRules || item.discountRules,
@@ -686,7 +747,7 @@ exports.update = async (req, res, next) => {
       `${entityName} updated successfully`
     );
   } catch (e) {
-    console.error("Update Menu Error:", e);
+    console.error('Update Menu Error:', e);
     return next(e);
   }
 };
@@ -879,9 +940,7 @@ exports.destroy = async (req, res, next) => {
 exports.updateaAvailability = async (req, res, next) => {
   try {
     const {
-      body: {
-        available,
-      },
+      body: { available },
       params: { id },
       user,
     } = req;
@@ -895,12 +954,11 @@ exports.updateaAvailability = async (req, res, next) => {
     }
     await item.save();
 
-      return res.data(
-        { [`${entityName.toLocaleLowerCase()}`]: item },
-        `${entityName} updated`
-      );
-    } catch (e) {
-      return next(e);
-    }
+    return res.data(
+      { [`${entityName.toLocaleLowerCase()}`]: item },
+      `${entityName} updated`
+    );
+  } catch (e) {
+    return next(e);
+  }
 };
-

@@ -36,6 +36,32 @@ exports.addObject = (file) =>
     );
   });
 
+exports.addObjectFromBuffer = (file) =>
+  new Promise((resolve, reject) => {
+    const extension = String(file.originalname || '')
+      .split('.')
+      .pop();
+    const key = `${uuidv4()}.${extension || 'bin'}`;
+    const url = `https://${aws.s3Bucket}.s3.us-east-1.amazonaws.com/${key}`;
+
+    s3.putObject(
+      {
+        Bucket: aws.s3Bucket,
+        Key: key,
+        Body: file.buffer,
+        ContentType: file.mimetype,
+      },
+      (err) => {
+        if (err) {
+          console.error('Error creating file:', err);
+          reject(err);
+        } else {
+          resolve(url);
+        }
+      }
+    );
+  });
+
 exports.removeObject = (name) =>
   new Promise((resolve) => {
     s3.deleteObject(

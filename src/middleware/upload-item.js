@@ -6,6 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const heicConvert = require('heic-convert');
 const sharp = require('sharp');
+const { isSupportedImageUpload } = require('./image-upload-config');
 
 /**
  * Providing storage
@@ -47,15 +48,10 @@ async function convertHEIC(filePath) {
 const uploadItem = multer({
   storage: storage,
   fileFilter: function (req, file, callback) {
-    if (
-      file.mimetype === 'image/png' ||
-      file.mimetype === 'image/jpg' ||
-      file.mimetype === 'image/jpeg' ||
-      file.mimetype === 'image/heic'
-    ) {
+    if (isSupportedImageUpload(file)) {
       callback(null, true);
     } else {
-      console.log('only jpg & png file supported');
+      console.log('only jpg, png & heic files are supported');
       callback(null, false);
     }
   },
@@ -79,9 +75,9 @@ const uploadMiddleware = (req, res, next) => {
           '.jpg'
         );
         req.file.path = newPath;
-        req.file.mimetype = 'image/png';
+        req.file.mimetype = 'image/jpeg';
       } catch (e) {
-        return next(new Error('Failed to convert HEIC to PNG'));
+        return next(new Error('Failed to convert HEIC to JPG'));
       }
     }
 
