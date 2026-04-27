@@ -1733,11 +1733,11 @@ exports.add = async (req, res, next) => {
             comboItems: comboItemsWithDetails,
             comboSubtotal:comboSubtotal,
             fullMenuItemData: updatedFullMenuItemData,
-	            total: itemTotal,
-	          });
-	
-	          subTotal += itemTotal;
-          
+		            total: itemTotal,
+		          });
+
+		          subTotal += itemTotal;
+
           // Add combo items subtotal
           // subTotal += comboSubtotal;
         }
