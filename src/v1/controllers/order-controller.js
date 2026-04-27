@@ -29,17 +29,22 @@ const toMoney = (value, fallback = 0) => {
 const BUILT_IN_DELIVERY_FEE = 6.49;
 
 const normalizeDeliveryFee = (fulfillmentType, deliveryFee) => {
+  if (fulfillmentType !== 'DELIVERY') {
+    return 0;
+  }
+
   if (deliveryFee !== undefined && deliveryFee !== null && deliveryFee !== '') {
     return toMoney(deliveryFee);
   }
 
-  return fulfillmentType === 'DELIVERY' ? BUILT_IN_DELIVERY_FEE : 0;
+  return BUILT_IN_DELIVERY_FEE;
 };
 
+const normalizeDriverTip = (fulfillmentType, tip, tips) =>
+  fulfillmentType === 'DELIVERY' ? toMoney(tip ?? tips) : 0;
+
 const shouldCreateShipdayDelivery = (order) =>
-  order?.fulfillmentType === 'DELIVERY' ||
-  order?.orderType === 'DELIVERY' ||
-  toMoney(order?.deliveryFee) > 0;
+  order?.fulfillmentType === 'DELIVERY' || order?.orderType === 'DELIVERY';
 
 const getCustomerAddress = (user) => {
   const parts = [
@@ -295,7 +300,7 @@ exports.validateOrder = async (req, res, next) => {
       fulfillmentType,
       deliveryFee
     );
-    const normalizedDriverTip = toMoney(tip ?? tips);
+    const normalizedDriverTip = normalizeDriverTip(fulfillmentType, tip, tips);
     const normalizedFoodTruckTip = toMoney(tipsAmount);
 
     const menuIds = {};
@@ -655,7 +660,7 @@ exports.validateOrder = async (req, res, next) => {
       deliveryTime: deliveryTime || null,
       deliveryDate: deliveryDate || null,
       fulfillmentType,
-      deliveryAddress: deliveryAddress || null,
+      deliveryAddress: fulfillmentType === 'DELIVERY' ? deliveryAddress || null : null,
       couponId,
       availabilityId,
       items: menuItems,
@@ -1513,7 +1518,7 @@ exports.add = async (req, res, next) => {
       fulfillmentType,
       deliveryFee
     );
-    const normalizedDriverTip = toMoney(tip ?? tips);
+    const normalizedDriverTip = normalizeDriverTip(fulfillmentType, tip, tips);
     const normalizedFoodTruckTip = toMoney(tipsAmount);
 
     const menuIds = {};
@@ -1864,7 +1869,7 @@ exports.add = async (req, res, next) => {
       deliveryTime: deliveryTime || null,
       deliveryDate: deliveryDate || null,
       fulfillmentType,
-      deliveryAddress: deliveryAddress || null,
+      deliveryAddress: fulfillmentType === 'DELIVERY' ? deliveryAddress || null : null,
       couponId,
       availabilityId,
       items: menuItems,

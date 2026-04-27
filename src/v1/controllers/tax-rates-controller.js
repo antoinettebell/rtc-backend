@@ -1,6 +1,20 @@
 const { TaxRatesService: Service, FoodTruckService } = require('../services');
 const entityName = 'TaxRates';
 const taxHelper = require('../../helper/tax-helper');
+const DEFAULT_TAX_RATE = 0.06;
+
+const toMoney = (value) => {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? Math.max(0, amount) : 0;
+};
+
+const calculateTaxAmountFromRate = (amount, rate) => {
+  const taxableAmount = toMoney(amount);
+  const numericRate = Number(rate) || 0;
+  const normalizedRate = numericRate > 1 ? numericRate / 100 : numericRate;
+
+  return Number((taxableAmount * normalizedRate).toFixed(2));
+};
 
 /**
  * To list out or find data by id of given collection
@@ -108,7 +122,11 @@ exports.avalarataxcheck = async (req, res, next) => {
           { singleResult: true }
         );
         data._id = tax?._id;
-        data.salesTax = tax?.estimatedCombineRate || 0;
+        data.salesTax = DEFAULT_TAX_RATE;
+        data.salesTaxAmount = calculateTaxAmountFromRate(
+          amount,
+          DEFAULT_TAX_RATE
+        );
         const parsed = await taxHelper.parseDynamicAddress(loc);
         console.log("parsing address",parsed);
         const from = {
@@ -129,8 +147,7 @@ exports.avalarataxcheck = async (req, res, next) => {
             data.salesTax = result?.totalTax || 0;
             data.salesTaxAmount = result?.totalTax || 0;
           } else {
-            data.salesTax = 0;
-            data.salesTaxAmount =0;
+            data.avalaraError = result?.message || null;
           }
       }
     }
