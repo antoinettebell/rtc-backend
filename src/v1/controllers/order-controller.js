@@ -530,7 +530,7 @@ exports.validateOrder = async (req, res, next) => {
           });
 
           subTotal += itemTotal;
-          
+
           // Add combo items subtotal
           // subTotal += comboSubtotal;
         }
