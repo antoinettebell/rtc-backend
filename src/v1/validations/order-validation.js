@@ -36,6 +36,8 @@ module.exports = {
       locationId: Joi.string().required(),
       deliveryTime: Joi.string(),
       deliveryDate: Joi.string(),
+      fulfillmentType: Joi.string().valid('PICKUP', 'DELIVERY').default('PICKUP'),
+      deliveryAddress: Joi.string().allow(null, ''),
       availabilityId: Joi.string(),
 
       paymentMethod: Joi.string()
@@ -61,13 +63,23 @@ module.exports = {
 
       couponId: Joi.string(),
       taxAmount: Joi.number(),
-      tipsAmount: Joi.number(),
+      tax: Joi.number(),
+      deliveryFee: Joi.number(),
+      tip: Joi.number(),
+      tips: Joi.number(),
+      tipsAmount: Joi.number().default(0),
+      subtotal: Joi.number(),
+      totalOrderCost: Joi.number(),
 
       items: Joi.array()
         .items(
           Joi.object({
             menuItemId: Joi.string().required(),
             customization: Joi.string(),
+            selectedFlavors: Joi.array().items(Joi.string().trim()),
+            selectedToppings: Joi.array().items(Joi.string().trim()),
+            selectedDiscountFlavors: Joi.array().items(Joi.string().trim()),
+            selectedDiscountToppings: Joi.array().items(Joi.string().trim()),
             qty: Joi.number().min(1).required(),
             comboItems: Joi.array().items(
               Joi.object({
@@ -125,15 +137,27 @@ module.exports = {
       locationId: Joi.string().required(),
       deliveryTime: Joi.string(),
       deliveryDate: Joi.string(),
+      fulfillmentType: Joi.string().valid('PICKUP', 'DELIVERY').default('PICKUP'),
+      deliveryAddress: Joi.string().allow(null, ''),
       availabilityId: Joi.string(),
       couponId: Joi.string(),
       taxAmount: Joi.number(),
-      tipsAmount: Joi.number(),
+      tax: Joi.number(),
+      deliveryFee: Joi.number(),
+      tip: Joi.number(),
+      tips: Joi.number(),
+      tipsAmount: Joi.number().default(0),
+      subtotal: Joi.number(),
+      totalOrderCost: Joi.number(),
       items: Joi.array()
         .items(
           Joi.object({
             menuItemId: Joi.string().required(),
             customization: Joi.string(),
+            selectedFlavors: Joi.array().items(Joi.string().trim()),
+            selectedToppings: Joi.array().items(Joi.string().trim()),
+            selectedDiscountFlavors: Joi.array().items(Joi.string().trim()),
+            selectedDiscountToppings: Joi.array().items(Joi.string().trim()),
             qty: Joi.number().min(1).required(),
             comboItems: Joi.array().items(
               Joi.object({

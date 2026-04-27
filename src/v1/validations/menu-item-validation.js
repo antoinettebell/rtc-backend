@@ -1,5 +1,11 @@
 const { Joi } = require('express-validation');
 
+const paidOptionValidation = Joi.object({
+  name: Joi.string().trim().required(),
+  hasCost: Joi.boolean(),
+  cost: Joi.number().min(0),
+});
+
 module.exports = {
   list: {
     query: Joi.object({
@@ -78,6 +84,30 @@ module.exports = {
       itemType: Joi.string().valid('INDIVIDUAL', 'COMBO').required(),
       categoryId: Joi.string().trim().required(),
       allowCustomize: Joi.boolean(),
+      hasFlavors: Joi.boolean(),
+      flavors: Joi.array().items(Joi.string().trim()).when('hasFlavors', {
+        is: true,
+        then: Joi.array().min(1).max(15).required(),
+        otherwise: Joi.optional(),
+      }),
+      flavorOptions: Joi.array().items(paidOptionValidation).max(15),
+      flavorsPerOrder: Joi.number().min(1).max(5).when('hasFlavors', {
+        is: true,
+        then: Joi.required(),
+        otherwise: Joi.optional(),
+      }),
+      hasToppings: Joi.boolean(),
+      toppings: Joi.array().items(Joi.string().trim()).when('hasToppings', {
+        is: true,
+        then: Joi.array().min(1).max(15).required(),
+        otherwise: Joi.optional(),
+      }),
+      toppingOptions: Joi.array().items(paidOptionValidation).max(15),
+      toppingsPerOrder: Joi.number().min(1).max(15).when('hasToppings', {
+        is: true,
+        then: Joi.required(),
+        otherwise: Joi.optional(),
+      }),
       newDish: Joi.boolean(),
       popularDish: Joi.boolean(),
       diet: Joi.array().items(Joi.string()),
@@ -166,6 +196,30 @@ module.exports = {
       preparationTime: Joi.number(),
       categoryId: Joi.string(),
       allowCustomize: Joi.boolean(),
+      hasFlavors: Joi.boolean(),
+      flavors: Joi.array().items(Joi.string().trim()).when('hasFlavors', {
+        is: true,
+        then: Joi.array().min(1).max(15).required(),
+        otherwise: Joi.optional(),
+      }),
+      flavorOptions: Joi.array().items(paidOptionValidation).max(15),
+      flavorsPerOrder: Joi.number().min(1).max(5).when('hasFlavors', {
+        is: true,
+        then: Joi.required(),
+        otherwise: Joi.optional(),
+      }),
+      hasToppings: Joi.boolean(),
+      toppings: Joi.array().items(Joi.string().trim()).when('hasToppings', {
+        is: true,
+        then: Joi.array().min(1).max(15).required(),
+        otherwise: Joi.optional(),
+      }),
+      toppingOptions: Joi.array().items(paidOptionValidation).max(15),
+      toppingsPerOrder: Joi.number().min(1).max(15).when('hasToppings', {
+        is: true,
+        then: Joi.required(),
+        otherwise: Joi.optional(),
+      }),
       newDish: Joi.boolean(),
       popularDish: Joi.boolean(),
       diet: Joi.array().items(Joi.string()),

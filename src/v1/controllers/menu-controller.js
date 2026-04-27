@@ -6,6 +6,24 @@ const {
 const mongoose = require('mongoose');
 const entityName = 'Menu';
 
+const toTitleCase = (value) =>
+  String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase()
+    .replace(/\b([a-z])/g, (match) => match.toUpperCase());
+
+const normalizeOptionNames = (items = []) =>
+  (Array.isArray(items) ? items : []).map((item) => toTitleCase(item));
+
+const normalizePaidOptions = (options = [], names = []) =>
+  (Array.isArray(options) && options.length ? options : names.map((name) => ({ name })))
+    .map((option, index) => ({
+      ...option,
+      name: toTitleCase(option?.name || names[index] || ''),
+    }))
+    .filter((option) => option.name);
+
 /**
  * Helper to process BOGO items and handle isSameItem logic
  * @param {Object} item - Menu item object
@@ -478,6 +496,14 @@ exports.add = async (req, res, next) => {
         predefinedDiscountId,
         bogoItems,
         discountRules,
+        hasFlavors,
+        flavors,
+        flavorOptions,
+        flavorsPerOrder,
+        hasToppings,
+        toppings,
+        toppingOptions,
+        toppingsPerOrder,
       },
       user,
     } = req;
@@ -541,6 +567,19 @@ exports.add = async (req, res, next) => {
       return res.error(new Error('Discount must be less than 100%'), 409);
     }
 
+    const normalizedFlavors = hasFlavors
+      ? normalizeOptionNames(flavors || ['Plain'])
+      : [];
+    const normalizedFlavorOptions = hasFlavors
+      ? normalizePaidOptions(flavorOptions, normalizedFlavors)
+      : [];
+    const normalizedToppings = hasToppings
+      ? normalizeOptionNames(toppings || [])
+      : [];
+    const normalizedToppingOptions = hasToppings
+      ? normalizePaidOptions(toppingOptions, normalizedToppings)
+      : [];
+
     let data = await Service.create({
       name,
       description,
@@ -569,6 +608,14 @@ exports.add = async (req, res, next) => {
       predefinedDiscountId: finalPredefinedId,
       bogoItems: bogoItems || [],
       discountRules: discountRules || undefined,
+      hasFlavors: hasFlavors || false,
+      flavors: normalizedFlavors,
+      flavorOptions: normalizedFlavorOptions,
+      flavorsPerOrder: hasFlavors ? flavorsPerOrder || 1 : 1,
+      hasToppings: hasToppings || false,
+      toppings: normalizedToppings,
+      toppingOptions: normalizedToppingOptions,
+      toppingsPerOrder: hasToppings ? toppingsPerOrder || 1 : 1,
     });
 
     if (data) {
@@ -623,6 +670,14 @@ exports.update = async (req, res, next) => {
         predefinedDiscountId,
         bogoItems,
         discountRules,
+        hasFlavors,
+        flavors,
+        flavorOptions,
+        flavorsPerOrder,
+        hasToppings,
+        toppings,
+        toppingOptions,
+        toppingsPerOrder,
       },
       params: { id },
       user,
@@ -707,6 +762,19 @@ exports.update = async (req, res, next) => {
     }
     //    let subItem=[ { menuItem: '6948d65cfb10fe3f1535f7a2', qty: 1 } ];
 
+    const normalizedFlavors = hasFlavors
+      ? normalizeOptionNames(flavors || ['Plain'])
+      : [];
+    const normalizedFlavorOptions = hasFlavors
+      ? normalizePaidOptions(flavorOptions, normalizedFlavors)
+      : [];
+    const normalizedToppings = hasToppings
+      ? normalizeOptionNames(toppings || [])
+      : [];
+    const normalizedToppingOptions = hasToppings
+      ? normalizePaidOptions(toppingOptions, normalizedToppings)
+      : [];
+
     // ---------- Update Fields ----------
     Object.assign(item, {
       name,
@@ -735,6 +803,14 @@ exports.update = async (req, res, next) => {
       predefinedDiscountId: finalPredefinedId,
       bogoItems: bogoItems || [],
       discountRules: discountRules || item.discountRules,
+      hasFlavors: hasFlavors || false,
+      flavors: normalizedFlavors,
+      flavorOptions: normalizedFlavorOptions,
+      flavorsPerOrder: hasFlavors ? flavorsPerOrder || 1 : 1,
+      hasToppings: hasToppings || false,
+      toppings: normalizedToppings,
+      toppingOptions: normalizedToppingOptions,
+      toppingsPerOrder: hasToppings ? toppingsPerOrder || 1 : 1,
     });
 
     await item.save();

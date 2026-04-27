@@ -268,6 +268,50 @@ class MenuCsvImportService {
     }
   }
 
+  parseFlavors(row) {
+    const hasFlavors = this.parseBoolean(row.hasFlavors, false);
+
+    if (!hasFlavors) {
+      return {
+        hasFlavors: false,
+        flavors: [],
+        flavorsPerOrder: 1,
+      };
+    }
+
+    const flavors = this.parseStringArray(row.flavors);
+    const normalizedFlavors = [
+      'Plain',
+      ...flavors
+        .filter((flavor) => flavor.toLowerCase() !== 'plain')
+        .slice(0, 14),
+    ];
+    const flavorsPerOrder = this.parseNumber(
+      row.flavorsPerOrder,
+      1,
+      'flavorsPerOrder',
+      row._rowNumber
+    );
+
+    if (flavorsPerOrder < 1 || flavorsPerOrder > 5) {
+      throw new Error(
+        `Row ${row._rowNumber}: flavorsPerOrder must be between 1 and 5.`
+      );
+    }
+
+    if (flavorsPerOrder > normalizedFlavors.length) {
+      throw new Error(
+        `Row ${row._rowNumber}: flavorsPerOrder cannot exceed the number of flavors.`
+      );
+    }
+
+    return {
+      hasFlavors: true,
+      flavors: normalizedFlavors,
+      flavorsPerOrder,
+    };
+  }
+
   parseDietObjectIds(row) {
     const indexedDietKeys = Object.keys(row)
       .filter((key) => /^diet\[\d+\]$/i.test(key))
@@ -363,6 +407,8 @@ class MenuCsvImportService {
   }
 
   buildMenuItem(row, categoryId, userId, imgUrls) {
+    const flavorSettings = this.parseFlavors(row);
+
     return {
       name: this.parseRequiredString(row.name, 'name', row._rowNumber),
       description: row.description,
@@ -410,6 +456,7 @@ class MenuCsvImportService {
         row._rowNumber
       ),
       allowCustomize: this.parseBoolean(row.allowCustomize, true),
+      ...flavorSettings,
       newDish: this.parseBoolean(row.newDish, false),
       popularDish: this.parseBoolean(row.popularDish, false),
       diet: this.parseDietObjectIds(row),

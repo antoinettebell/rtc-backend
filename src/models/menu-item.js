@@ -3,6 +3,22 @@
  */
 const mongoose = require('mongoose');
 
+const paidOptionSchema = {
+  name: {
+    type: String,
+    required: true,
+  },
+  hasCost: {
+    type: Boolean,
+    default: false,
+  },
+  cost: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+};
+
 /**
  * Model schema
  *
@@ -117,6 +133,40 @@ const mSchema = mongoose.Schema(
     allowCustomize: {
       type: Boolean,
       default: false,
+    },
+    hasFlavors: {
+      type: Boolean,
+      default: false,
+    },
+    flavors: [
+      {
+        type: String,
+        default: null,
+      },
+    ],
+    flavorOptions: [paidOptionSchema],
+    flavorsPerOrder: {
+      type: Number,
+      default: 1,
+      min: 1,
+      max: 5,
+    },
+    hasToppings: {
+      type: Boolean,
+      default: false,
+    },
+    toppings: [
+      {
+        type: String,
+        default: null,
+      },
+    ],
+    toppingOptions: [paidOptionSchema],
+    toppingsPerOrder: {
+      type: Number,
+      default: 1,
+      min: 1,
+      max: 15,
     },
     newDish: {
       type: Boolean,

@@ -1,6 +1,7 @@
 const {
   OrderService: Service,
   FoodTruckService,
+  UserService,
   MenuItemService,
   CouponService,
   CouponUsageService,
@@ -11,11 +12,253 @@ const {
 } = require('../services');
 const entityName = 'Order';
 const mongoose = require('mongoose');
+const https = require('https');
+const http = require('http');
 const CustomNotification = require('../../helper/custom-notification');
 const PaymentHelper = require('../../helper/payment-helper');
 const MailHelper = require('../../helper/mail-helper');
+const { OrderModel } = require('../../models');
 
 const { env } = require('../../config');
+
+const toMoney = (value, fallback = 0) => {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? Math.max(0, amount) : fallback;
+};
+
+const BUILT_IN_DELIVERY_FEE = 6.49;
+
+const normalizeDeliveryFee = (fulfillmentType, deliveryFee) => {
+  if (deliveryFee !== undefined && deliveryFee !== null && deliveryFee !== '') {
+    return toMoney(deliveryFee);
+  }
+
+  return fulfillmentType === 'DELIVERY' ? BUILT_IN_DELIVERY_FEE : 0;
+};
+
+const shouldCreateShipdayDelivery = (order) =>
+  order?.fulfillmentType === 'DELIVERY' ||
+  order?.orderType === 'DELIVERY' ||
+  toMoney(order?.deliveryFee) > 0;
+
+const getCustomerAddress = (user) => {
+  const parts = [
+    user?.addressLine1,
+    user?.addressLine2,
+    user?.addressCity,
+    user?.addressState,
+    user?.addressPostal,
+    user?.addressCountry,
+  ].filter((part) => part && part !== 'NA');
+
+  return parts.join(', ');
+};
+
+const postJson = async (url, payload) => {
+  const body = JSON.stringify(payload);
+  const parsedUrl = new URL(url);
+
+  return new Promise((resolve, reject) => {
+    const transport = parsedUrl.protocol === 'http:' ? http : https;
+    const req = transport.request(
+      {
+        hostname: parsedUrl.hostname,
+        path: `${parsedUrl.pathname}${parsedUrl.search}`,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        let responseData = '';
+
+        res.on('data', (chunk) => {
+          responseData += chunk;
+        });
+        res.on('end', () => {
+          const responseBody = (() => {
+            try {
+              return JSON.parse(responseData);
+            } catch (e) {
+              return responseData;
+            }
+          })();
+
+          if (res.statusCode >= 200 && res.statusCode < 300) {
+            resolve(responseBody);
+            return;
+          }
+
+          const error = new Error('Shipday delivery creation failed');
+          error.statusCode = res.statusCode;
+          error.responseBody = responseBody;
+          reject(error);
+        });
+      }
+    );
+
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+};
+
+const createShipdayDeliveryForAcceptedOrder = async (order, foodTruck) => {
+  if (!shouldCreateShipdayDelivery(order) || order.shipdayOrderCreatedAt) {
+    return null;
+  }
+
+  if (!process.env.SHIPDAY_DELIVERY_FUNCTION_URL) {
+    throw new Error('Missing SHIPDAY_DELIVERY_FUNCTION_URL');
+  }
+
+  const customer = await UserService.getById(order.userId);
+  const vendorLocation = order.locationData || {};
+  const customerAddress = order.deliveryAddress || getCustomerAddress(customer);
+  const vendorAddress = vendorLocation.address || foodTruck?.address || '';
+
+  if (!customerAddress) {
+    throw new Error('Customer delivery address is required for Shipday');
+  }
+
+  if (!vendorAddress) {
+    throw new Error('Vendor pickup address is required for Shipday');
+  }
+
+  return postJson(process.env.SHIPDAY_DELIVERY_FUNCTION_URL, {
+    fulfillmentType: 'DELIVERY',
+    orderId: order.orderNumber || order._id.toString(),
+    customerName: [customer?.firstName, customer?.lastName].filter(Boolean).join(' '),
+    customerPhone: `${customer?.countryCode || ''}${customer?.mobileNumber || ''}`,
+    customerAddress,
+    vendorName: foodTruck?.name,
+    vendorAddress,
+    totalOrderCost: order.totalOrderCost || order.total,
+    total: order.total,
+    deliveryFee: normalizeDeliveryFee(order.fulfillmentType, order.deliveryFee),
+    tips: order.tips || order.tip || 0,
+    tip: order.tip || order.tips || 0,
+    tax: order.tax || order.taxAmount || 0,
+  });
+};
+
+const normalizeShipdayStatus = (status) =>
+  String(status || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+
+const SHIPDAY_STATUS_MAP = {
+  ACCEPTED: 'accepted',
+  PICKED_UP: 'picked_up',
+  DELIVERED: 'delivered',
+  FAILED: 'failed',
+};
+
+const getShipdayOrderFilter = (orderId) => {
+  const filters = [{ orderNumber: Number(orderId) }];
+
+  if (mongoose.Types.ObjectId.isValid(orderId)) {
+    filters.push({ _id: new mongoose.Types.ObjectId(orderId) });
+  }
+
+  return {
+    deletedAt: null,
+    $or: filters.filter((filter) => {
+      if ('orderNumber' in filter) {
+        return Number.isFinite(filter.orderNumber);
+      }
+      return true;
+    }),
+  };
+};
+
+const normalizeMenuOptions = (menuItem, type) => {
+  const optionsKey = `${type}Options`;
+  const legacyKey = type === 'flavor' ? 'flavors' : 'toppings';
+  const rawOptions =
+    Array.isArray(menuItem?.[optionsKey]) && menuItem[optionsKey].length > 0
+      ? menuItem[optionsKey]
+      : menuItem?.[legacyKey];
+
+  if (!Array.isArray(rawOptions)) {
+    return [];
+  }
+
+  return rawOptions
+    .map((option) => {
+      if (typeof option === 'string') {
+        return { name: option, hasCost: false, cost: 0 };
+      }
+
+      const cost =
+        Number(
+          option?.cost ??
+            option?.price ??
+            option?.additionalCost ??
+            option?.extraCost ??
+            option?.optionCost ??
+            0
+        ) || 0;
+
+      return {
+        name: option?.name || option?.label,
+        hasCost: cost > 0 && option?.hasCost !== false,
+        cost,
+      };
+    })
+    .filter((option) => option.name);
+};
+
+const validateSelectionsAndGetCost = ({
+  menuItem,
+  selectedOptions,
+  type,
+  requiredCount,
+  itemName,
+}) => {
+  const label = type === 'flavor' ? 'flavor' : 'topping';
+  const options = normalizeMenuOptions(menuItem, type);
+  const selected = Array.isArray(selectedOptions) ? selectedOptions : [];
+  const maxCount = Math.min(
+    Math.max(0, Number(requiredCount) || options.length),
+    options.length
+  );
+
+  if (selected.length > maxCount) {
+    throw new Error(
+      `Please select up to ${maxCount} ${label}${maxCount === 1 ? '' : 's'} for the "${itemName}"`
+    );
+  }
+
+  const invalidOption = selected.find(
+    (selectedOption) => {
+      const optionName =
+        typeof selectedOption === 'string'
+          ? selectedOption
+          : selectedOption?.name || selectedOption?.label || '';
+      return !options.some((option) => option.name === optionName);
+    }
+  );
+
+  if (invalidOption) {
+    const invalidName =
+      typeof invalidOption === 'string'
+        ? invalidOption
+        : invalidOption?.name || invalidOption?.label || '';
+    throw new Error(`Invalid ${label} "${invalidName}" selected for the "${itemName}"`);
+  }
+
+  return selected.reduce((sum, selectedOption) => {
+    const optionName =
+      typeof selectedOption === 'string'
+        ? selectedOption
+        : selectedOption?.name || selectedOption?.label || '';
+    const option = options.find((item) => item.name === optionName);
+    return sum + (option?.hasCost ? Number(option.cost) || 0 : 0);
+  }, 0);
+};
 /**
  * To add new entry to given collection
  * Support POST request
@@ -36,11 +279,24 @@ exports.validateOrder = async (req, res, next) => {
         locationId,
         couponId,
         taxAmount = 0,
-        tipsAmount=0,
+        tax,
+        tip,
+        tips,
+        tipsAmount = 0,
+        deliveryFee,
+        fulfillmentType = 'PICKUP',
+        deliveryAddress = null,
         availabilityId,
       },
       user,
     } = req;
+    const normalizedTaxAmount = toMoney(tax ?? taxAmount);
+    const normalizedDeliveryFee = normalizeDeliveryFee(
+      fulfillmentType,
+      deliveryFee
+    );
+    const normalizedDriverTip = toMoney(tip ?? tips);
+    const normalizedFoodTruckTip = toMoney(tipsAmount);
 
     const menuIds = {};
     const foodTruck = await FoodTruckService.getById(foodTruckId);
@@ -94,7 +350,59 @@ exports.validateOrder = async (req, res, next) => {
           const bogoItemsatrray = menuIds[item.menuItemId].bogoItems;
           const discountType = menuIds[item.menuItemId].discountType;
           const subItemarray = menuIds[item.menuItemId].subItem;
-          const itemType = menuIds[item.menuItemId].itemType;
+	          const itemType = menuIds[item.menuItemId].itemType;
+	          const hasFlavors = menuIds[item.menuItemId].hasFlavors;
+	          const flavorsPerOrder = menuIds[item.menuItemId].flavorsPerOrder || 1;
+	          const selectedFlavors = Array.isArray(item.selectedFlavors)
+	            ? item.selectedFlavors
+	            : [];
+	          const hasToppings = menuIds[item.menuItemId].hasToppings;
+	          const toppingsPerOrder = menuIds[item.menuItemId].toppingsPerOrder || 1;
+	          const selectedToppings = Array.isArray(item.selectedToppings)
+	            ? item.selectedToppings
+	            : [];
+	          const selectedDiscountFlavors = Array.isArray(item.selectedDiscountFlavors)
+	            ? item.selectedDiscountFlavors
+	            : [];
+	          const selectedDiscountToppings = Array.isArray(item.selectedDiscountToppings)
+	            ? item.selectedDiscountToppings
+	            : [];
+	          let selectedOptionsCost = 0;
+	          let selectedDiscountOptionsCost = 0;
+
+	          if (hasFlavors) {
+	            selectedOptionsCost += validateSelectionsAndGetCost({
+	              menuItem: menuIds[item.menuItemId],
+	              selectedOptions: selectedFlavors,
+	              type: 'flavor',
+	              requiredCount: flavorsPerOrder,
+	              itemName: name,
+	            });
+	            selectedDiscountOptionsCost += validateSelectionsAndGetCost({
+	              menuItem: menuIds[item.menuItemId],
+	              selectedOptions: selectedDiscountFlavors,
+	              type: 'flavor',
+	              requiredCount: flavorsPerOrder,
+	              itemName: name,
+	            });
+	          }
+
+	          if (hasToppings) {
+	            selectedOptionsCost += validateSelectionsAndGetCost({
+	              menuItem: menuIds[item.menuItemId],
+	              selectedOptions: selectedToppings,
+	              type: 'topping',
+	              requiredCount: toppingsPerOrder,
+	              itemName: name,
+	            });
+	            selectedDiscountOptionsCost += validateSelectionsAndGetCost({
+	              menuItem: menuIds[item.menuItemId],
+	              selectedOptions: selectedDiscountToppings,
+	              type: 'topping',
+	              requiredCount: toppingsPerOrder,
+	              itemName: name,
+	            });
+	          }
 
           // Handle combo items
           let comboItemsWithDetails = [];
@@ -120,10 +428,12 @@ exports.validateOrder = async (req, res, next) => {
 
           // Clone original data (so we don't mutate the original menu item)
           let updatedFullMenuItemData = { ...menuIds[item.menuItemId] };
-          const mainSubtotal = price * item.qty;
-          let itemTotal = mainSubtotal;
+	          const unitPrice = price + selectedOptionsCost;
+	          const discountUnitPrice = price + selectedDiscountOptionsCost;
+	          const mainSubtotal = unitPrice * item.qty;
+	          let itemTotal = mainSubtotal;
           
-          const discountRules = menuIds[item.menuItemId].discountRules;
+		          const discountRules = menuIds[item.menuItemId].discountRules;
           
           // Add combo items to fullMenuItemData
           if (itemType === 'COMBO' && comboItemsWithDetails.length > 0) {
@@ -138,7 +448,7 @@ exports.validateOrder = async (req, res, next) => {
               : (item.qty >= buyQty ? 1 : 0);
               
             const rewardItems = eligibleSets * getQty;
-            const rewardTotal = rewardItems * price;
+            const rewardTotal = rewardItems * discountUnitPrice;
             const discountAmount = rewardTotal * discountVal;
             
             itemTotal = mainSubtotal + rewardTotal - discountAmount;
@@ -147,7 +457,7 @@ exports.validateOrder = async (req, res, next) => {
             updatedFullMenuItemData.bogoItems = [{
               itemId: item.menuItemId,
               name: name,
-              price: price,
+	              price: discountUnitPrice,
               qty: rewardItems,
               isSameItem: true,
               discountVal: discountVal
@@ -155,7 +465,7 @@ exports.validateOrder = async (req, res, next) => {
           } else {
             // Fallback to old logic if no discountRules
             // ✅ Only replace bogoItems if discount type is "bogo"
-            if (discountType && discountType === 'BOGO') {
+	          if (discountType && discountType === 'BOGO') {
               updatedFullMenuItemData = {
                 ...updatedFullMenuItemData,
                 bogoItems: Array.isArray(bogoItemsatrray)
@@ -167,7 +477,7 @@ exports.validateOrder = async (req, res, next) => {
               };
             }
             // ---------- BOGOHO Discount (Buy One Get One Half Off) ----------
-            if (discountType && discountType === 'BOGOHO') {
+	          if (!(discountRules && discountRules.discount > 0) && discountType && discountType === 'BOGOHO') {
               updatedFullMenuItemData = {
                 ...updatedFullMenuItemData,
                 bogoItems: Array.isArray(bogoItemsatrray)
@@ -175,9 +485,6 @@ exports.validateOrder = async (req, res, next) => {
                     const halfPrice = bogo.price / 2;
                     // const bogoTotal = halfPrice * item.qty;
                     const bogoTotal = 0;
-                    // Add BOGOHO price to subtotal
-                    // bogohoSubtotal += bogoTotal;
-
                     return {
                       ...bogo,
                       qty: item.qty,
@@ -186,11 +493,12 @@ exports.validateOrder = async (req, res, next) => {
                     };
                   })
                   : [],
-              };
-            }
+	            };
+		            itemTotal = mainSubtotal + (discountUnitPrice * item.qty * 0.5);
+	          }
 
             if (discountType === 'BOGOHO') {
-              itemTotal = mainSubtotal * 1.5;
+	              itemTotal = mainSubtotal + (discountUnitPrice * item.qty * 0.5);
             } else {
               itemTotal = mainSubtotal;
             }
@@ -198,8 +506,13 @@ exports.validateOrder = async (req, res, next) => {
 
           menuItems.push({
             menuItemId: item.menuItemId,
-            customization: item.customization || null,
-            price: price,
+		            customization: item.customization || null,
+		            selectedFlavors: hasFlavors ? selectedFlavors : [],
+		            selectedToppings: hasToppings ? selectedToppings : [],
+		            selectedDiscountFlavors: hasFlavors ? selectedDiscountFlavors : [],
+		            selectedDiscountToppings: hasToppings ? selectedDiscountToppings : [],
+		            optionsTotal: selectedOptionsCost,
+	            price: unitPrice,
             name: name,
             imgUrls: imgUrls,
             description: description,
@@ -259,10 +572,23 @@ exports.validateOrder = async (req, res, next) => {
         return res.error(new Error('You can not apply this coupon'), 409);
       }
 
-      disAmount = +Number((coupon.value * subTotal) / 100).toFixed(2);
+      if (coupon.type === 'PERCENTAGE') {
+        disAmount = +Number((coupon.value * subTotal) / 100).toFixed(2);
+        if (coupon.maxDiscount > 0) {
+          disAmount = Math.min(disAmount, coupon.maxDiscount);
+        }
+      } else {
+        disAmount = Math.min(Number(coupon.value) || 0, subTotal);
+      }
     }
 
-    let total = subTotal + taxAmount + tipsAmount - disAmount;
+    let total =
+      subTotal -
+      disAmount +
+      normalizedDeliveryFee +
+      normalizedTaxAmount +
+      normalizedDriverTip +
+      normalizedFoodTruckTip;
     let paymentProcessingFee = 0;
     const loc = foodTruck.locations.find(
       (itm) => itm.zipcode && itm._id.toString() === locationId
@@ -328,21 +654,30 @@ exports.validateOrder = async (req, res, next) => {
       locationId,
       deliveryTime: deliveryTime || null,
       deliveryDate: deliveryDate || null,
+      fulfillmentType,
+      deliveryAddress: deliveryAddress || null,
       couponId,
       availabilityId,
       items: menuItems,
       subTotal: subTotal,
+      subtotal: subTotal,
       discount: disAmount,
             // totalAfterDiscount: subTotal + taxAmount - disAmount,
       totalAfterDiscount: subTotal - disAmount,
-      taxAmount,
-      tipsAmount,
+      taxAmount: normalizedTaxAmount,
+      tax: normalizedTaxAmount,
+      deliveryFee: normalizedDeliveryFee,
+      tip: normalizedDriverTip,
+      tips: normalizedDriverTip,
+      tipsAmount: normalizedFoodTruckTip,
       paymentProcessingFee,
+      totalOrderCost: total,
       total,
       freeDessertAmount,
       isFreeDessertEligible,
       freeDessertApplied: isFreeDessertEligible,
       orderStatus: 'PLACED',
+      status: 'PLACED',
       statusTime: {
         placedAt: new Date().toISOString(),
         canceledAt: null,
@@ -1162,11 +1497,24 @@ exports.add = async (req, res, next) => {
         locationId,
         couponId,
         taxAmount = 0,
-        tipsAmount=0,
+        tax,
+        tip,
+        tips,
+        tipsAmount = 0,
+        deliveryFee,
+        fulfillmentType = 'PICKUP',
+        deliveryAddress = null,
         availabilityId,
       },
       user,
     } = req;
+    const normalizedTaxAmount = toMoney(tax ?? taxAmount);
+    const normalizedDeliveryFee = normalizeDeliveryFee(
+      fulfillmentType,
+      deliveryFee
+    );
+    const normalizedDriverTip = toMoney(tip ?? tips);
+    const normalizedFoodTruckTip = toMoney(tipsAmount);
 
     const menuIds = {};
     const foodTruck = await FoodTruckService.getById(foodTruckId);
@@ -1219,7 +1567,59 @@ exports.add = async (req, res, next) => {
           const bogoItemsatrray = menuIds[item.menuItemId].bogoItems;
           const discountType = menuIds[item.menuItemId].discountType;
           const subItemarray = menuIds[item.menuItemId].subItem;
-          const itemType = menuIds[item.menuItemId].itemType;
+	          const itemType = menuIds[item.menuItemId].itemType;
+	          const hasFlavors = menuIds[item.menuItemId].hasFlavors;
+	          const flavorsPerOrder = menuIds[item.menuItemId].flavorsPerOrder || 1;
+	          const selectedFlavors = Array.isArray(item.selectedFlavors)
+	            ? item.selectedFlavors
+	            : [];
+	          const hasToppings = menuIds[item.menuItemId].hasToppings;
+	          const toppingsPerOrder = menuIds[item.menuItemId].toppingsPerOrder || 1;
+	          const selectedToppings = Array.isArray(item.selectedToppings)
+	            ? item.selectedToppings
+	            : [];
+	          const selectedDiscountFlavors = Array.isArray(item.selectedDiscountFlavors)
+	            ? item.selectedDiscountFlavors
+	            : [];
+	          const selectedDiscountToppings = Array.isArray(item.selectedDiscountToppings)
+	            ? item.selectedDiscountToppings
+	            : [];
+	          let selectedOptionsCost = 0;
+	          let selectedDiscountOptionsCost = 0;
+
+	          if (hasFlavors) {
+	            selectedOptionsCost += validateSelectionsAndGetCost({
+	              menuItem: menuIds[item.menuItemId],
+	              selectedOptions: selectedFlavors,
+	              type: 'flavor',
+	              requiredCount: flavorsPerOrder,
+	              itemName: name,
+	            });
+	            selectedDiscountOptionsCost += validateSelectionsAndGetCost({
+	              menuItem: menuIds[item.menuItemId],
+	              selectedOptions: selectedDiscountFlavors,
+	              type: 'flavor',
+	              requiredCount: flavorsPerOrder,
+	              itemName: name,
+	            });
+	          }
+
+	          if (hasToppings) {
+	            selectedOptionsCost += validateSelectionsAndGetCost({
+	              menuItem: menuIds[item.menuItemId],
+	              selectedOptions: selectedToppings,
+	              type: 'topping',
+	              requiredCount: toppingsPerOrder,
+	              itemName: name,
+	            });
+	            selectedDiscountOptionsCost += validateSelectionsAndGetCost({
+	              menuItem: menuIds[item.menuItemId],
+	              selectedOptions: selectedDiscountToppings,
+	              type: 'topping',
+	              requiredCount: toppingsPerOrder,
+	              itemName: name,
+	            });
+	          }
 
           // Handle combo items
           let comboItemsWithDetails = [];
@@ -1245,8 +1645,11 @@ exports.add = async (req, res, next) => {
 
           // Clone original data (so we don't mutate the original menu item)
           let updatedFullMenuItemData = { ...menuIds[item.menuItemId] };
-          const mainSubtotal = price * item.qty;
-          let bogohoSubtotal = 0;
+		          const unitPrice = price + selectedOptionsCost;
+		          const discountUnitPrice = price + selectedDiscountOptionsCost;
+	          const mainSubtotal = unitPrice * item.qty;
+	          let itemTotal = mainSubtotal;
+	          const discountRules = menuIds[item.menuItemId].discountRules;
           
           // Add combo items to fullMenuItemData
           if (itemType === 'COMBO' && comboItemsWithDetails.length > 0) {
@@ -1254,46 +1657,69 @@ exports.add = async (req, res, next) => {
           }
           
           // ✅ Only replace bogoItems if discount type is "bogo"
-          if (discountType && discountType === 'BOGO') {
-            updatedFullMenuItemData = {
-              ...updatedFullMenuItemData,
-              bogoItems: Array.isArray(bogoItemsatrray)
-                ? bogoItemsatrray.map((bogo) => ({
-                  ...bogo,
-                  qty: item.qty, // update quantity same as parent
-                }))
-                : [],
-            };
-          }
+          if (discountRules && discountRules.discount > 0) {
+            const { buyQty = 1, getQty = 1, discount: discountVal = 0, repeatable = true } = discountRules;
+            const normalizedBuyQty = Math.max(1, Number(buyQty) || 1);
+            const normalizedGetQty = Math.max(1, Number(getQty) || 1);
+            const eligibleSets = repeatable
+              ? Math.floor(item.qty / normalizedBuyQty)
+              : (item.qty >= normalizedBuyQty ? 1 : 0);
+            const rewardItems = eligibleSets * normalizedGetQty;
+            const rewardTotal = rewardItems * discountUnitPrice;
+            const discountAmount = rewardTotal * discountVal;
 
-          // ---------- BOGOHO Discount (Buy One Get One Half Off) ----------
-          if (discountType && discountType === 'BOGOHO') {
-            updatedFullMenuItemData = {
-              ...updatedFullMenuItemData,
-              bogoItems: Array.isArray(bogoItemsatrray)
-                ? bogoItemsatrray.map((bogo) => {
-                  const halfPrice = bogo.price / 2;
-                  // const bogoTotal = halfPrice * item.qty;
-                  const bogoTotal = 0;
-
-                  // Add BOGOHO price to subtotal
-                  bogohoSubtotal += bogoTotal;
-
-                  return {
+            itemTotal = mainSubtotal + rewardTotal - discountAmount;
+            updatedFullMenuItemData.bogoItems = [{
+              itemId: item.menuItemId,
+              name: name,
+	              price: discountUnitPrice,
+              qty: rewardItems,
+              isSameItem: true,
+              discountVal: discountVal
+            }];
+          } else {
+            if (discountType && discountType === 'BOGO') {
+              updatedFullMenuItemData = {
+                ...updatedFullMenuItemData,
+                bogoItems: Array.isArray(bogoItemsatrray)
+                  ? bogoItemsatrray.map((bogo) => ({
                     ...bogo,
                     qty: item.qty,
-                    halfPrice,
-                    total: bogoTotal,
-                  };
-                })
-                : [],
-            };
+                  }))
+                  : [],
+              };
+            }
+
+            if (discountType && discountType === 'BOGOHO') {
+              updatedFullMenuItemData = {
+                ...updatedFullMenuItemData,
+                bogoItems: Array.isArray(bogoItemsatrray)
+                  ? bogoItemsatrray.map((bogo) => {
+                    const halfPrice = bogo.price / 2;
+                    const bogoTotal = 0;
+
+                    return {
+                      ...bogo,
+                      qty: item.qty,
+                      halfPrice,
+                      total: bogoTotal,
+                    };
+                  })
+                  : [],
+              };
+              itemTotal = mainSubtotal + (discountUnitPrice * item.qty * 0.5);
+            }
           }
 
           menuItems.push({
-            menuItemId: item.menuItemId,
-            customization: item.customization || null,
-            price: price,
+	            menuItemId: item.menuItemId,
+	            customization: item.customization || null,
+	            selectedFlavors: hasFlavors ? selectedFlavors : [],
+	            selectedToppings: hasToppings ? selectedToppings : [],
+	            selectedDiscountFlavors: hasFlavors ? selectedDiscountFlavors : [],
+	            selectedDiscountToppings: hasToppings ? selectedDiscountToppings : [],
+	            optionsTotal: selectedOptionsCost,
+	            price: unitPrice,
             name: name,
             imgUrls: imgUrls,
             description: description,
@@ -1302,16 +1728,10 @@ exports.add = async (req, res, next) => {
             comboItems: comboItemsWithDetails,
             comboSubtotal:comboSubtotal,
             fullMenuItemData: updatedFullMenuItemData,
-            total: mainSubtotal,
-          });
-
-          if (discountType === 'BOGOHO') {
-            // subTotal += mainSubtotal + bogohoSubtotal;
-            const addhalf= mainSubtotal * 1.5;
-            subTotal += addhalf;
-          } else {
-            subTotal += mainSubtotal;
-          }
+	            total: itemTotal,
+	          });
+	
+	          subTotal += itemTotal;
           
           // Add combo items subtotal
           // subTotal += comboSubtotal;
@@ -1361,10 +1781,23 @@ exports.add = async (req, res, next) => {
         return res.error(new Error('You can not apply this coupon'), 409);
       }
 
-      disAmount = +Number((coupon.value * subTotal) / 100).toFixed(2);
+      if (coupon.type === 'PERCENTAGE') {
+        disAmount = +Number((coupon.value * subTotal) / 100).toFixed(2);
+        if (coupon.maxDiscount > 0) {
+          disAmount = Math.min(disAmount, coupon.maxDiscount);
+        }
+      } else {
+        disAmount = Math.min(Number(coupon.value) || 0, subTotal);
+      }
     }
 
-    let total = subTotal + taxAmount + tipsAmount - disAmount;
+    let total =
+      subTotal -
+      disAmount +
+      normalizedDeliveryFee +
+      normalizedTaxAmount +
+      normalizedDriverTip +
+      normalizedFoodTruckTip;
     let paymentProcessingFee = 0;
     const loc = foodTruck.locations.find(
       (itm) => itm.zipcode && itm._id.toString() === locationId
@@ -1430,22 +1863,31 @@ exports.add = async (req, res, next) => {
       locationId,
       deliveryTime: deliveryTime || null,
       deliveryDate: deliveryDate || null,
+      fulfillmentType,
+      deliveryAddress: deliveryAddress || null,
       couponId,
       availabilityId,
       items: menuItems,
       locationData: loc || null,
       subTotal: subTotal,
+      subtotal: subTotal,
       discount: disAmount,
       // totalAfterDiscount: subTotal + taxAmount - disAmount,
       totalAfterDiscount: subTotal - disAmount,
-      taxAmount,
-      tipsAmount,
+      taxAmount: normalizedTaxAmount,
+      tax: normalizedTaxAmount,
+      deliveryFee: normalizedDeliveryFee,
+      tip: normalizedDriverTip,
+      tips: normalizedDriverTip,
+      tipsAmount: normalizedFoodTruckTip,
       paymentProcessingFee,
+      totalOrderCost: total,
       total,
       freeDessertAmount,
       isFreeDessertEligible,
       freeDessertApplied: isFreeDessertEligible,
       orderStatus: 'PLACED',
+      status: 'PLACED',
       orderNumber: counter.sequenceValue,
       paymentMethod,
       paymentStatus,
@@ -1550,6 +1992,7 @@ exports.update = async (req, res, next) => {
     if (!item) {
       return res.error(new Error('No Order found'), 409);
     }
+    const previousOrderStatus = item.orderStatus;
 
     if (orderStatus !== 'CANCEL' && user.userType === 'CUSTOMER') {
       return res.error(
@@ -1573,6 +2016,7 @@ exports.update = async (req, res, next) => {
 
     if (orderStatus) {
       item.orderStatus = orderStatus;
+      item.status = orderStatus;
       item.statusTime = item.statusTime || {
         placedAt: item.createdAt,
         canceledAt: null,
@@ -1669,6 +2113,24 @@ exports.update = async (req, res, next) => {
       item.paymentStatus = 'PAID';
     }
 
+    if (
+      orderStatus === 'ACCEPTED' &&
+      previousOrderStatus !== 'ACCEPTED' &&
+      shouldCreateShipdayDelivery(item)
+    ) {
+      const foodTruck = await FoodTruckService.getById(item.foodTruckId);
+      const shipdayResponse = await createShipdayDeliveryForAcceptedOrder(
+        item,
+        foodTruck
+      );
+
+      if (shipdayResponse) {
+        item.shipdayOrderCreatedAt = new Date();
+        item.shipdayResponse = shipdayResponse;
+        item.shipdayError = null;
+      }
+    }
+
     await item.save();
 
     try {
@@ -1694,6 +2156,114 @@ exports.update = async (req, res, next) => {
       { [`${entityName.toLocaleLowerCase()}`]: item },
       `${entityName} updated`
     );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.shipdayUpdate = async (req, res, next) => {
+  try {
+    const apiKey = req.headers['x-api-key'];
+    if (!process.env.BACKEND_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        message: 'BACKEND_API_KEY is not configured',
+      });
+    }
+
+    if (apiKey !== process.env.BACKEND_API_KEY) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const {
+      orderId,
+      status,
+      driverName = null,
+      deliveryTime = null,
+      eventId = null,
+      rawPayload = null,
+    } = req.body || {};
+
+    console.log('Shipday update incoming payload:', req.body);
+
+    if (!orderId || !status) {
+      return res.status(400).json({
+        success: false,
+        message: 'orderId and status are required',
+      });
+    }
+
+    const mappedStatus = SHIPDAY_STATUS_MAP[normalizeShipdayStatus(status)];
+    console.log('Shipday update mapped status:', {
+      orderId,
+      status,
+      mappedStatus,
+    });
+
+    if (!mappedStatus) {
+      return res.status(400).json({
+        success: false,
+        message: 'Unsupported Shipday status',
+      });
+    }
+
+    const order = await OrderModel.findOne(getShipdayOrderFilter(orderId)).lean();
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found',
+      });
+    }
+
+    const existingEventIds =
+      order.shipdayResponse?.processedEventIds ||
+      order.shipdayResponse?.shipdayWebhookEvents ||
+      [];
+    const processedEventIds = Array.isArray(existingEventIds)
+      ? existingEventIds
+      : [];
+
+    if (eventId && processedEventIds.includes(eventId)) {
+      console.log('Shipday update duplicate event ignored:', {
+        orderId,
+        eventId,
+      });
+      return res.json({ success: true });
+    }
+
+    const now = new Date();
+    const update = {
+      status: mappedStatus,
+      driverName,
+      deliveryTime,
+      updatedAt: now,
+      shipdayResponse: {
+        ...(order.shipdayResponse || {}),
+        latestWebhook: rawPayload,
+        latestWebhookStatus: status,
+        latestMappedStatus: mappedStatus,
+        latestDriverName: driverName,
+        latestDeliveryTime: deliveryTime,
+        latestWebhookReceivedAt: now,
+        processedEventIds: eventId
+          ? [...processedEventIds, eventId]
+          : processedEventIds,
+      },
+    };
+
+    const result = await OrderModel.collection.updateOne(
+      { _id: order._id },
+      { $set: update }
+    );
+
+    console.log('Shipday update DB result:', {
+      orderId,
+      eventId,
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+    });
+
+    return res.json({ success: true });
   } catch (e) {
     return next(e);
   }

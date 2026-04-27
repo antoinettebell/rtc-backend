@@ -32,6 +32,27 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    fulfillmentType: {
+      type: String,
+      enum: ['PICKUP', 'DELIVERY'],
+      default: 'PICKUP',
+    },
+    deliveryAddress: {
+      type: String,
+      default: null,
+    },
+    shipdayOrderCreatedAt: {
+      type: Date,
+      default: null,
+    },
+    shipdayResponse: {
+      type: Object,
+      default: null,
+    },
+    shipdayError: {
+      type: Object,
+      default: null,
+    },
     locationId: {
       type: String,
       default: null,
@@ -50,6 +71,34 @@ const mSchema = mongoose.Schema(
         customization: {
           type: String,
           default: null,
+        },
+        selectedFlavors: [
+          {
+            type: String,
+            default: null,
+          },
+        ],
+        selectedToppings: [
+          {
+            type: String,
+            default: null,
+          },
+        ],
+        selectedDiscountFlavors: [
+          {
+            type: String,
+            default: null,
+          },
+        ],
+        selectedDiscountToppings: [
+          {
+            type: String,
+            default: null,
+          },
+        ],
+        optionsTotal: {
+          type: Number,
+          default: 0,
         },
         qty: {
           type: Number,
@@ -96,6 +145,10 @@ const mSchema = mongoose.Schema(
       type: Number,
       required: true,
     },
+    subtotal: {
+      type: Number,
+      default: 0,
+    },
     discount: {
       type: Number,
       default: 0,
@@ -107,6 +160,22 @@ const mSchema = mongoose.Schema(
     taxAmount: {
       type: Number,
       required: true,
+    },
+    tax: {
+      type: Number,
+      default: 0,
+    },
+    deliveryFee: {
+      type: Number,
+      default: 0,
+    },
+    tip: {
+      type: Number,
+      default: 0,
+    },
+    tips: {
+      type: Number,
+      default: 0,
     },
     paymentProcessingFee: {
       type: Number,
@@ -120,6 +189,10 @@ const mSchema = mongoose.Schema(
       type: Number,
       required: true,
     },
+    totalOrderCost: {
+      type: Number,
+      default: 0,
+    },
     orderStatus: {
       type: String,
       enum: [
@@ -132,6 +205,10 @@ const mSchema = mongoose.Schema(
         'READY_FOR_PICKUP',
         'COMPLETED',
       ],
+    },
+    status: {
+      type: String,
+      default: 'PLACED',
     },
     cancelReason: {
       type: String,

@@ -3,6 +3,7 @@
  */
 const express = require('express');
 const v1Routes = require('./v1/routes');
+const { OrderController } = require('./v1/controllers');
 const router = express.Router();
 const { server } = require('./config');
 
@@ -17,6 +18,11 @@ router.get('/', (req, res) => {
  * Image retrieve route
  */
 router.use('/images', express.static('images'));
+
+/**
+ * Shipday relay webhook route.
+ */
+router.post('/api/orders/shipday-update', OrderController.shipdayUpdate);
 
 /**
  * Route to V1 APIs
