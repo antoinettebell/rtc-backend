@@ -20,6 +20,22 @@ const mSchema = mongoose.Schema(
       ref: 'users',
       required: true,
     },
+    createdByUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'users',
+      default: null,
+    },
+    orderSource: {
+      type: String,
+      enum: ['CUSTOMER_APP', 'VENDOR_POS'],
+      default: 'CUSTOMER_APP',
+    },
+    guestCustomer: {
+      phone: {
+        type: String,
+        default: null,
+      },
+    },
     deliveryTime: {
       type: String,
       default: null,
@@ -262,7 +278,7 @@ const mSchema = mongoose.Schema(
     },
     paymentMethod: {
       type: String,
-      enum: ['COD', 'APPLE_PAY', 'GOOGLE_PAY', 'CARD', 'STRIPE'],
+      enum: ['COD', 'CASH', 'APPLE_PAY', 'GOOGLE_PAY', 'CARD', 'TAP_TO_PAY', 'STRIPE'],
       default: 'COD',
     },
     paymentStatus: {

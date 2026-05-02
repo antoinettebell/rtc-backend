@@ -39,21 +39,25 @@ module.exports = {
       fulfillmentType: Joi.string().valid('PICKUP', 'DELIVERY').default('PICKUP'),
       deliveryAddress: Joi.string().allow(null, ''),
       availabilityId: Joi.string(),
+      orderSource: Joi.string().valid('CUSTOMER_APP', 'VENDOR_POS').default('CUSTOMER_APP'),
+      guestCustomer: Joi.object({
+        phone: Joi.string().allow(null, ''),
+      }).optional(),
 
       paymentMethod: Joi.string()
-        .valid('COD', 'APPLE_PAY', 'GOOGLE_PAY', 'CARD')
+        .valid('COD', 'CASH', 'APPLE_PAY', 'GOOGLE_PAY', 'CARD', 'TAP_TO_PAY')
         .default('COD'),
       paymentStatus: Joi.string()
         .valid('PENDING', 'PAID', 'FAILED', 'REFUNDED')
         .default('PENDING'),
       transactionId: Joi.string().when('paymentMethod', {
-        is: 'COD',
+        is: Joi.valid('COD', 'CASH'),
         then: Joi.string().optional().allow(null, ''),
         otherwise: Joi.string().required(),
       }),
 
       authCode: Joi.string().when('paymentMethod', {
-        is: 'COD',
+        is: Joi.valid('COD', 'CASH'),
         then: Joi.string().optional().allow(null, ''),
         otherwise: Joi.string().required(),
       }),
@@ -116,6 +120,9 @@ module.exports = {
         then: Joi.required(),
         otherwise: Joi.forbidden(),
       }),
+      paymentStatus: Joi.string()
+        .valid('PENDING', 'PAID', 'FAILED', 'REFUNDED')
+        .optional(),
     }),
   },
 
@@ -140,6 +147,13 @@ module.exports = {
       fulfillmentType: Joi.string().valid('PICKUP', 'DELIVERY').default('PICKUP'),
       deliveryAddress: Joi.string().allow(null, ''),
       availabilityId: Joi.string(),
+      orderSource: Joi.string().valid('CUSTOMER_APP', 'VENDOR_POS').default('CUSTOMER_APP'),
+      guestCustomer: Joi.object({
+        phone: Joi.string().allow(null, ''),
+      }).optional(),
+      paymentMethod: Joi.string()
+        .valid('COD', 'CASH', 'APPLE_PAY', 'GOOGLE_PAY', 'CARD', 'TAP_TO_PAY')
+        .optional(),
       couponId: Joi.string(),
       taxAmount: Joi.number(),
       tax: Joi.number(),
@@ -179,7 +193,7 @@ module.exports = {
         )
         .required(),
       paymentMethod: Joi.string()
-        .valid('APPLE_PAY', 'GOOGLE_PAY')
+        .valid('APPLE_PAY', 'GOOGLE_PAY', 'CARD', 'TAP_TO_PAY')
         .default('APPLE_PAY'),
 
       taxAmount: Joi.string().optional(),

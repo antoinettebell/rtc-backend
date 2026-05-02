@@ -43,6 +43,41 @@ const normalizeDeliveryFee = (fulfillmentType, deliveryFee) => {
 const normalizeDriverTip = (fulfillmentType, tip, tips) =>
   fulfillmentType === 'DELIVERY' ? toMoney(tip ?? tips) : 0;
 
+const isVendorPosOrder = (user, orderSource) =>
+  user?.userType === 'VENDOR' && orderSource === 'VENDOR_POS';
+
+const isCashPaymentMethod = (paymentMethod) =>
+  ['COD', 'CASH'].includes(paymentMethod);
+
+const isGatewayPaymentMethod = (paymentMethod) =>
+  !isCashPaymentMethod(paymentMethod);
+
+const buildInitialStatusTime = (orderStatus) => {
+  const now = new Date().toISOString();
+  return {
+    placedAt: now,
+    canceledAt: null,
+    acceptedAt:
+      orderStatus === 'ACCEPTED' || orderStatus === 'PREPARING' ? now : null,
+    rejectedAt: null,
+    preparingAt: orderStatus === 'PREPARING' ? now : null,
+    readyAt: null,
+    completedAt: null,
+  };
+};
+
+const queueGuestSmsNotificationStub = async ({ order, guestCustomer }) => {
+  if (!guestCustomer?.phone) {
+    return;
+  }
+
+  console.log('Guest SMS notification stub queued', {
+    orderId: order?._id,
+    orderNumber: order?.orderNumber,
+    phone: guestCustomer.phone,
+  });
+};
+
 const shouldCreateShipdayDelivery = (order) =>
   order?.fulfillmentType === 'DELIVERY' || order?.orderType === 'DELIVERY';
 
@@ -292,9 +327,18 @@ exports.validateOrder = async (req, res, next) => {
         fulfillmentType = 'PICKUP',
         deliveryAddress = null,
         availabilityId,
+        paymentMethod,
+        orderSource = 'CUSTOMER_APP',
       },
       user,
     } = req;
+    const vendorPosOrder = isVendorPosOrder(user, orderSource);
+    const applyGatewayFee = paymentMethod
+      ? isGatewayPaymentMethod(paymentMethod)
+      : !vendorPosOrder;
+    if (user?.userType === 'VENDOR' && !vendorPosOrder) {
+      return res.error(new Error('Vendor orders must use the POS flow'), 403);
+    }
     const normalizedTaxAmount = toMoney(tax ?? taxAmount);
     const normalizedDeliveryFee = normalizeDeliveryFee(
       fulfillmentType,
@@ -307,6 +351,12 @@ exports.validateOrder = async (req, res, next) => {
     const foodTruck = await FoodTruckService.getById(foodTruckId);
     if (!foodTruck) {
       return res.error(new Error('No food truck found'), 409);
+    }
+    if (
+      vendorPosOrder &&
+      foodTruck.userId?.toString() !== user._id?.toString()
+    ) {
+      return res.error(new Error('Food truck not found or access denied'), 404);
     }
 
     if (availabilityId) {
@@ -598,7 +648,7 @@ exports.validateOrder = async (req, res, next) => {
     const loc = foodTruck.locations.find(
       (itm) => itm.zipcode && itm._id.toString() === locationId
     );
-    if (loc) {
+    if (loc && applyGatewayFee) {
       const tax = await TaxRatesService.getByData(
         { zip: loc.zipcode },
         { singleResult: true }
@@ -619,6 +669,7 @@ exports.validateOrder = async (req, res, next) => {
 
     const settings = await SettingService.getByData({}, { singleResult: true });
     if (
+      !vendorPosOrder &&
       settings?.isFreeDessertEnabled &&
       settings?.freeDessertAmount > 0 &&
       settings?.freeDessertOrderCount > 0
@@ -656,6 +707,8 @@ exports.validateOrder = async (req, res, next) => {
     const orderPlaceData = {
       foodTruckId: foodTruck?._id,
       userId: user._id,
+      createdByUserId: vendorPosOrder ? user._id : null,
+      orderSource,
       locationId,
       deliveryTime: deliveryTime || null,
       deliveryDate: deliveryDate || null,
@@ -681,17 +734,9 @@ exports.validateOrder = async (req, res, next) => {
       freeDessertAmount,
       isFreeDessertEligible,
       freeDessertApplied: isFreeDessertEligible,
-      orderStatus: 'PLACED',
-      status: 'PLACED',
-      statusTime: {
-        placedAt: new Date().toISOString(),
-        canceledAt: null,
-        acceptedAt: null,
-        rejectedAt: null,
-        preparingAt: null,
-        readyAt: null,
-        completedAt: null,
-      },
+      orderStatus: vendorPosOrder ? 'PREPARING' : 'PLACED',
+      status: vendorPosOrder ? 'PREPARING' : 'PLACED',
+      statusTime: buildInitialStatusTime(vendorPosOrder ? 'PREPARING' : 'PLACED'),
     };
     console.log("orderPlaceData",orderPlaceData);
     // const data = await Service.create(orderPlaceData);
@@ -726,9 +771,14 @@ exports.paymentCheckout = async (req, res, next) => {
 
     console.log('paymentData', paymentData);
 
-    const base64String = Buffer.from(paymentMethod === 'APPLE_PAY' ? JSON.stringify(paymentData) : paymentData).toString(
-      'base64'
-    );
+    const base64String =
+      paymentMethod === 'CARD' || paymentMethod === 'TAP_TO_PAY'
+        ? (paymentData?.opaqueToken || paymentData?.dataValue || paymentData)
+        : Buffer.from(
+            paymentMethod === 'APPLE_PAY'
+              ? JSON.stringify(paymentData)
+              : paymentData
+          ).toString('base64');
 
     console.log('base64String', base64String);
 
@@ -743,7 +793,7 @@ exports.paymentCheckout = async (req, res, next) => {
     // console.log("applePayToken",typeof(applePayToken));
 
     if (!opaqueToken) {
-      return res.error(new Error('ApplePay or GooglePay token missing'), 400);
+      return res.error(new Error('Payment token missing'), 400);
     }
     //  CHARGE PAYMENT
     const chargeResp = await PaymentHelper.chargePaymentUnified({
@@ -1510,9 +1560,19 @@ exports.add = async (req, res, next) => {
         fulfillmentType = 'PICKUP',
         deliveryAddress = null,
         availabilityId,
+        orderSource = 'CUSTOMER_APP',
+        guestCustomer = {},
       },
       user,
     } = req;
+    const vendorPosOrder = isVendorPosOrder(user, orderSource);
+    const initialOrderStatus = vendorPosOrder ? 'PREPARING' : 'PLACED';
+    const normalizedPaymentMethod = paymentMethod || (vendorPosOrder ? 'CASH' : 'COD');
+    const normalizedPaymentStatus =
+      paymentStatus || (isCashPaymentMethod(normalizedPaymentMethod) ? 'PENDING' : 'PAID');
+    if (user?.userType === 'VENDOR' && !vendorPosOrder) {
+      return res.error(new Error('Vendor orders must use the POS flow'), 403);
+    }
     const normalizedTaxAmount = toMoney(tax ?? taxAmount);
     const normalizedDeliveryFee = normalizeDeliveryFee(
       fulfillmentType,
@@ -1525,6 +1585,12 @@ exports.add = async (req, res, next) => {
     const foodTruck = await FoodTruckService.getById(foodTruckId);
     if (!foodTruck) {
       return res.error(new Error('No food truck found'), 409);
+    }
+    if (
+      vendorPosOrder &&
+      foodTruck.userId?.toString() !== user._id?.toString()
+    ) {
+      return res.error(new Error('Food truck not found or access denied'), 404);
     }
 
     if (availabilityId) {
@@ -1807,7 +1873,7 @@ exports.add = async (req, res, next) => {
     const loc = foodTruck.locations.find(
       (itm) => itm.zipcode && itm._id.toString() === locationId
     );
-    if (loc) {
+    if (loc && isGatewayPaymentMethod(normalizedPaymentMethod)) {
       const tax = await TaxRatesService.getByData(
         { zip: loc.zipcode },
         { singleResult: true }
@@ -1828,6 +1894,7 @@ exports.add = async (req, res, next) => {
 
     const settings = await SettingService.getByData({}, { singleResult: true });
     if (
+      !vendorPosOrder &&
       settings?.isFreeDessertEnabled &&
       settings?.freeDessertAmount > 0 &&
       settings?.freeDessertOrderCount > 0
@@ -1865,6 +1932,11 @@ exports.add = async (req, res, next) => {
     const data = await Service.create({
       foodTruckId: foodTruck?._id,
       userId: user._id,
+      createdByUserId: vendorPosOrder ? user._id : null,
+      orderSource,
+      guestCustomer: vendorPosOrder
+        ? { phone: guestCustomer?.phone || null }
+        : undefined,
       locationId,
       deliveryTime: deliveryTime || null,
       deliveryDate: deliveryDate || null,
@@ -1891,33 +1963,25 @@ exports.add = async (req, res, next) => {
       freeDessertAmount,
       isFreeDessertEligible,
       freeDessertApplied: isFreeDessertEligible,
-      orderStatus: 'PLACED',
-      status: 'PLACED',
+      orderStatus: initialOrderStatus,
+      status: initialOrderStatus,
       orderNumber: counter.sequenceValue,
-      paymentMethod,
-      paymentStatus,
+      paymentMethod: normalizedPaymentMethod,
+      paymentStatus: normalizedPaymentStatus,
       transactionId,
       authCode,
       invoiceNumber,
       accountNumber,
       accountType,
-      statusTime: {
-        placedAt: new Date().toISOString(),
-        canceledAt: null,
-        acceptedAt: null,
-        rejectedAt: null,
-        preparingAt: null,
-        readyAt: null,
-        completedAt: null,
-      },
+      statusTime: buildInitialStatusTime(initialOrderStatus),
     });
 
     if (couponId) {
       await CouponUsageService.create({ couponId, userId: user._id });
     }
 
-    // UPDATE PAYMENT LOG AFTER ORDER CREATION (NON-COD)
-    if (paymentMethod !== 'COD') {
+    // UPDATE PAYMENT LOG AFTER ORDER CREATION (GATEWAY PAYMENTS ONLY)
+    if (isGatewayPaymentMethod(normalizedPaymentMethod)) {
       try {
         const paymentLog = await PaymentsLogService.getByData(
           {
@@ -1940,10 +2004,14 @@ exports.add = async (req, res, next) => {
     }
 
     try {
-      await CustomNotification.sendNewOrderNotification(
-        { _id: foodTruck.userId },
-        data._id
-      );
+      if (!vendorPosOrder) {
+        await CustomNotification.sendNewOrderNotification(
+          { _id: foodTruck.userId },
+          data._id
+        );
+      } else {
+        await queueGuestSmsNotificationStub({ order: data, guestCustomer });
+      }
     } catch (e) { }
 
     return res.data(
@@ -1968,7 +2036,7 @@ exports.add = async (req, res, next) => {
 exports.update = async (req, res, next) => {
   try {
     const {
-      body: { orderStatus, pickupTime, cancelReason },
+      body: { orderStatus, pickupTime, cancelReason, paymentStatus },
       params: { id },
       user,
     } = req;
@@ -1998,8 +2066,32 @@ exports.update = async (req, res, next) => {
       return res.error(new Error('No Order found'), 409);
     }
     const previousOrderStatus = item.orderStatus;
+    if (user.userType === 'VENDOR') {
+      const foodTruck = await FoodTruckService.getByData(
+        { _id: item.foodTruckId, userId: user._id },
+        { singleResult: true }
+      );
 
-    if (orderStatus !== 'CANCEL' && user.userType === 'CUSTOMER') {
+      if (!foodTruck) {
+        return res.error(new Error('Order not found or access denied'), 404);
+      }
+    }
+
+    if (paymentStatus) {
+      if (
+        !(
+          item.orderSource === 'VENDOR_POS' &&
+          isCashPaymentMethod(item.paymentMethod) &&
+          user.userType === 'VENDOR'
+        )
+      ) {
+        return res.error(new Error('Payment status can not be updated for this order'), 409);
+      }
+
+      item.paymentStatus = paymentStatus;
+    }
+
+    if (orderStatus && orderStatus !== 'CANCEL' && user.userType === 'CUSTOMER') {
       return res.error(
         new Error(`You can not update status to '${orderStatus}'`),
         409
@@ -2010,7 +2102,7 @@ exports.update = async (req, res, next) => {
       return res.error(new Error(`This order is rejected by the vendor.`), 409);
     }
 
-    if (statusSort[orderStatus] < statusSort[item.orderStatus]) {
+    if (orderStatus && statusSort[orderStatus] < statusSort[item.orderStatus]) {
       return res.error(
         new Error(
           `Can not update status to "${orderStatus}" while it is "${item.orderStatus}"`
@@ -2045,7 +2137,7 @@ exports.update = async (req, res, next) => {
       // Process refund for CANCEL/REJECTED orders with Apple Pay/Google Pay
       if ((orderStatus === 'CANCEL' || orderStatus === 'REJECTED') &&
         item.transactionId &&
-        (item.paymentMethod === 'APPLE_PAY' || item.paymentMethod === 'GOOGLE_PAY')) {
+        isGatewayPaymentMethod(item.paymentMethod)) {
 
         try {
           const refundResp = await PaymentHelper.processRefund({
@@ -2113,8 +2205,8 @@ exports.update = async (req, res, next) => {
       item.pickupTime = pickupTime;
     }
 
-    // Update payment status to PAID for COD orders when completed
-    if (orderStatus === 'COMPLETED' && item.paymentMethod === 'COD') {
+    // Update payment status to PAID for cash orders when completed
+    if (orderStatus === 'COMPLETED' && isCashPaymentMethod(item.paymentMethod)) {
       item.paymentStatus = 'PAID';
     }
 
@@ -2139,21 +2231,23 @@ exports.update = async (req, res, next) => {
     await item.save();
 
     try {
-      if (orderStatus === 'CANCEL') {
-        const ft = await FoodTruckService.getById(item.foodTruckId);
-        if (ft) {
+      if (orderStatus) {
+        if (orderStatus === 'CANCEL') {
+          const ft = await FoodTruckService.getById(item.foodTruckId);
+          if (ft) {
+            await CustomNotification.sendOrderStatusNotification(
+              { _id: ft.userId },
+              id,
+              orderStatus
+            );
+          }
+        } else if (item.orderSource !== 'VENDOR_POS') {
           await CustomNotification.sendOrderStatusNotification(
-            { _id: ft.userId },
+            { _id: item.userId },
             id,
             orderStatus
           );
         }
-      } else {
-        await CustomNotification.sendOrderStatusNotification(
-          { _id: item.userId },
-          id,
-          orderStatus
-        );
       }
     } catch (e) { }
 

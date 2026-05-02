@@ -671,7 +671,7 @@ if (startDate && endDate) {
             codRevenue: {
               $sum: {
                 $cond: [
-                  { $eq: ['$paymentMethod', 'COD'] },
+                  { $in: ['$paymentMethod', ['COD', 'CASH']] },
                   '$total',
                   0
                 ]
@@ -680,7 +680,7 @@ if (startDate && endDate) {
             digitalRevenue: {
               $sum: {
                 $cond: [
-                  { $in: ['$paymentMethod', ['APPLE_PAY', 'GOOGLE_PAY', 'CARD', 'STRIPE']] },
+                  { $in: ['$paymentMethod', ['APPLE_PAY', 'GOOGLE_PAY', 'CARD', 'TAP_TO_PAY', 'STRIPE']] },
                   '$total',
                   0
                 ]
@@ -689,7 +689,7 @@ if (startDate && endDate) {
             codOrders: {
               $sum: {
                 $cond: [
-                  { $eq: ['$paymentMethod', 'COD'] },
+                  { $in: ['$paymentMethod', ['COD', 'CASH']] },
                   1,
                   0
                 ]
@@ -698,7 +698,7 @@ if (startDate && endDate) {
             digitalOrders: {
               $sum: {
                 $cond: [
-                  { $in: ['$paymentMethod', ['APPLE_PAY', 'GOOGLE_PAY', 'CARD', 'STRIPE']] },
+                  { $in: ['$paymentMethod', ['APPLE_PAY', 'GOOGLE_PAY', 'CARD', 'TAP_TO_PAY', 'STRIPE']] },
                   1,
                   0
                 ]

@@ -39,7 +39,9 @@ exports.chargePaymentUnified = async (requestData) => {
     opaqueData.setDataDescriptor(
       paymentMethod === "GOOGLE_PAY"
         ? "COMMON.GOOGLE.INAPP.PAYMENT"
-        : "COMMON.APPLE.INAPP.PAYMENT"
+        : paymentMethod === "APPLE_PAY"
+          ? "COMMON.APPLE.INAPP.PAYMENT"
+          : "COMMON.ACCEPT.INAPP.PAYMENT"
     );
 
     const paymentType = new APIContracts.PaymentType();
@@ -642,7 +644,6 @@ exports.processRefund = async ({
     };
   }
 };
-
 
 
 

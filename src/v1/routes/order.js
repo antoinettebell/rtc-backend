@@ -23,7 +23,7 @@ router.get('/:id', Controller.list);
 /** [POST] /api/v1/order */
 router.post(
   '/',
-  allowedTo(['CUSTOMER']),
+  allowedTo(['CUSTOMER', 'VENDOR']),
   validate(Validation.add),
   Controller.add
 );
@@ -42,7 +42,7 @@ router.get('/vendor/earning_list', allowedTo(['VENDOR']), validate(Validation.Ea
 
 router.post(
   '/validate-order',
-  allowedTo(['CUSTOMER']),
+  allowedTo(['CUSTOMER', 'VENDOR']),
   validate(Validation.validateOrder),
   Controller.validateOrder
 );
@@ -50,7 +50,7 @@ router.post(
 /** [GET] /api/v1/order/payment-checkout */
 router.post(
   '/payment-checkout',
-  allowedTo(['CUSTOMER']),
+  allowedTo(['CUSTOMER', 'VENDOR']),
   validate(Validation.checkout),
   Controller.paymentCheckout
 );
