@@ -1125,6 +1125,144 @@ exports.refundPayment = async (req, res, next) => {
   }
 };
 
+exports.refundPosOrder = async (req, res, next) => {
+  try {
+    const {
+      params: { id },
+      body: { reason = 'Customer requested refund' },
+      user,
+    } = req;
+
+    const order = await Service.getById(id);
+    if (!order) {
+      return res.error(new Error('Order not found'), 404);
+    }
+
+    if (order.orderSource !== 'VENDOR_POS') {
+      return res.error(new Error('Only POS orders can be refunded from vendor checkout'), 409);
+    }
+
+    const foodTruck = await FoodTruckService.getByData(
+      { _id: order.foodTruckId, userId: user._id },
+      { singleResult: true }
+    );
+
+    if (!foodTruck) {
+      return res.error(new Error('Order not found or access denied'), 404);
+    }
+
+    if (order.paymentStatus === 'REFUNDED') {
+      return res.error(new Error('Order has already been refunded'), 409);
+    }
+
+    if (!['PREPARING', 'READY_FOR_PICKUP'].includes(order.orderStatus)) {
+      return res.error(
+        new Error('Order can only be refunded while preparing or ready for pickup'),
+        409
+      );
+    }
+
+    const refundReason = reason || 'Customer requested refund';
+    let refundResponse = {
+      success: true,
+      mode: isCashPaymentMethod(order.paymentMethod) ? 'cash' : null,
+      amount: 0,
+      message: 'Cash refund recorded',
+    };
+
+    if (isGatewayPaymentMethod(order.paymentMethod)) {
+      if (!order.transactionId) {
+        return res.error(new Error('Order transaction is missing'), 409);
+      }
+
+      const refundAmount = Math.max(
+        0,
+        toMoney((order.total || 0) - (order.tipsAmount || 0))
+      );
+
+      if (refundAmount <= 0) {
+        return res.error(new Error('Refund amount must be greater than zero'), 409);
+      }
+
+      refundResponse = await PaymentHelper.processRefund({
+        transactionId: order.transactionId,
+        amount: refundAmount,
+      });
+
+      if (!refundResponse.skipLog) {
+        await PaymentsLogService.create({
+          userId: order.userId,
+          orderId: order._id,
+          type: 'REFUND',
+          mode: refundResponse.env,
+          level: refundResponse?.level || null,
+          amount: Number(refundAmount),
+          requestPayload: {
+            orderId: order._id,
+            transactionId: order.transactionId,
+            amount: refundAmount,
+            reason: refundReason,
+            excludedTip: toMoney(order.tipsAmount || 0),
+          },
+          responsePayload: refundResponse,
+          transactionId: order.transactionId,
+          uniqueId: refundResponse?.refundTransactionId || null,
+          authCode: refundResponse?.authCode || null,
+          response_type: refundResponse.success
+            ? refundResponse?.mode === 'void'
+              ? 'VOID'
+              : 'REFUND'
+            : 'REFUND',
+          accountNumber: refundResponse.accountNumber || null,
+          accountType: refundResponse.accountType || null,
+          success: refundResponse.success,
+          errorCode: refundResponse.success ? null : refundResponse.code,
+          errorMessage: refundResponse.success ? null : refundResponse.message,
+        });
+      }
+
+      if (!refundResponse.success) {
+        order.refundStatus = 'FAILED';
+        order.refundErrorMessage = refundResponse.message;
+        await order.save();
+        return res.error(new Error(refundResponse.message || 'Refund/void failed'), 400);
+      }
+    }
+
+    order.paymentStatus = 'REFUNDED';
+    order.orderStatus = 'CANCEL';
+    order.status = 'CANCEL';
+    order.statusTime = order.statusTime || {
+      placedAt: order.createdAt,
+      canceledAt: null,
+      acceptedAt: null,
+      rejectedAt: null,
+      preparingAt: null,
+      readyAt: null,
+      completedAt: null,
+    };
+    order.statusTime.canceledAt = new Date().toISOString();
+    order.refundTransactionId = refundResponse?.refundTransactionId || null;
+    order.refundDateTime = new Date();
+    order.refundStatus = 'SUCCESS';
+    order.refundReason = refundReason;
+    order.refundMode = isGatewayPaymentMethod(order.paymentMethod)
+      ? refundResponse?.mode === 'void'
+        ? 'VOID'
+        : 'REFUND'
+      : null;
+    order.refundErrorMessage = null;
+    await order.save();
+
+    return res.data(
+      { order, refund: refundResponse },
+      'Order refund processed successfully'
+    );
+  } catch (err) {
+    return next(err);
+  }
+};
+
 /**
  * To list out or find data by id of given collection
  * Support GET request

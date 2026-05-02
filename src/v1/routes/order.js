@@ -62,6 +62,13 @@ router.post(
   Controller.refundPayment
 );
 
+router.post(
+  '/:id/refund',
+  allowedTo(['VENDOR']),
+  validate(Validation.posRefund),
+  Controller.refundPosOrder
+);
+
 /** [GET] /api/v1/order/admin/transaction-list */
 router.get('/admin/transaction-list',allowedTo(['SUPER_ADMIN']), validate(Validation.paymentTransactionslist), Controller.paymentTransactionslist);
 

@@ -211,6 +211,11 @@ module.exports = {
       amount: Joi.number().required(),
     }),
   },
+  posRefund: {
+    body: Joi.object({
+      reason: Joi.string().trim().allow('', null),
+    }),
+  },
   Earningslist: {
     query: Joi.object({
       foodTruckId: Joi.string().required(),
