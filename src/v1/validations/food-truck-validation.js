@@ -123,6 +123,7 @@ module.exports = {
           lat: Joi.string().required(),
           long: Joi.string().required(),
           zipcode: Joi.string(),
+          isOrderingOpen: Joi.boolean(),
         }).min(0).allow(null),
       ),
       availability: Joi.array().items(

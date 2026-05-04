@@ -52,6 +52,17 @@ const isCashPaymentMethod = (paymentMethod) =>
 const isGatewayPaymentMethod = (paymentMethod) =>
   !isCashPaymentMethod(paymentMethod);
 
+const isLocationOpenForNormalOrdering = (foodTruck, locationId) => {
+  if (!locationId) return false;
+
+  const loc = (foodTruck.locations || []).find(
+    (item) => item._id?.toString() === locationId
+  );
+  if (!loc) return false;
+
+  return foodTruck.currentLocation?.toString() === locationId;
+};
+
 const buildInitialStatusTime = (orderStatus) => {
   const now = new Date().toISOString();
   return {
@@ -169,8 +180,12 @@ const createShipdayDeliveryForAcceptedOrder = async (order, foodTruck) => {
   return postJson(process.env.SHIPDAY_DELIVERY_FUNCTION_URL, {
     fulfillmentType: 'DELIVERY',
     orderId: order.orderNumber || order._id.toString(),
-    customerName: [customer?.firstName, customer?.lastName].filter(Boolean).join(' '),
-    customerPhone: `${customer?.countryCode || ''}${customer?.mobileNumber || ''}`,
+    customerName: [customer?.firstName, customer?.lastName]
+      .filter(Boolean)
+      .join(' '),
+    customerPhone: `${customer?.countryCode || ''}${
+      customer?.mobileNumber || ''
+    }`,
     customerAddress,
     vendorName: foodTruck?.name,
     vendorAddress,
@@ -268,26 +283,28 @@ const validateSelectionsAndGetCost = ({
 
   if (selected.length > maxCount) {
     throw new Error(
-      `Please select up to ${maxCount} ${label}${maxCount === 1 ? '' : 's'} for the "${itemName}"`
+      `Please select up to ${maxCount} ${label}${
+        maxCount === 1 ? '' : 's'
+      } for the "${itemName}"`
     );
   }
 
-  const invalidOption = selected.find(
-    (selectedOption) => {
-      const optionName =
-        typeof selectedOption === 'string'
-          ? selectedOption
-          : selectedOption?.name || selectedOption?.label || '';
-      return !options.some((option) => option.name === optionName);
-    }
-  );
+  const invalidOption = selected.find((selectedOption) => {
+    const optionName =
+      typeof selectedOption === 'string'
+        ? selectedOption
+        : selectedOption?.name || selectedOption?.label || '';
+    return !options.some((option) => option.name === optionName);
+  });
 
   if (invalidOption) {
     const invalidName =
       typeof invalidOption === 'string'
         ? invalidOption
         : invalidOption?.name || invalidOption?.label || '';
-    throw new Error(`Invalid ${label} "${invalidName}" selected for the "${itemName}"`);
+    throw new Error(
+      `Invalid ${label} "${invalidName}" selected for the "${itemName}"`
+    );
   }
 
   return selected.reduce((sum, selectedOption) => {
@@ -366,6 +383,14 @@ exports.validateOrder = async (req, res, next) => {
       if (!avl) {
         return res.error(new Error('Availability mismatch'), 409);
       }
+    } else if (
+      !vendorPosOrder &&
+      !isLocationOpenForNormalOrdering(foodTruck, locationId)
+    ) {
+      return res.error(
+        new Error('This location is closed for normal ordering'),
+        409
+      );
     }
 
     (
@@ -387,15 +412,17 @@ exports.validateOrder = async (req, res, next) => {
     let subTotal = 0;
     try {
       items.forEach((item) => {
-        console.log("item", item);
-        console.log("item",menuIds[item.menuItemId]);
+        console.log('item', item);
+        console.log('item', menuIds[item.menuItemId]);
         if (menuIds[item.menuItemId]) {
           if (item.qty < menuIds[item.menuItemId].minQty) {
-            throw `Minimum quantity must be ${menuIds[item.menuItemId].minQty
+            throw `Minimum quantity must be ${
+              menuIds[item.menuItemId].minQty
             } for the "${menuIds[item.menuItemId].name}"`;
           }
           if (item.qty > menuIds[item.menuItemId].maxQty) {
-            throw `Maximum quantity must be ${menuIds[item.menuItemId].maxQty
+            throw `Maximum quantity must be ${
+              menuIds[item.menuItemId].maxQty
             } for the "${menuIds[item.menuItemId].name}"`;
           }
           const price = menuIds[item.menuItemId].price;
@@ -405,66 +432,77 @@ exports.validateOrder = async (req, res, next) => {
           const bogoItemsatrray = menuIds[item.menuItemId].bogoItems;
           const discountType = menuIds[item.menuItemId].discountType;
           const subItemarray = menuIds[item.menuItemId].subItem;
-	          const itemType = menuIds[item.menuItemId].itemType;
-	          const hasFlavors = menuIds[item.menuItemId].hasFlavors;
-	          const flavorsPerOrder = menuIds[item.menuItemId].flavorsPerOrder || 1;
-	          const selectedFlavors = Array.isArray(item.selectedFlavors)
-	            ? item.selectedFlavors
-	            : [];
-	          const hasToppings = menuIds[item.menuItemId].hasToppings;
-	          const toppingsPerOrder = menuIds[item.menuItemId].toppingsPerOrder || 1;
-	          const selectedToppings = Array.isArray(item.selectedToppings)
-	            ? item.selectedToppings
-	            : [];
-	          const selectedDiscountFlavors = Array.isArray(item.selectedDiscountFlavors)
-	            ? item.selectedDiscountFlavors
-	            : [];
-	          const selectedDiscountToppings = Array.isArray(item.selectedDiscountToppings)
-	            ? item.selectedDiscountToppings
-	            : [];
-	          let selectedOptionsCost = 0;
-	          let selectedDiscountOptionsCost = 0;
+          const itemType = menuIds[item.menuItemId].itemType;
+          const hasFlavors = menuIds[item.menuItemId].hasFlavors;
+          const flavorsPerOrder = menuIds[item.menuItemId].flavorsPerOrder || 1;
+          const selectedFlavors = Array.isArray(item.selectedFlavors)
+            ? item.selectedFlavors
+            : [];
+          const hasToppings = menuIds[item.menuItemId].hasToppings;
+          const toppingsPerOrder =
+            menuIds[item.menuItemId].toppingsPerOrder || 1;
+          const selectedToppings = Array.isArray(item.selectedToppings)
+            ? item.selectedToppings
+            : [];
+          const selectedDiscountFlavors = Array.isArray(
+            item.selectedDiscountFlavors
+          )
+            ? item.selectedDiscountFlavors
+            : [];
+          const selectedDiscountToppings = Array.isArray(
+            item.selectedDiscountToppings
+          )
+            ? item.selectedDiscountToppings
+            : [];
+          let selectedOptionsCost = 0;
+          let selectedDiscountOptionsCost = 0;
 
-	          if (hasFlavors) {
-	            selectedOptionsCost += validateSelectionsAndGetCost({
-	              menuItem: menuIds[item.menuItemId],
-	              selectedOptions: selectedFlavors,
-	              type: 'flavor',
-	              requiredCount: flavorsPerOrder,
-	              itemName: name,
-	            });
-	            selectedDiscountOptionsCost += validateSelectionsAndGetCost({
-	              menuItem: menuIds[item.menuItemId],
-	              selectedOptions: selectedDiscountFlavors,
-	              type: 'flavor',
-	              requiredCount: flavorsPerOrder,
-	              itemName: name,
-	            });
-	          }
+          if (hasFlavors) {
+            selectedOptionsCost += validateSelectionsAndGetCost({
+              menuItem: menuIds[item.menuItemId],
+              selectedOptions: selectedFlavors,
+              type: 'flavor',
+              requiredCount: flavorsPerOrder,
+              itemName: name,
+            });
+            selectedDiscountOptionsCost += validateSelectionsAndGetCost({
+              menuItem: menuIds[item.menuItemId],
+              selectedOptions: selectedDiscountFlavors,
+              type: 'flavor',
+              requiredCount: flavorsPerOrder,
+              itemName: name,
+            });
+          }
 
-	          if (hasToppings) {
-	            selectedOptionsCost += validateSelectionsAndGetCost({
-	              menuItem: menuIds[item.menuItemId],
-	              selectedOptions: selectedToppings,
-	              type: 'topping',
-	              requiredCount: toppingsPerOrder,
-	              itemName: name,
-	            });
-	            selectedDiscountOptionsCost += validateSelectionsAndGetCost({
-	              menuItem: menuIds[item.menuItemId],
-	              selectedOptions: selectedDiscountToppings,
-	              type: 'topping',
-	              requiredCount: toppingsPerOrder,
-	              itemName: name,
-	            });
-	          }
+          if (hasToppings) {
+            selectedOptionsCost += validateSelectionsAndGetCost({
+              menuItem: menuIds[item.menuItemId],
+              selectedOptions: selectedToppings,
+              type: 'topping',
+              requiredCount: toppingsPerOrder,
+              itemName: name,
+            });
+            selectedDiscountOptionsCost += validateSelectionsAndGetCost({
+              menuItem: menuIds[item.menuItemId],
+              selectedOptions: selectedDiscountToppings,
+              type: 'topping',
+              requiredCount: toppingsPerOrder,
+              itemName: name,
+            });
+          }
 
           // Handle combo items
           let comboItemsWithDetails = [];
           let comboSubtotal = 0;
-          if (itemType === 'COMBO' && item.comboItems && item.comboItems.length > 0) {
+          if (
+            itemType === 'COMBO' &&
+            item.comboItems &&
+            item.comboItems.length > 0
+          ) {
             item.comboItems.forEach((comboItem) => {
-              const subItemMatch = subItemarray.find(sub => sub._id.toString() === comboItem.comboMenuItemId);
+              const subItemMatch = subItemarray.find(
+                (sub) => sub._id.toString() === comboItem.comboMenuItemId
+              );
               if (subItemMatch) {
                 const comboQty = comboItem.qty || 1;
                 // const comboTotal = subItemMatch.price * comboQty;
@@ -474,86 +512,98 @@ exports.validateOrder = async (req, res, next) => {
                 comboItemsWithDetails.push({
                   ...subItemMatch,
                   qty: comboQty,
-                  total: comboTotal
+                  total: comboTotal,
                 });
               }
             });
           }
 
-
           // Clone original data (so we don't mutate the original menu item)
           let updatedFullMenuItemData = { ...menuIds[item.menuItemId] };
-	          const unitPrice = price + selectedOptionsCost;
-	          const discountUnitPrice = price + selectedDiscountOptionsCost;
-	          const mainSubtotal = unitPrice * item.qty;
-	          let itemTotal = mainSubtotal;
-          
-		          const discountRules = menuIds[item.menuItemId].discountRules;
-          
+          const unitPrice = price + selectedOptionsCost;
+          const discountUnitPrice = price + selectedDiscountOptionsCost;
+          const mainSubtotal = unitPrice * item.qty;
+          let itemTotal = mainSubtotal;
+
+          const discountRules = menuIds[item.menuItemId].discountRules;
+
           // Add combo items to fullMenuItemData
           if (itemType === 'COMBO' && comboItemsWithDetails.length > 0) {
             updatedFullMenuItemData.comboItems = comboItemsWithDetails;
           }
-          
+
           if (discountRules && discountRules.discount > 0) {
-            const { buyQty = 1, getQty = 1, discount: discountVal = 0, repeatable = true } = discountRules;
-            
-            const eligibleSets = repeatable 
-              ? Math.floor(item.qty / buyQty) 
-              : (item.qty >= buyQty ? 1 : 0);
-              
+            const {
+              buyQty = 1,
+              getQty = 1,
+              discount: discountVal = 0,
+              repeatable = true,
+            } = discountRules;
+
+            const eligibleSets = repeatable
+              ? Math.floor(item.qty / buyQty)
+              : item.qty >= buyQty
+              ? 1
+              : 0;
+
             const rewardItems = eligibleSets * getQty;
             const rewardTotal = rewardItems * discountUnitPrice;
             const discountAmount = rewardTotal * discountVal;
-            
+
             itemTotal = mainSubtotal + rewardTotal - discountAmount;
 
             // Update bogoItems in updatedFullMenuItemData for front-end display
-            updatedFullMenuItemData.bogoItems = [{
-              itemId: item.menuItemId,
-              name: name,
-	              price: discountUnitPrice,
-              qty: rewardItems,
-              isSameItem: true,
-              discountVal: discountVal
-            }];
+            updatedFullMenuItemData.bogoItems = [
+              {
+                itemId: item.menuItemId,
+                name: name,
+                price: discountUnitPrice,
+                qty: rewardItems,
+                isSameItem: true,
+                discountVal: discountVal,
+              },
+            ];
           } else {
             // Fallback to old logic if no discountRules
             // ✅ Only replace bogoItems if discount type is "bogo"
-	          if (discountType && discountType === 'BOGO') {
+            if (discountType && discountType === 'BOGO') {
               updatedFullMenuItemData = {
                 ...updatedFullMenuItemData,
                 bogoItems: Array.isArray(bogoItemsatrray)
                   ? bogoItemsatrray.map((bogo) => ({
-                    ...bogo,
-                    qty: item.qty, // update quantity same as parent
-                  }))
+                      ...bogo,
+                      qty: item.qty, // update quantity same as parent
+                    }))
                   : [],
               };
             }
             // ---------- BOGOHO Discount (Buy One Get One Half Off) ----------
-	          if (!(discountRules && discountRules.discount > 0) && discountType && discountType === 'BOGOHO') {
+            if (
+              !(discountRules && discountRules.discount > 0) &&
+              discountType &&
+              discountType === 'BOGOHO'
+            ) {
               updatedFullMenuItemData = {
                 ...updatedFullMenuItemData,
                 bogoItems: Array.isArray(bogoItemsatrray)
                   ? bogoItemsatrray.map((bogo) => {
-                    const halfPrice = bogo.price / 2;
-                    // const bogoTotal = halfPrice * item.qty;
-                    const bogoTotal = 0;
-                    return {
-                      ...bogo,
-                      qty: item.qty,
-                      halfPrice,
-                      total: bogoTotal,
-                    };
-                  })
+                      const halfPrice = bogo.price / 2;
+                      // const bogoTotal = halfPrice * item.qty;
+                      const bogoTotal = 0;
+                      return {
+                        ...bogo,
+                        qty: item.qty,
+                        halfPrice,
+                        total: bogoTotal,
+                      };
+                    })
                   : [],
-	            };
-		            itemTotal = mainSubtotal + (discountUnitPrice * item.qty * 0.5);
-	          }
+              };
+              itemTotal = mainSubtotal + discountUnitPrice * item.qty * 0.5;
+            }
 
             if (discountType === 'BOGOHO') {
-	              itemTotal = mainSubtotal + (discountUnitPrice * item.qty * 0.5);
+              itemTotal = mainSubtotal + discountUnitPrice * item.qty * 0.5;
             } else {
               itemTotal = mainSubtotal;
             }
@@ -561,13 +611,15 @@ exports.validateOrder = async (req, res, next) => {
 
           menuItems.push({
             menuItemId: item.menuItemId,
-		            customization: item.customization || null,
-		            selectedFlavors: hasFlavors ? selectedFlavors : [],
-		            selectedToppings: hasToppings ? selectedToppings : [],
-		            selectedDiscountFlavors: hasFlavors ? selectedDiscountFlavors : [],
-		            selectedDiscountToppings: hasToppings ? selectedDiscountToppings : [],
-		            optionsTotal: selectedOptionsCost,
-	            price: unitPrice,
+            customization: item.customization || null,
+            selectedFlavors: hasFlavors ? selectedFlavors : [],
+            selectedToppings: hasToppings ? selectedToppings : [],
+            selectedDiscountFlavors: hasFlavors ? selectedDiscountFlavors : [],
+            selectedDiscountToppings: hasToppings
+              ? selectedDiscountToppings
+              : [],
+            optionsTotal: selectedOptionsCost,
+            price: unitPrice,
             name: name,
             imgUrls: imgUrls,
             description: description,
@@ -713,14 +765,15 @@ exports.validateOrder = async (req, res, next) => {
       deliveryTime: deliveryTime || null,
       deliveryDate: deliveryDate || null,
       fulfillmentType,
-      deliveryAddress: fulfillmentType === 'DELIVERY' ? deliveryAddress || null : null,
+      deliveryAddress:
+        fulfillmentType === 'DELIVERY' ? deliveryAddress || null : null,
       couponId,
       availabilityId,
       items: menuItems,
       subTotal: subTotal,
       subtotal: subTotal,
       discount: disAmount,
-            // totalAfterDiscount: subTotal + taxAmount - disAmount,
+      // totalAfterDiscount: subTotal + taxAmount - disAmount,
       totalAfterDiscount: subTotal - disAmount,
       taxAmount: normalizedTaxAmount,
       tax: normalizedTaxAmount,
@@ -736,9 +789,11 @@ exports.validateOrder = async (req, res, next) => {
       freeDessertApplied: isFreeDessertEligible,
       orderStatus: vendorPosOrder ? 'PREPARING' : 'PLACED',
       status: vendorPosOrder ? 'PREPARING' : 'PLACED',
-      statusTime: buildInitialStatusTime(vendorPosOrder ? 'PREPARING' : 'PLACED'),
+      statusTime: buildInitialStatusTime(
+        vendorPosOrder ? 'PREPARING' : 'PLACED'
+      ),
     };
-    console.log("orderPlaceData",orderPlaceData);
+    console.log('orderPlaceData', orderPlaceData);
     // const data = await Service.create(orderPlaceData);
 
     return res.data(
@@ -773,7 +828,7 @@ exports.paymentCheckout = async (req, res, next) => {
 
     const base64String =
       paymentMethod === 'CARD' || paymentMethod === 'TAP_TO_PAY'
-        ? (paymentData?.opaqueToken || paymentData?.dataValue || paymentData)
+        ? paymentData?.opaqueToken || paymentData?.dataValue || paymentData
         : Buffer.from(
             paymentMethod === 'APPLE_PAY'
               ? JSON.stringify(paymentData)
@@ -862,7 +917,7 @@ exports.paymentCheckout = async (req, res, next) => {
         if (user) {
           // await MailHelper.sendPaymentsSuccessAndFailed(user,false,failedData);
         }
-      } catch (e) { }
+      } catch (e) {}
 
       return res.error(new Error(chargeResp.message || 'Payment failed'), 400);
     }
@@ -887,7 +942,7 @@ exports.paymentCheckout = async (req, res, next) => {
       if (chargeResp.success && user) {
         await MailHelper.sendPaymentsSuccessAndFailed(user, true, data);
       }
-    } catch (e) { }
+    } catch (e) {}
 
     return res.data({ paymentsData: data }, `Payment checkout was successful`);
   } catch (err) {
@@ -977,7 +1032,6 @@ exports.paymentTransactionslist = async (req, res, next) => {
     else if (status === 'false') status = false;
     else status = null; // all
 
-
     //  GET BY ID
     if (_id) {
       const result = await PaymentsLogService.getTransactionAllDetails(
@@ -1033,16 +1087,15 @@ exports.paymentTransactionslist = async (req, res, next) => {
 
 exports.refundPayment = async (req, res, next) => {
   try {
-    const {
-      orderId,
-      transactionId,
-      amount,
-    } = req.body;
+    const { orderId, transactionId, amount } = req.body;
 
     const entityName = 'Order';
 
     if (!orderId || !transactionId || !amount) {
-      return res.error(new Error('orderId, transactionId and amount required'), 400);
+      return res.error(
+        new Error('orderId, transactionId and amount required'),
+        400
+      );
     }
 
     // Get order details
@@ -1068,7 +1121,8 @@ exports.refundPayment = async (req, res, next) => {
         requestPayload: req.body,
         responsePayload: resp,
         transactionId: transactionId,
-        uniqueId: resp?.refundTransactionId || resp?.fullResponse?.transId || null,
+        uniqueId:
+          resp?.refundTransactionId || resp?.fullResponse?.transId || null,
         authCode: resp?.authCode || resp?.fullResponse?.authCode || null,
         response_type: resp.success
           ? resp?.mode === 'void'
@@ -1091,7 +1145,8 @@ exports.refundPayment = async (req, res, next) => {
     // Update order payment status and refund details
     if (resp.success) {
       order.paymentStatus = 'REFUNDED';
-      order.refundTransactionId = resp?.refundTransactionId || resp?.fullResponse?.transId || null;
+      order.refundTransactionId =
+        resp?.refundTransactionId || resp?.fullResponse?.transId || null;
       order.refundDateTime = new Date();
       order.refundStatus = 'SUCCESS';
       order.refundReason = 'Manual refund';
@@ -1139,7 +1194,10 @@ exports.refundPosOrder = async (req, res, next) => {
     }
 
     if (order.orderSource !== 'VENDOR_POS') {
-      return res.error(new Error('Only POS orders can be refunded from vendor checkout'), 409);
+      return res.error(
+        new Error('Only POS orders can be refunded from vendor checkout'),
+        409
+      );
     }
 
     const foodTruck = await FoodTruckService.getByData(
@@ -1157,7 +1215,9 @@ exports.refundPosOrder = async (req, res, next) => {
 
     if (!['PREPARING', 'READY_FOR_PICKUP'].includes(order.orderStatus)) {
       return res.error(
-        new Error('Order can only be refunded while preparing or ready for pickup'),
+        new Error(
+          'Order can only be refunded while preparing or ready for pickup'
+        ),
         409
       );
     }
@@ -1181,7 +1241,10 @@ exports.refundPosOrder = async (req, res, next) => {
       );
 
       if (refundAmount <= 0) {
-        return res.error(new Error('Refund amount must be greater than zero'), 409);
+        return res.error(
+          new Error('Refund amount must be greater than zero'),
+          409
+        );
       }
 
       refundResponse = await PaymentHelper.processRefund({
@@ -1225,7 +1288,10 @@ exports.refundPosOrder = async (req, res, next) => {
         order.refundStatus = 'FAILED';
         order.refundErrorMessage = refundResponse.message;
         await order.save();
-        return res.error(new Error(refundResponse.message || 'Refund/void failed'), 400);
+        return res.error(
+          new Error(refundResponse.message || 'Refund/void failed'),
+          400
+        );
       }
     }
 
@@ -1705,9 +1771,11 @@ exports.add = async (req, res, next) => {
     } = req;
     const vendorPosOrder = isVendorPosOrder(user, orderSource);
     const initialOrderStatus = vendorPosOrder ? 'PREPARING' : 'PLACED';
-    const normalizedPaymentMethod = paymentMethod || (vendorPosOrder ? 'CASH' : 'COD');
+    const normalizedPaymentMethod =
+      paymentMethod || (vendorPosOrder ? 'CASH' : 'COD');
     const normalizedPaymentStatus =
-      paymentStatus || (isCashPaymentMethod(normalizedPaymentMethod) ? 'PENDING' : 'PAID');
+      paymentStatus ||
+      (isCashPaymentMethod(normalizedPaymentMethod) ? 'PENDING' : 'PAID');
     if (user?.userType === 'VENDOR' && !vendorPosOrder) {
       return res.error(new Error('Vendor orders must use the POS flow'), 403);
     }
@@ -1738,6 +1806,14 @@ exports.add = async (req, res, next) => {
       if (!avl) {
         return res.error(new Error('Availability mismatch'), 409);
       }
+    } else if (
+      !vendorPosOrder &&
+      !isLocationOpenForNormalOrdering(foodTruck, locationId)
+    ) {
+      return res.error(
+        new Error('This location is closed for normal ordering'),
+        409
+      );
     }
 
     (
@@ -1762,11 +1838,13 @@ exports.add = async (req, res, next) => {
       items.forEach((item) => {
         if (menuIds[item.menuItemId]) {
           if (item.qty < menuIds[item.menuItemId].minQty) {
-            throw `Minimum quantity must be ${menuIds[item.menuItemId].minQty
+            throw `Minimum quantity must be ${
+              menuIds[item.menuItemId].minQty
             } for the "${menuIds[item.menuItemId].name}"`;
           }
           if (item.qty > menuIds[item.menuItemId].maxQty) {
-            throw `Maximum quantity must be ${menuIds[item.menuItemId].maxQty
+            throw `Maximum quantity must be ${
+              menuIds[item.menuItemId].maxQty
             } for the "${menuIds[item.menuItemId].name}"`;
           }
           const price = menuIds[item.menuItemId].price;
@@ -1776,125 +1854,144 @@ exports.add = async (req, res, next) => {
           const bogoItemsatrray = menuIds[item.menuItemId].bogoItems;
           const discountType = menuIds[item.menuItemId].discountType;
           const subItemarray = menuIds[item.menuItemId].subItem;
-	          const itemType = menuIds[item.menuItemId].itemType;
-	          const hasFlavors = menuIds[item.menuItemId].hasFlavors;
-	          const flavorsPerOrder = menuIds[item.menuItemId].flavorsPerOrder || 1;
-	          const selectedFlavors = Array.isArray(item.selectedFlavors)
-	            ? item.selectedFlavors
-	            : [];
-	          const hasToppings = menuIds[item.menuItemId].hasToppings;
-	          const toppingsPerOrder = menuIds[item.menuItemId].toppingsPerOrder || 1;
-	          const selectedToppings = Array.isArray(item.selectedToppings)
-	            ? item.selectedToppings
-	            : [];
-	          const selectedDiscountFlavors = Array.isArray(item.selectedDiscountFlavors)
-	            ? item.selectedDiscountFlavors
-	            : [];
-	          const selectedDiscountToppings = Array.isArray(item.selectedDiscountToppings)
-	            ? item.selectedDiscountToppings
-	            : [];
-	          let selectedOptionsCost = 0;
-	          let selectedDiscountOptionsCost = 0;
+          const itemType = menuIds[item.menuItemId].itemType;
+          const hasFlavors = menuIds[item.menuItemId].hasFlavors;
+          const flavorsPerOrder = menuIds[item.menuItemId].flavorsPerOrder || 1;
+          const selectedFlavors = Array.isArray(item.selectedFlavors)
+            ? item.selectedFlavors
+            : [];
+          const hasToppings = menuIds[item.menuItemId].hasToppings;
+          const toppingsPerOrder =
+            menuIds[item.menuItemId].toppingsPerOrder || 1;
+          const selectedToppings = Array.isArray(item.selectedToppings)
+            ? item.selectedToppings
+            : [];
+          const selectedDiscountFlavors = Array.isArray(
+            item.selectedDiscountFlavors
+          )
+            ? item.selectedDiscountFlavors
+            : [];
+          const selectedDiscountToppings = Array.isArray(
+            item.selectedDiscountToppings
+          )
+            ? item.selectedDiscountToppings
+            : [];
+          let selectedOptionsCost = 0;
+          let selectedDiscountOptionsCost = 0;
 
-	          if (hasFlavors) {
-	            selectedOptionsCost += validateSelectionsAndGetCost({
-	              menuItem: menuIds[item.menuItemId],
-	              selectedOptions: selectedFlavors,
-	              type: 'flavor',
-	              requiredCount: flavorsPerOrder,
-	              itemName: name,
-	            });
-	            selectedDiscountOptionsCost += validateSelectionsAndGetCost({
-	              menuItem: menuIds[item.menuItemId],
-	              selectedOptions: selectedDiscountFlavors,
-	              type: 'flavor',
-	              requiredCount: flavorsPerOrder,
-	              itemName: name,
-	            });
-	          }
+          if (hasFlavors) {
+            selectedOptionsCost += validateSelectionsAndGetCost({
+              menuItem: menuIds[item.menuItemId],
+              selectedOptions: selectedFlavors,
+              type: 'flavor',
+              requiredCount: flavorsPerOrder,
+              itemName: name,
+            });
+            selectedDiscountOptionsCost += validateSelectionsAndGetCost({
+              menuItem: menuIds[item.menuItemId],
+              selectedOptions: selectedDiscountFlavors,
+              type: 'flavor',
+              requiredCount: flavorsPerOrder,
+              itemName: name,
+            });
+          }
 
-	          if (hasToppings) {
-	            selectedOptionsCost += validateSelectionsAndGetCost({
-	              menuItem: menuIds[item.menuItemId],
-	              selectedOptions: selectedToppings,
-	              type: 'topping',
-	              requiredCount: toppingsPerOrder,
-	              itemName: name,
-	            });
-	            selectedDiscountOptionsCost += validateSelectionsAndGetCost({
-	              menuItem: menuIds[item.menuItemId],
-	              selectedOptions: selectedDiscountToppings,
-	              type: 'topping',
-	              requiredCount: toppingsPerOrder,
-	              itemName: name,
-	            });
-	          }
+          if (hasToppings) {
+            selectedOptionsCost += validateSelectionsAndGetCost({
+              menuItem: menuIds[item.menuItemId],
+              selectedOptions: selectedToppings,
+              type: 'topping',
+              requiredCount: toppingsPerOrder,
+              itemName: name,
+            });
+            selectedDiscountOptionsCost += validateSelectionsAndGetCost({
+              menuItem: menuIds[item.menuItemId],
+              selectedOptions: selectedDiscountToppings,
+              type: 'topping',
+              requiredCount: toppingsPerOrder,
+              itemName: name,
+            });
+          }
 
           // Handle combo items
           let comboItemsWithDetails = [];
           let comboSubtotal = 0;
-          if (itemType === 'COMBO' && item.comboItems && item.comboItems.length > 0) {
+          if (
+            itemType === 'COMBO' &&
+            item.comboItems &&
+            item.comboItems.length > 0
+          ) {
             item.comboItems.forEach((comboItem) => {
-              const subItemMatch = subItemarray.find(sub => sub._id.toString() === comboItem.comboMenuItemId);
+              const subItemMatch = subItemarray.find(
+                (sub) => sub._id.toString() === comboItem.comboMenuItemId
+              );
               if (subItemMatch) {
                 const comboQty = comboItem.qty || 1;
                 // const comboTotal = subItemMatch.price * comboQty;
-                  const comboTotal = 0;
+                const comboTotal = 0;
 
                 comboSubtotal += comboTotal;
                 comboItemsWithDetails.push({
                   ...subItemMatch,
                   qty: comboQty,
-                  total: comboTotal
+                  total: comboTotal,
                 });
               }
             });
           }
 
-
           // Clone original data (so we don't mutate the original menu item)
           let updatedFullMenuItemData = { ...menuIds[item.menuItemId] };
-		          const unitPrice = price + selectedOptionsCost;
-		          const discountUnitPrice = price + selectedDiscountOptionsCost;
-	          const mainSubtotal = unitPrice * item.qty;
-	          let itemTotal = mainSubtotal;
-	          const discountRules = menuIds[item.menuItemId].discountRules;
-          
+          const unitPrice = price + selectedOptionsCost;
+          const discountUnitPrice = price + selectedDiscountOptionsCost;
+          const mainSubtotal = unitPrice * item.qty;
+          let itemTotal = mainSubtotal;
+          const discountRules = menuIds[item.menuItemId].discountRules;
+
           // Add combo items to fullMenuItemData
           if (itemType === 'COMBO' && comboItemsWithDetails.length > 0) {
             updatedFullMenuItemData.comboItems = comboItemsWithDetails;
           }
-          
+
           // ✅ Only replace bogoItems if discount type is "bogo"
           if (discountRules && discountRules.discount > 0) {
-            const { buyQty = 1, getQty = 1, discount: discountVal = 0, repeatable = true } = discountRules;
+            const {
+              buyQty = 1,
+              getQty = 1,
+              discount: discountVal = 0,
+              repeatable = true,
+            } = discountRules;
             const normalizedBuyQty = Math.max(1, Number(buyQty) || 1);
             const normalizedGetQty = Math.max(1, Number(getQty) || 1);
             const eligibleSets = repeatable
               ? Math.floor(item.qty / normalizedBuyQty)
-              : (item.qty >= normalizedBuyQty ? 1 : 0);
+              : item.qty >= normalizedBuyQty
+              ? 1
+              : 0;
             const rewardItems = eligibleSets * normalizedGetQty;
             const rewardTotal = rewardItems * discountUnitPrice;
             const discountAmount = rewardTotal * discountVal;
 
             itemTotal = mainSubtotal + rewardTotal - discountAmount;
-            updatedFullMenuItemData.bogoItems = [{
-              itemId: item.menuItemId,
-              name: name,
-	              price: discountUnitPrice,
-              qty: rewardItems,
-              isSameItem: true,
-              discountVal: discountVal
-            }];
+            updatedFullMenuItemData.bogoItems = [
+              {
+                itemId: item.menuItemId,
+                name: name,
+                price: discountUnitPrice,
+                qty: rewardItems,
+                isSameItem: true,
+                discountVal: discountVal,
+              },
+            ];
           } else {
             if (discountType && discountType === 'BOGO') {
               updatedFullMenuItemData = {
                 ...updatedFullMenuItemData,
                 bogoItems: Array.isArray(bogoItemsatrray)
                   ? bogoItemsatrray.map((bogo) => ({
-                    ...bogo,
-                    qty: item.qty,
-                  }))
+                      ...bogo,
+                      qty: item.qty,
+                    }))
                   : [],
               };
             }
@@ -1904,43 +2001,45 @@ exports.add = async (req, res, next) => {
                 ...updatedFullMenuItemData,
                 bogoItems: Array.isArray(bogoItemsatrray)
                   ? bogoItemsatrray.map((bogo) => {
-                    const halfPrice = bogo.price / 2;
-                    const bogoTotal = 0;
+                      const halfPrice = bogo.price / 2;
+                      const bogoTotal = 0;
 
-                    return {
-                      ...bogo,
-                      qty: item.qty,
-                      halfPrice,
-                      total: bogoTotal,
-                    };
-                  })
+                      return {
+                        ...bogo,
+                        qty: item.qty,
+                        halfPrice,
+                        total: bogoTotal,
+                      };
+                    })
                   : [],
               };
-              itemTotal = mainSubtotal + (discountUnitPrice * item.qty * 0.5);
+              itemTotal = mainSubtotal + discountUnitPrice * item.qty * 0.5;
             }
           }
 
           menuItems.push({
-	            menuItemId: item.menuItemId,
-	            customization: item.customization || null,
-	            selectedFlavors: hasFlavors ? selectedFlavors : [],
-	            selectedToppings: hasToppings ? selectedToppings : [],
-	            selectedDiscountFlavors: hasFlavors ? selectedDiscountFlavors : [],
-	            selectedDiscountToppings: hasToppings ? selectedDiscountToppings : [],
-	            optionsTotal: selectedOptionsCost,
-	            price: unitPrice,
+            menuItemId: item.menuItemId,
+            customization: item.customization || null,
+            selectedFlavors: hasFlavors ? selectedFlavors : [],
+            selectedToppings: hasToppings ? selectedToppings : [],
+            selectedDiscountFlavors: hasFlavors ? selectedDiscountFlavors : [],
+            selectedDiscountToppings: hasToppings
+              ? selectedDiscountToppings
+              : [],
+            optionsTotal: selectedOptionsCost,
+            price: unitPrice,
             name: name,
             imgUrls: imgUrls,
             description: description,
             qty: item.qty,
-            discountType:discountType||null,
+            discountType: discountType || null,
             comboItems: comboItemsWithDetails,
-            comboSubtotal:comboSubtotal,
+            comboSubtotal: comboSubtotal,
             fullMenuItemData: updatedFullMenuItemData,
-		            total: itemTotal,
-		          });
+            total: itemTotal,
+          });
 
-		          subTotal += itemTotal;
+          subTotal += itemTotal;
 
           // Add combo items subtotal
           // subTotal += comboSubtotal;
@@ -2079,7 +2178,8 @@ exports.add = async (req, res, next) => {
       deliveryTime: deliveryTime || null,
       deliveryDate: deliveryDate || null,
       fulfillmentType,
-      deliveryAddress: fulfillmentType === 'DELIVERY' ? deliveryAddress || null : null,
+      deliveryAddress:
+        fulfillmentType === 'DELIVERY' ? deliveryAddress || null : null,
       couponId,
       availabilityId,
       items: menuItems,
@@ -2150,7 +2250,7 @@ exports.add = async (req, res, next) => {
       } else {
         await queueGuestSmsNotificationStub({ order: data, guestCustomer });
       }
-    } catch (e) { }
+    } catch (e) {}
 
     return res.data(
       { [`${entityName.toLocaleLowerCase()}`]: data },
@@ -2160,7 +2260,6 @@ exports.add = async (req, res, next) => {
     return next(e);
   }
 };
-
 
 /**
  * To add new entry to given collection
@@ -2223,13 +2322,20 @@ exports.update = async (req, res, next) => {
           user.userType === 'VENDOR'
         )
       ) {
-        return res.error(new Error('Payment status can not be updated for this order'), 409);
+        return res.error(
+          new Error('Payment status can not be updated for this order'),
+          409
+        );
       }
 
       item.paymentStatus = paymentStatus;
     }
 
-    if (orderStatus && orderStatus !== 'CANCEL' && user.userType === 'CUSTOMER') {
+    if (
+      orderStatus &&
+      orderStatus !== 'CANCEL' &&
+      user.userType === 'CUSTOMER'
+    ) {
       return res.error(
         new Error(`You can not update status to '${orderStatus}'`),
         409
@@ -2273,10 +2379,11 @@ exports.update = async (req, res, next) => {
       item.statusTime[statusTimeKey[orderStatus]] = new Date().toISOString();
 
       // Process refund for CANCEL/REJECTED orders with Apple Pay/Google Pay
-      if ((orderStatus === 'CANCEL' || orderStatus === 'REJECTED') &&
+      if (
+        (orderStatus === 'CANCEL' || orderStatus === 'REJECTED') &&
         item.transactionId &&
-        isGatewayPaymentMethod(item.paymentMethod)) {
-
+        isGatewayPaymentMethod(item.paymentMethod)
+      ) {
         try {
           const refundResp = await PaymentHelper.processRefund({
             transactionId: item.transactionId,
@@ -2292,12 +2399,21 @@ exports.update = async (req, res, next) => {
               mode: refundResp.env,
               level: refundResp?.level || null,
               amount: Number(item.total),
-              requestPayload: { orderId: item._id, transactionId: item.transactionId, amount: item.total, reason: orderStatus },
+              requestPayload: {
+                orderId: item._id,
+                transactionId: item.transactionId,
+                amount: item.total,
+                reason: orderStatus,
+              },
               responsePayload: refundResp,
               transactionId: item.transactionId,
               uniqueId: refundResp?.refundTransactionId || null,
               authCode: refundResp?.authCode || null,
-              response_type: refundResp.success ? (refundResp?.mode === 'void' ? 'VOID' : 'REFUND') : 'REFUND',
+              response_type: refundResp.success
+                ? refundResp?.mode === 'void'
+                  ? 'VOID'
+                  : 'REFUND'
+                : 'REFUND',
               accountNumber: refundResp.accountNumber || null,
               accountType: refundResp.accountType || null,
               success: refundResp.success,
@@ -2312,13 +2428,19 @@ exports.update = async (req, res, next) => {
             item.refundTransactionId = refundResp?.refundTransactionId;
             item.refundDateTime = new Date();
             item.refundStatus = 'SUCCESS';
-            item.refundReason = orderStatus === 'CANCEL' ? 'Order cancelled' : 'Order rejected';
+            item.refundReason =
+              orderStatus === 'CANCEL' ? 'Order cancelled' : 'Order rejected';
             item.refundMode = refundResp?.mode === 'void' ? 'VOID' : 'REFUND';
 
             // Update original payment log
             try {
               const paymentLog = await PaymentsLogService.getByData(
-                { transactionId: item.transactionId, orderId: item._id, type: 'CHECKOUT', deletedAt: null },
+                {
+                  transactionId: item.transactionId,
+                  orderId: item._id,
+                  type: 'CHECKOUT',
+                  deletedAt: null,
+                },
                 { singleResult: true }
               );
               if (paymentLog) {
@@ -2334,7 +2456,8 @@ exports.update = async (req, res, next) => {
           }
         } catch (refundError) {
           item.refundStatus = 'FAILED';
-          item.refundErrorMessage = refundError.message || 'Refund processing failed';
+          item.refundErrorMessage =
+            refundError.message || 'Refund processing failed';
         }
       }
     }
@@ -2344,7 +2467,10 @@ exports.update = async (req, res, next) => {
     }
 
     // Update payment status to PAID for cash orders when completed
-    if (orderStatus === 'COMPLETED' && isCashPaymentMethod(item.paymentMethod)) {
+    if (
+      orderStatus === 'COMPLETED' &&
+      isCashPaymentMethod(item.paymentMethod)
+    ) {
       item.paymentStatus = 'PAID';
     }
 
@@ -2387,7 +2513,7 @@ exports.update = async (req, res, next) => {
           );
         }
       }
-    } catch (e) { }
+    } catch (e) {}
 
     return res.data(
       { [`${entityName.toLocaleLowerCase()}`]: item },
@@ -2444,7 +2570,9 @@ exports.shipdayUpdate = async (req, res, next) => {
       });
     }
 
-    const order = await OrderModel.findOne(getShipdayOrderFilter(orderId)).lean();
+    const order = await OrderModel.findOne(
+      getShipdayOrderFilter(orderId)
+    ).lean();
     if (!order) {
       return res.status(404).json({
         success: false,
@@ -2626,10 +2754,10 @@ exports.getFreeDessertEligibility = async (req, res, next) => {
     );
     const isEligibleNow = Boolean(
       isFeatureEnabled &&
-      configuredAmount > 0 &&
-      thresholdOrderCount > 0 &&
-      nextOrderNumber % thresholdOrderCount === 0 &&
-      priorRedemptionCount < maxEligibleRedemptions
+        configuredAmount > 0 &&
+        thresholdOrderCount > 0 &&
+        nextOrderNumber % thresholdOrderCount === 0 &&
+        priorRedemptionCount < maxEligibleRedemptions
     );
 
     const ordersRemainingRaw = thresholdOrderCount - nextOrderNumber;

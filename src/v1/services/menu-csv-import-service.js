@@ -11,8 +11,55 @@ const {
 const { addObjectFromBuffer } = require('../../helper/aws');
 
 const URL_PATTERN = /^https?:\/\//i;
+const WINDOWS_1252_REPLACEMENTS = {
+  0x80: '\u20ac',
+  0x82: '\u201a',
+  0x83: '\u0192',
+  0x84: '\u201e',
+  0x85: '\u2026',
+  0x86: '\u2020',
+  0x87: '\u2021',
+  0x88: '\u02c6',
+  0x89: '\u2030',
+  0x8a: '\u0160',
+  0x8b: '\u2039',
+  0x8c: '\u0152',
+  0x8e: '\u017d',
+  0x91: '\u2018',
+  0x92: '\u2019',
+  0x93: '\u201c',
+  0x94: '\u201d',
+  0x95: '\u2022',
+  0x96: '\u2013',
+  0x97: '\u2014',
+  0x98: '\u02dc',
+  0x99: '\u2122',
+  0x9a: '\u0161',
+  0x9b: '\u203a',
+  0x9c: '\u0153',
+  0x9e: '\u017e',
+  0x9f: '\u0178',
+};
 
 class MenuCsvImportService {
+  decodeCsvBuffer(buffer) {
+    const utf8Text = buffer.toString('utf8');
+
+    if (!utf8Text.includes('\uFFFD')) {
+      return utf8Text;
+    }
+
+    return Array.from(buffer)
+      .map((byte) => {
+        if (WINDOWS_1252_REPLACEMENTS[byte]) {
+          return WINDOWS_1252_REPLACEMENTS[byte];
+        }
+
+        return String.fromCharCode(byte);
+      })
+      .join('');
+  }
+
   parseCsv(text) {
     const rows = [];
     let row = [];
@@ -352,6 +399,10 @@ class MenuCsvImportService {
     return this.parseRequiredObjectId(rowUserId, 'userId', row._rowNumber);
   }
 
+  getMenuItemId(row) {
+    return String(row.menuItemId || row._id || row.id || '').trim();
+  }
+
   getGlobalCategorySourceValue(row) {
     return row.globalCategoryId || row.categoryId;
   }
@@ -470,6 +521,40 @@ class MenuCsvImportService {
     };
   }
 
+  async buildMenuItemUpdateFilter(row, menuItem, rowUserId) {
+    const menuItemId = this.getMenuItemId(row);
+
+    if (!menuItemId) {
+      return {
+        name: menuItem.name,
+        userId: rowUserId,
+      };
+    }
+
+    const menuItemObjectId = this.parseRequiredObjectId(
+      menuItemId,
+      'menuItemId',
+      row._rowNumber
+    );
+    const existingMenuItem = await MenuItemModel.findOne({
+      _id: menuItemObjectId,
+      userId: rowUserId,
+      deletedAt: null,
+    }).select('_id');
+
+    if (!existingMenuItem) {
+      throw new Error(
+        `Row ${row._rowNumber}: menuItemId ${menuItemId} was not found for this vendor.`
+      );
+    }
+
+    return {
+      _id: menuItemObjectId,
+      userId: rowUserId,
+      deletedAt: null,
+    };
+  }
+
   async validateVendor(vendorUserId) {
     const vendor = await UserModel.findOne({
       _id: vendorUserId,
@@ -532,11 +617,13 @@ class MenuCsvImportService {
           rowUserId,
           imgUrls
         );
+        const updateFilter = await this.buildMenuItemUpdateFilter(
+          row,
+          menuItem,
+          rowUserId
+        );
         const result = await MenuItemModel.updateOne(
-          {
-            name: menuItem.name,
-            userId: rowUserId,
-          },
+          updateFilter,
           {
             $set: {
               ...menuItem,
@@ -565,6 +652,7 @@ class MenuCsvImportService {
         summary.failedCount += 1;
         summary.errors.push({
           rowNumber: row._rowNumber,
+          menuItemId: this.getMenuItemId(row),
           menuItemName: row.name || '',
           message: error.message,
         });

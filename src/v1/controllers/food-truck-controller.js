@@ -10,6 +10,46 @@ const { Joi } = require('express-validation');
 const MailHelper = require('../../helper/mail-helper');
 const entityName = 'FoodTruck';
 
+const normalizeLocations = (incomingLocations, existingLocations = []) => {
+  const existingById = {};
+  (existingLocations || []).forEach((loc) => {
+    if (loc?._id) {
+      existingById[loc._id.toString()] = loc;
+    }
+  });
+
+  return (incomingLocations || []).map((loc) => {
+    const previous = loc?._id ? existingById[loc._id.toString()] : null;
+    return {
+      ...loc,
+      isOrderingOpen:
+        loc.isOrderingOpen !== undefined
+          ? loc.isOrderingOpen
+          : previous?.isOrderingOpen || false,
+    };
+  });
+};
+
+const syncOrderingLocationFlags = (foodTruck) => {
+  const currentLocation = foodTruck.currentLocation?.toString() || null;
+  const hasCurrentLocation =
+    !!currentLocation &&
+    (foodTruck.locations || []).some(
+      (loc) => loc._id?.toString() === currentLocation
+    );
+
+  if (!hasCurrentLocation) {
+    foodTruck.currentLocation = null;
+  }
+
+  foodTruck.locations = (foodTruck.locations || []).map((loc) => {
+    loc.isOrderingOpen =
+      !!foodTruck.currentLocation &&
+      loc._id?.toString() === foodTruck.currentLocation.toString();
+    return loc;
+  });
+};
+
 /**
  * Helper to process BOGO items and handle isSameItem logic
  * @param {Object} item - Menu item object
@@ -127,9 +167,8 @@ exports.list = async (req, res, next) => {
         $or: [{ name: { $regex: search.trim().toLowerCase(), $options: 'i' } }],
       };
     }
-    
+
     if (user?.userType === 'CUSTOMER') {
-    
       const { data, total } = await Service.getNormalList(
         limit,
         page,
@@ -189,7 +228,7 @@ exports.getMenu = async (req, res, next) => {
   try {
     let {
       params: { id: _id },
-      user
+      user,
     } = req;
 
     const ft = await Service.getById(_id);
@@ -210,89 +249,88 @@ exports.getMenu = async (req, res, next) => {
       query.diet = { $nin: userRestrictDiet }; // exclude items with restricted diet
     }
     const data = (
-      await MenuItemService.getByData(
-        query,
-        {
-          lean: true,
-          populate: [
-            // 'categoryId',
-            {
-              path: 'categoryId',
-              match: {
-                categoriesId: { $ne: null }
-              },
-              populate: {
-                path: 'categoriesId', 
-                select: { _id: 1, name: 1 },
-              },
+      await MenuItemService.getByData(query, {
+        lean: true,
+        populate: [
+          // 'categoryId',
+          {
+            path: 'categoryId',
+            match: {
+              categoriesId: { $ne: null },
             },
-            'meatId',
-            'diet',
-            {
-              path: 'subItem.menuItem',
-              select: { 
-                _id: 1, 
-                name: 1, 
-                description: 1, 
-                imgUrls: 1, 
-                price: 1,
-                strikePrice: 1,
-                discountType: 1,
-                hasDiscount: 1,
-                discountRules: 1,
-                available: 1,
-                itemType: 1,
-                categoryId: 1,
-                meatId: 1,
-                diet: 1,
-                predefinedDiscountId: 1,
-                minQty: 1,
-                maxQty: 1
-              },
+            populate: {
+              path: 'categoriesId',
+              select: { _id: 1, name: 1 },
             },
-              {
-                path: 'bogoItems.itemId',
-                select: { 
-                  _id: 1, 
-                  name: 1, 
-                  description: 1, 
-                  imgUrls: 1, 
-                  price: 1,
-                  strikePrice: 1,
-                  discountType: 1,
-                  hasDiscount: 1,
-                  discountRules: 1,
-                  available: 1,
-                  itemType: 1,
-                  categoryId: 1,
-                  meatId: 1,
-                  diet: 1,
-                  predefinedDiscountId: 1,
-                  minQty: 1,
-                  maxQty: 1
-                },
-              },
-          ],
+          },
+          'meatId',
+          'diet',
+          {
+            path: 'subItem.menuItem',
+            select: {
+              _id: 1,
+              name: 1,
+              description: 1,
+              imgUrls: 1,
+              price: 1,
+              strikePrice: 1,
+              discountType: 1,
+              hasDiscount: 1,
+              discountRules: 1,
+              available: 1,
+              itemType: 1,
+              categoryId: 1,
+              meatId: 1,
+              diet: 1,
+              predefinedDiscountId: 1,
+              minQty: 1,
+              maxQty: 1,
+            },
+          },
+          {
+            path: 'bogoItems.itemId',
+            select: {
+              _id: 1,
+              name: 1,
+              description: 1,
+              imgUrls: 1,
+              price: 1,
+              strikePrice: 1,
+              discountType: 1,
+              hasDiscount: 1,
+              discountRules: 1,
+              available: 1,
+              itemType: 1,
+              categoryId: 1,
+              meatId: 1,
+              diet: 1,
+              predefinedDiscountId: 1,
+              minQty: 1,
+              maxQty: 1,
+            },
+          },
+        ],
+      })
+    )
+      .filter((item) => item.categoryId)
+      .map((item) => {
+        if (item && item.categoryId && typeof item.categoryId === 'object') {
+          item.category = item.categoryId;
+          if (item.categoryId.categoriesId.name) {
+            item.category.name = item.categoryId.categoriesId.name;
+          }
+          item.categoryId = item.category._id;
         }
-      )
-    ).filter(item => item.categoryId).map((item) => {
-      if (item && item.categoryId && typeof item.categoryId === 'object') {
-        item.category = item.categoryId;
-        if(item.categoryId.categoriesId.name){
-          item.category.name= item.categoryId.categoriesId.name
+        if (item && item.meatId && typeof item.meatId === 'object') {
+          item.meat = item.meatId;
+          item.meatId = item.meat._id;
         }
-        item.categoryId = item.category._id;
-      }
-      if (item && item.meatId && typeof item.meatId === 'object') {
-        item.meat = item.meatId;
-        item.meatId = item.meat._id;
-      }
 
-      // Handle isSameItem logic
-      item = processBogoItems(item);
-      
-      return item;
-    });
+        // Handle isSameItem logic
+        item = processBogoItems(item);
+
+        return item;
+      });
     // console.log("Dd",data)
     return res.data(
       {
@@ -384,7 +422,8 @@ exports.update = async (req, res, next) => {
     }
 
     if (locations) {
-      item.locations = locations;
+      item.locations = normalizeLocations(locations, item.locations);
+      syncOrderingLocationFlags(item);
     }
 
     if (availability) {
@@ -420,19 +459,24 @@ exports.update = async (req, res, next) => {
       const menuItemsCount = await MenuItemService.getCount({
         userId: item.userId,
         deletedAt: null,
-        available: true
+        available: true,
       });
-      
+
       // Only update currentLocation if there are available menu items
       if (menuItemsCount > 0) {
         item.currentLocation = currentLocation;
       } else {
         // If no menu items available, prevent location update and send error
         if (currentLocation !== null) {
-          return res.error(new Error('Cannot set location when no menu items are available'), 409);
+          return res.error(
+            new Error('Cannot set location when no menu items are available'),
+            409
+          );
         }
         item.currentLocation = null;
       }
+
+      syncOrderingLocationFlags(item);
     }
 
     await item.save();
@@ -756,9 +800,10 @@ exports.changeaddonPlan = async (req, res, next) => {
       return res.error(new Error('No food truck found'), 409);
     }
 
-    const oldAddOns = (item.addOns || []).map(id => id.toString()).sort();
-    const newAddOns = (addOns || []).map(id => id.toString()).sort();
-    const addOnsChanged = JSON.stringify(oldAddOns) !== JSON.stringify(newAddOns);
+    const oldAddOns = (item.addOns || []).map((id) => id.toString()).sort();
+    const newAddOns = (addOns || []).map((id) => id.toString()).sort();
+    const addOnsChanged =
+      JSON.stringify(oldAddOns) !== JSON.stringify(newAddOns);
 
     if (addOnsChanged) {
       if (item.addOnPlanUpdateDate) {
@@ -845,7 +890,9 @@ exports.globalSearch = async (req, res, next) => {
     });
     data = [
       ...data,
-      ...(await MenuItemService.getLimitedDistinct(7, search,userRestrictDiet)).map((itm) => {
+      ...(
+        await MenuItemService.getLimitedDistinct(7, search, userRestrictDiet)
+      ).map((itm) => {
         itm.recordType = 'MENU_ITEM';
         return itm;
       }),

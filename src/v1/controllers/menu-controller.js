@@ -447,7 +447,7 @@ exports.importCsv = async (req, res, next) => {
     }
 
     const importSummary = await MenuCsvImportService.importFromCsv({
-      csvText: file.buffer.toString('utf8'),
+      csvText: MenuCsvImportService.decodeCsvBuffer(file.buffer),
       vendorUserId,
       imageFiles,
     });

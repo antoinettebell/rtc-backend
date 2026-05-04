@@ -117,6 +117,10 @@ const mSchema = mongoose.Schema(
           type: String,
           default: null,
         },
+        isOrderingOpen: {
+          type: Boolean,
+          default: false,
+        },
       },
     ],
     availability: [
