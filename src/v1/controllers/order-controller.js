@@ -648,6 +648,16 @@ exports.validateOrder = async (req, res, next) => {
         return res.error(new Error('Coupon not found'), 409);
       }
 
+      const now = new Date();
+      if (
+        !coupon.isActive ||
+        coupon.status === 'ARCHIVED' ||
+        (coupon.validFrom && new Date(coupon.validFrom) > now) ||
+        (coupon.validTill && new Date(coupon.validTill) < now)
+      ) {
+        return res.error(new Error('Invalid or expired coupon'), 409);
+      }
+
       const usageCount = await CouponUsageService.getCount({
         couponId: coupon._id,
         deletedAt: null,
@@ -2056,6 +2066,16 @@ exports.add = async (req, res, next) => {
       const coupon = await CouponService.getById(couponId);
       if (!coupon) {
         return res.error(new Error('Coupon not found'), 409);
+      }
+
+      const now = new Date();
+      if (
+        !coupon.isActive ||
+        coupon.status === 'ARCHIVED' ||
+        (coupon.validFrom && new Date(coupon.validFrom) > now) ||
+        (coupon.validTill && new Date(coupon.validTill) < now)
+      ) {
+        return res.error(new Error('Invalid or expired coupon'), 409);
       }
 
       const usageCount = await CouponUsageService.getCount({

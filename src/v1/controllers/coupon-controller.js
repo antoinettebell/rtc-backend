@@ -13,7 +13,7 @@ const entityName = 'Coupon';
 exports.list = async (req, res, next) => {
   try {
     let {
-      query: { limit = 10, page = 1, search },
+      query: { limit = 10, page = 1, search, fundedBy, status },
       params: { id: _id },
     } = req;
     if (_id) {
@@ -30,18 +30,64 @@ exports.list = async (req, res, next) => {
         $or: [{ code: { $regex: search.trim().toLowerCase(), $options: 'i' } }],
       };
     }
-    const data = await Service.getByData(
-      { ...q, deletedAt: null },
-      { paging: { limit, page }, lean: true }
-    );
-
-    const total = await Service.getCount({
+    const isPublicRoute = req.originalUrl?.includes('/public/');
+    const now = new Date();
+    const filters = {
       ...q,
       deletedAt: null,
-    });
+      ...(fundedBy ? { fundedBy } : {}),
+      ...(status ? { status } : {}),
+      ...(isPublicRoute
+        ? {
+            isActive: true,
+            status: 'ACTIVE',
+            $and: [
+              {
+                $or: [{ validFrom: null }, { validFrom: { $lte: now } }],
+              },
+              {
+                $or: [{ validTill: null }, { validTill: { $gte: now } }],
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const data = await Service.getByData(
+      filters,
+      { paging: { limit, page }, lean: true, sort: { createdAt: -1 } }
+    );
+
+    const couponIds = data.map((item) => item._id);
+    const usageCounts = couponIds.length
+      ? await CouponUsageService.getModel().aggregate([
+          { $match: { couponId: { $in: couponIds }, deletedAt: null } },
+          {
+            $group: {
+              _id: '$couponId',
+              count: { $sum: 1 },
+              lastUsedAt: { $max: '$usedAt' },
+            },
+          },
+        ])
+      : [];
+    const usageCountMap = usageCounts.reduce((acc, item) => {
+      acc[item._id.toString()] = {
+        count: item.count,
+        lastUsedAt: item.lastUsedAt,
+      };
+      return acc;
+    }, {});
+    const dataWithUsage = data.map((item) => ({
+      ...item,
+      usageCount: usageCountMap[item._id.toString()]?.count || 0,
+      lastUsedAt: usageCountMap[item._id.toString()]?.lastUsedAt || null,
+    }));
+
+    const total = await Service.getCount(filters);
     return res.data(
       {
-        [`${entityName.toLocaleLowerCase()}List`]: data,
+        [`${entityName.toLocaleLowerCase()}List`]: dataWithUsage,
         total,
         page,
         totalPages: total < limit ? 1 : Math.ceil(total / limit),
@@ -72,12 +118,21 @@ exports.validate = async (req, res, next) => {
       {
         code: { $regex: `\\b${code}\\b`, $options: 'i' },
         isActive: true,
+        status: 'ACTIVE',
         deletedAt: null,
       },
       { singleResult: true }
     );
 
     if (!coupon) {
+      return res.error(new Error('Invalid or expired coupon'), 409);
+    }
+
+    const now = new Date();
+    if (
+      (coupon.validFrom && new Date(coupon.validFrom) > now) ||
+      (coupon.validTill && new Date(coupon.validTill) < now)
+    ) {
       return res.error(new Error('Invalid or expired coupon'), 409);
     }
 
@@ -130,6 +185,7 @@ exports.add = async (req, res, next) => {
         code,
         type,
         usageLimit,
+        fundedBy = 'APP',
         validFrom,
         validTill,
         value,
@@ -154,6 +210,8 @@ exports.add = async (req, res, next) => {
       code,
       type,
       usageLimit,
+      fundedBy,
+      status: 'ACTIVE',
       validFrom,
       validTill,
       value,
@@ -187,6 +245,8 @@ exports.update = async (req, res, next) => {
         code,
         type,
         usageLimit,
+        fundedBy,
+        status,
         validFrom,
         validTill,
         value,
@@ -196,20 +256,22 @@ exports.update = async (req, res, next) => {
       params: { id },
     } = req;
 
-    const existRecord = await Service.getByData(
-      {
-        code: { $regex: `\\b${code}\\b`, $options: 'i' },
-        _id: { $ne: id },
-        deletedAt: null,
-      },
-      { singleResult: true }
-    );
-
-    if (existRecord) {
-      return res.error(
-        new Error('Coupon with this code is already exists.'),
-        409
+    if (code) {
+      const existRecord = await Service.getByData(
+        {
+          code: { $regex: `\\b${code}\\b`, $options: 'i' },
+          _id: { $ne: id },
+          deletedAt: null,
+        },
+        { singleResult: true }
       );
+
+      if (existRecord) {
+        return res.error(
+          new Error('Coupon with this code is already exists.'),
+          409
+        );
+      }
     }
 
     const item = await Service.getById(id);
@@ -227,6 +289,16 @@ exports.update = async (req, res, next) => {
 
     if (usageLimit !== undefined) {
       item.usageLimit = usageLimit;
+    }
+
+    if (fundedBy !== undefined) {
+      item.fundedBy = fundedBy;
+    }
+
+    if (status !== undefined) {
+      item.status = status;
+      item.isActive = status === 'ACTIVE';
+      item.archivedAt = status === 'ARCHIVED' ? new Date().toISOString() : null;
     }
 
     if (validFrom !== undefined) {
@@ -247,6 +319,8 @@ exports.update = async (req, res, next) => {
 
     if ([true, false].includes(isActive)) {
       item.isActive = isActive;
+      item.status = isActive ? 'ACTIVE' : 'ARCHIVED';
+      item.archivedAt = isActive ? null : new Date().toISOString();
     }
 
     await item.save();
@@ -287,6 +361,33 @@ exports.destroy = async (req, res, next) => {
     return res.data(
       { [`${entityName.toLocaleLowerCase()}`]: item },
       `${entityName} deleted`
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.archiveActive = async (req, res, next) => {
+  try {
+    const result = await Service.updateMany(
+      {
+        fundedBy: 'APP',
+        status: 'ACTIVE',
+        isActive: true,
+        deletedAt: null,
+      },
+      {
+        status: 'ARCHIVED',
+        isActive: false,
+        archivedAt: new Date().toISOString(),
+      }
+    );
+
+    return res.data(
+      {
+        archivedCount: result.modifiedCount || 0,
+      },
+      'Active app coupons archived'
     );
   } catch (e) {
     return next(e);

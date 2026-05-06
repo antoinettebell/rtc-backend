@@ -36,6 +36,16 @@ const mSchema = mongoose.Schema(
       enum: ['NOLIMIT'],
       default: 'NOLIMIT',
     },
+    fundedBy: {
+      type: String,
+      enum: ['APP', 'VENDOR'],
+      default: 'APP',
+    },
+    status: {
+      type: String,
+      enum: ['ACTIVE', 'ARCHIVED'],
+      default: 'ACTIVE',
+    },
     validFrom: { type: Date, default: null },
     validTill: { type: Date, default: null },
     adminCreated: {
@@ -49,6 +59,10 @@ const mSchema = mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true,
+    },
+    archivedAt: {
+      type: Date,
+      default: null,
     },
     deletedAt: {
       type: Date,

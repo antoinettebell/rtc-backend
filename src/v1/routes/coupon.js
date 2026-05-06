@@ -13,6 +13,13 @@ router.get('/', Controller.list);
 /** [GET] /api/v1/coupon/validate */
 router.get('/validate', validate(Validation.validate), Controller.validate);
 
+/** [POST] /api/v1/coupon/archive-active */
+router.post(
+  '/archive-active',
+  allowedTo(['SUPER_ADMIN']),
+  Controller.archiveActive
+);
+
 /** [GET] /api/v1/coupon/:id */
 router.get('/:id', Controller.list);
 
