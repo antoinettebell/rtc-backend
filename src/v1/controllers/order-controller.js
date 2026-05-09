@@ -521,7 +521,6 @@ exports.validateOrder = async (req, res, next) => {
           // Clone original data (so we don't mutate the original menu item)
           let updatedFullMenuItemData = { ...menuIds[item.menuItemId] };
           const unitPrice = price + selectedOptionsCost;
-          const discountUnitPrice = price + selectedDiscountOptionsCost;
           const mainSubtotal = unitPrice * item.qty;
           let itemTotal = mainSubtotal;
 
@@ -547,8 +546,11 @@ exports.validateOrder = async (req, res, next) => {
               : 0;
 
             const rewardItems = eligibleSets * getQty;
-            const rewardTotal = rewardItems * discountUnitPrice;
-            const discountAmount = rewardTotal * discountVal;
+            const rewardTotal =
+              rewardItems * (price + selectedDiscountOptionsCost);
+            const discountAmount = rewardItems * price * discountVal;
+            const rewardLinePrice =
+              price * (1 - discountVal) + selectedDiscountOptionsCost;
 
             itemTotal = mainSubtotal + rewardTotal - discountAmount;
 
@@ -557,7 +559,7 @@ exports.validateOrder = async (req, res, next) => {
               {
                 itemId: item.menuItemId,
                 name: name,
-                price: discountUnitPrice,
+                price: rewardLinePrice,
                 qty: rewardItems,
                 isSameItem: true,
                 discountVal: discountVal,
@@ -566,17 +568,20 @@ exports.validateOrder = async (req, res, next) => {
           } else {
             // Fallback to old logic if no discountRules
             // ✅ Only replace bogoItems if discount type is "bogo"
-            if (discountType && discountType === 'BOGO') {
-              updatedFullMenuItemData = {
-                ...updatedFullMenuItemData,
-                bogoItems: Array.isArray(bogoItemsatrray)
-                  ? bogoItemsatrray.map((bogo) => ({
-                      ...bogo,
-                      qty: item.qty, // update quantity same as parent
-                    }))
-                  : [],
-              };
-            }
+	            if (discountType && discountType === 'BOGO') {
+	              updatedFullMenuItemData = {
+	                ...updatedFullMenuItemData,
+	                bogoItems: Array.isArray(bogoItemsatrray)
+	                  ? bogoItemsatrray.map((bogo) => ({
+	                      ...bogo,
+	                      price: bogo.isSameItem
+	                        ? selectedDiscountOptionsCost
+	                        : bogo.price,
+	                      qty: item.qty, // update quantity same as parent
+	                    }))
+	                  : [],
+	              };
+	            }
             // ---------- BOGOHO Discount (Buy One Get One Half Off) ----------
             if (
               !(discountRules && discountRules.discount > 0) &&
@@ -599,14 +604,18 @@ exports.validateOrder = async (req, res, next) => {
                     })
                   : [],
               };
-              itemTotal = mainSubtotal + discountUnitPrice * item.qty * 0.5;
+              itemTotal =
+                mainSubtotal + (price * 0.5 + selectedDiscountOptionsCost) * item.qty;
             }
 
-            if (discountType === 'BOGOHO') {
-              itemTotal = mainSubtotal + discountUnitPrice * item.qty * 0.5;
-            } else {
-              itemTotal = mainSubtotal;
-            }
+	            if (discountType === 'BOGO') {
+	              itemTotal = mainSubtotal + selectedDiscountOptionsCost * item.qty;
+	            } else if (discountType === 'BOGOHO') {
+	              itemTotal =
+	                mainSubtotal + (price * 0.5 + selectedDiscountOptionsCost) * item.qty;
+	            } else {
+	              itemTotal = mainSubtotal;
+	            }
           }
 
           menuItems.push({
@@ -1953,7 +1962,6 @@ exports.add = async (req, res, next) => {
           // Clone original data (so we don't mutate the original menu item)
           let updatedFullMenuItemData = { ...menuIds[item.menuItemId] };
           const unitPrice = price + selectedOptionsCost;
-          const discountUnitPrice = price + selectedDiscountOptionsCost;
           const mainSubtotal = unitPrice * item.qty;
           let itemTotal = mainSubtotal;
           const discountRules = menuIds[item.menuItemId].discountRules;
@@ -1979,32 +1987,39 @@ exports.add = async (req, res, next) => {
               ? 1
               : 0;
             const rewardItems = eligibleSets * normalizedGetQty;
-            const rewardTotal = rewardItems * discountUnitPrice;
-            const discountAmount = rewardTotal * discountVal;
+            const rewardTotal =
+              rewardItems * (price + selectedDiscountOptionsCost);
+            const discountAmount = rewardItems * price * discountVal;
+            const rewardLinePrice =
+              price * (1 - discountVal) + selectedDiscountOptionsCost;
 
             itemTotal = mainSubtotal + rewardTotal - discountAmount;
             updatedFullMenuItemData.bogoItems = [
               {
                 itemId: item.menuItemId,
                 name: name,
-                price: discountUnitPrice,
+                price: rewardLinePrice,
                 qty: rewardItems,
                 isSameItem: true,
                 discountVal: discountVal,
               },
             ];
           } else {
-            if (discountType && discountType === 'BOGO') {
-              updatedFullMenuItemData = {
-                ...updatedFullMenuItemData,
-                bogoItems: Array.isArray(bogoItemsatrray)
-                  ? bogoItemsatrray.map((bogo) => ({
-                      ...bogo,
-                      qty: item.qty,
-                    }))
-                  : [],
-              };
-            }
+	            if (discountType && discountType === 'BOGO') {
+	              updatedFullMenuItemData = {
+	                ...updatedFullMenuItemData,
+	                bogoItems: Array.isArray(bogoItemsatrray)
+	                  ? bogoItemsatrray.map((bogo) => ({
+	                      ...bogo,
+	                      price: bogo.isSameItem
+	                        ? selectedDiscountOptionsCost
+	                        : bogo.price,
+	                      qty: item.qty,
+	                    }))
+	                  : [],
+	              };
+	              itemTotal = mainSubtotal + selectedDiscountOptionsCost * item.qty;
+	            }
 
             if (discountType && discountType === 'BOGOHO') {
               updatedFullMenuItemData = {
@@ -2023,7 +2038,8 @@ exports.add = async (req, res, next) => {
                     })
                   : [],
               };
-              itemTotal = mainSubtotal + discountUnitPrice * item.qty * 0.5;
+              itemTotal =
+                mainSubtotal + (price * 0.5 + selectedDiscountOptionsCost) * item.qty;
             }
           }
 
