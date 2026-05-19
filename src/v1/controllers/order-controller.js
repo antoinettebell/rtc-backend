@@ -52,6 +52,36 @@ const isCashPaymentMethod = (paymentMethod) =>
 const isGatewayPaymentMethod = (paymentMethod) =>
   !isCashPaymentMethod(paymentMethod);
 
+const normalizeOpaquePaymentData = (paymentData) => {
+  if (!paymentData || typeof paymentData !== 'object') {
+    return {
+      opaqueToken: paymentData,
+      dataDescriptor: null,
+    };
+  }
+
+  const tokenSource =
+    paymentData.opaqueToken && typeof paymentData.opaqueToken === 'object'
+      ? paymentData.opaqueToken
+      : paymentData.opaqueData && typeof paymentData.opaqueData === 'object'
+        ? paymentData.opaqueData
+        : paymentData;
+
+  return {
+    opaqueToken:
+      tokenSource.dataValue ||
+      tokenSource.token ||
+      tokenSource.opaqueToken ||
+      paymentData.dataValue ||
+      paymentData.token ||
+      null,
+    dataDescriptor:
+      tokenSource.dataDescriptor ||
+      paymentData.dataDescriptor ||
+      null,
+  };
+};
+
 const isLocationOpenForNormalOrdering = (foodTruck, locationId) => {
   if (!locationId) return false;
 
@@ -845,9 +875,10 @@ exports.paymentCheckout = async (req, res, next) => {
 
     console.log('paymentData', paymentData);
 
+    const opaquePaymentData = normalizeOpaquePaymentData(paymentData);
     const base64String =
       paymentMethod === 'CARD' || paymentMethod === 'TAP_TO_PAY'
-        ? paymentData?.opaqueToken || paymentData?.dataValue || paymentData
+        ? opaquePaymentData.opaqueToken
         : Buffer.from(
             paymentMethod === 'APPLE_PAY'
               ? JSON.stringify(paymentData)
@@ -874,6 +905,7 @@ exports.paymentCheckout = async (req, res, next) => {
       opaqueToken,
       amount,
       paymentMethod,
+      dataDescriptor: opaquePaymentData.dataDescriptor,
       firstName,
       lastName,
       email,

@@ -23,6 +23,7 @@ exports.chargePaymentUnified = async (requestData) => {
   taxAmount = 0,
   subTotal = 0,
   paymentMethod,
+  dataDescriptor,
   firstName = "",
   lastName = "",
   email = "",
@@ -37,11 +38,12 @@ exports.chargePaymentUnified = async (requestData) => {
     const opaqueData = new APIContracts.OpaqueDataType();
     opaqueData.setDataValue(opaqueToken);
     opaqueData.setDataDescriptor(
-      paymentMethod === "GOOGLE_PAY"
+      dataDescriptor ||
+      (paymentMethod === "GOOGLE_PAY"
         ? "COMMON.GOOGLE.INAPP.PAYMENT"
         : paymentMethod === "APPLE_PAY"
           ? "COMMON.APPLE.INAPP.PAYMENT"
-          : "COMMON.ACCEPT.INAPP.PAYMENT"
+          : "COMMON.ACCEPT.INAPP.PAYMENT")
     );
 
     const paymentType = new APIContracts.PaymentType();
@@ -644,7 +646,6 @@ exports.processRefund = async ({
     };
   }
 };
-
 
 
 
