@@ -128,9 +128,6 @@ exports.chargePaymentUnified = async (requestData) => {
     const msg = response.getMessages();
     const txn = response.getTransactionResponse();
 
-    console.log("Request => ",JSON.stringify(request.getJSON(), null, 2))
-    console.log("CreateTransactionController  => ",JSON.stringify(response, null, 2))
-
     if (!msg || msg.getResultCode() !== "Ok") {
       const err = msg?.getMessage?.()[0];
 
@@ -646,6 +643,5 @@ exports.processRefund = async ({
     };
   }
 };
-
 
 

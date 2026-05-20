@@ -873,8 +873,6 @@ exports.paymentCheckout = async (req, res, next) => {
       return res.error(new Error('amount and user are required'), 400);
     }
 
-    console.log('paymentData', paymentData);
-
     const opaquePaymentData = normalizeOpaquePaymentData(paymentData);
     const base64String =
       paymentMethod === 'CARD' || paymentMethod === 'TAP_TO_PAY'
@@ -884,8 +882,6 @@ exports.paymentCheckout = async (req, res, next) => {
               ? JSON.stringify(paymentData)
               : paymentData
           ).toString('base64');
-
-    console.log('base64String', base64String);
 
     const userId = user._id;
     const email = user.email;
@@ -914,7 +910,15 @@ exports.paymentCheckout = async (req, res, next) => {
       userId,
     });
 
-    console.log('chargeResp =>', chargeResp);
+    console.log('Payment checkout result', {
+      success: chargeResp.success,
+      level: chargeResp.level,
+      paymentMethod,
+      amount,
+      transactionId: chargeResp.transactionId || null,
+      errorCode: chargeResp.success ? null : chargeResp.code,
+      errorMessage: chargeResp.success ? null : chargeResp.message,
+    });
 
     //  LOG PAYMENT ATTEMPT
     await PaymentsLogService.create({
@@ -2548,15 +2552,31 @@ exports.update = async (req, res, next) => {
       shouldCreateShipdayDelivery(item)
     ) {
       const foodTruck = await FoodTruckService.getById(item.foodTruckId);
-      const shipdayResponse = await createShipdayDeliveryForAcceptedOrder(
-        item,
-        foodTruck
-      );
+      try {
+        const shipdayResponse = await createShipdayDeliveryForAcceptedOrder(
+          item,
+          foodTruck
+        );
 
-      if (shipdayResponse) {
-        item.shipdayOrderCreatedAt = new Date();
-        item.shipdayResponse = shipdayResponse;
-        item.shipdayError = null;
+        if (shipdayResponse) {
+          item.shipdayOrderCreatedAt = new Date();
+          item.shipdayResponse = shipdayResponse;
+          item.shipdayError = null;
+        }
+      } catch (shipdayError) {
+        item.shipdayError = {
+          message: shipdayError.message || 'Shipday delivery creation failed',
+          statusCode: shipdayError.statusCode || null,
+          responseBody: shipdayError.responseBody || null,
+          date: new Date().toISOString(),
+        };
+        console.error('Shipday delivery creation failed after order acceptance', {
+          orderId: item._id.toString(),
+          orderNumber: item.orderNumber,
+          statusCode: item.shipdayError.statusCode,
+          responseBody: item.shipdayError.responseBody,
+          message: item.shipdayError.message,
+        });
       }
     }
 
