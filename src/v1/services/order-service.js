@@ -10,6 +10,8 @@ const vendorEarningExpression = {
   $add: [vendorSubtotalExpression, vendorTipExpression],
 };
 const deliveredOrderStatuses = ['DELIVERED', 'COMPLETED'];
+const cashPaymentMethods = ['COD', 'CASH'];
+const digitalPaymentMethods = ['APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY'];
 
 class OrderService extends BaseService {
   constructor() {
@@ -680,7 +682,7 @@ if (startDate && endDate) {
             codRevenue: {
               $sum: {
                 $cond: [
-                  { $in: ['$paymentMethod', ['COD', 'CASH']] },
+                  { $in: ['$paymentMethod', cashPaymentMethods] },
                   vendorEarningExpression,
                   0
                 ]
@@ -689,7 +691,7 @@ if (startDate && endDate) {
             digitalRevenue: {
               $sum: {
                 $cond: [
-                  { $in: ['$paymentMethod', ['APPLE_PAY', 'GOOGLE_PAY', 'CARD', 'TAP_TO_PAY', 'STRIPE']] },
+                  { $in: ['$paymentMethod', digitalPaymentMethods] },
                   vendorEarningExpression,
                   0
                 ]
@@ -698,7 +700,7 @@ if (startDate && endDate) {
             codOrders: {
               $sum: {
                 $cond: [
-                  { $in: ['$paymentMethod', ['COD', 'CASH']] },
+                  { $in: ['$paymentMethod', cashPaymentMethods] },
                   1,
                   0
                 ]
@@ -707,7 +709,7 @@ if (startDate && endDate) {
             digitalOrders: {
               $sum: {
                 $cond: [
-                  { $in: ['$paymentMethod', ['APPLE_PAY', 'GOOGLE_PAY', 'CARD', 'TAP_TO_PAY', 'STRIPE']] },
+                  { $in: ['$paymentMethod', digitalPaymentMethods] },
                   1,
                   0
                 ]
