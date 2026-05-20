@@ -2,6 +2,15 @@ const { OrderModel: Model } = require('../../models');
 const { BaseService } = require('../../common-services');
 const mongoose = require('mongoose');
 
+const vendorSubtotalExpression = {
+  $ifNull: ['$totalAfterDiscount', { $ifNull: ['$subTotal', { $ifNull: ['$subtotal', 0] }] }],
+};
+const vendorTipExpression = { $ifNull: ['$tipsAmount', 0] };
+const vendorEarningExpression = {
+  $add: [vendorSubtotalExpression, vendorTipExpression],
+};
+const deliveredOrderStatuses = ['DELIVERED', 'COMPLETED'];
+
 class OrderService extends BaseService {
   constructor() {
     super(Model);
@@ -413,7 +422,7 @@ class OrderService extends BaseService {
   async getVendorEarningsWithFreeDessert(foodTruckId, startDate, endDate) {
     const matchQuery = {
       foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
-      orderStatus: { $in: ['DELIVERED', 'COMPLETED'] },
+      orderStatus: { $in: deliveredOrderStatuses },
       deletedAt: null,
     };
 
@@ -430,7 +439,7 @@ class OrderService extends BaseService {
         $group: {
           _id: null,
           totalOrders: { $sum: 1 },
-          totalRevenue: { $sum: '$total' },
+          totalRevenue: { $sum: vendorEarningExpression },
           totalFreeDessertAmount: { 
             $sum: { 
               $cond: [
@@ -469,7 +478,7 @@ class OrderService extends BaseService {
     async getVendorEarningsWithFreeDessertTest(foodTruckId) {
     const baseMatch = {
       foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
-      orderStatus: { $in: ['DELIVERED', 'COMPLETED'] },
+      orderStatus: { $in: deliveredOrderStatuses },
       deletedAt: null,
     };
 
@@ -501,7 +510,7 @@ class OrderService extends BaseService {
           $group: {
             _id: null,
             totalOrders: { $sum: 1 },
-            totalRevenue: { $sum: '$total' },
+            totalRevenue: { $sum: vendorEarningExpression },
             totalFreeDessertAmount: {
               $sum: {
                 $cond: [{ $eq: ['$freeDessertApplied', true] }, '$freeDessertAmount', 0]
@@ -626,7 +635,7 @@ if (startDate && endDate) {
   // Query condition
   const q = {
     foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
-    orderStatus: { $in: ['DELIVERED', 'COMPLETED'] },
+    orderStatus: { $in: deliveredOrderStatuses },
     deletedAt: null,
     createdAt: { $gte: startDate, $lte: endDate },
   };
@@ -653,7 +662,7 @@ if (startDate && endDate) {
             $group: {
               _id: null,
               totalOrders: { $sum: 1 },
-              totalRevenue: { $sum: '$total' },
+              totalRevenue: { $sum: vendorEarningExpression },
               totalFreeDessertAmount: {
                 $sum: {
                   $cond: [
@@ -672,7 +681,7 @@ if (startDate && endDate) {
               $sum: {
                 $cond: [
                   { $in: ['$paymentMethod', ['COD', 'CASH']] },
-                  '$total',
+                  vendorEarningExpression,
                   0
                 ]
               }
@@ -681,7 +690,7 @@ if (startDate && endDate) {
               $sum: {
                 $cond: [
                   { $in: ['$paymentMethod', ['APPLE_PAY', 'GOOGLE_PAY', 'CARD', 'TAP_TO_PAY', 'STRIPE']] },
-                  '$total',
+                  vendorEarningExpression,
                   0
                 ]
               }
@@ -769,12 +778,12 @@ if (startDate && endDate) {
           _id: null,
           totalOrders: { $sum: 1 },
           totalSales: {
-            $sum: { $cond: [{ $in: ['$orderStatus', ['DELIVERED', 'COMPLETED']] }, '$total', 0] }
+            $sum: { $cond: [{ $in: ['$orderStatus', deliveredOrderStatuses] }, vendorEarningExpression, 0] }
           },
           deliveredDessertsCount: {
             $sum: {
               $cond: [
-                { $and: [{ $in: ['$orderStatus', ['DELIVERED', 'COMPLETED']] }, { $eq: ['$freeDessertApplied', true] }] },
+                { $and: [{ $in: ['$orderStatus', deliveredOrderStatuses] }, { $eq: ['$freeDessertApplied', true] }] },
                 1,
                 0
               ]
@@ -783,7 +792,7 @@ if (startDate && endDate) {
           deliveredDessertsSum: {
             $sum: {
               $cond: [
-                { $and: [{ $in: ['$orderStatus', ['DELIVERED', 'COMPLETED']] }, { $eq: ['$freeDessertApplied', true] }] },
+                { $and: [{ $in: ['$orderStatus', deliveredOrderStatuses] }, { $eq: ['$freeDessertApplied', true] }] },
                 '$freeDessertAmount',
                 0
               ]
