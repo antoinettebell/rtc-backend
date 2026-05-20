@@ -103,6 +103,8 @@ const buildInitialStatusTime = (orderStatus) => {
     rejectedAt: null,
     preparingAt: orderStatus === 'PREPARING' ? now : null,
     readyAt: null,
+    driverPickedUpAt: null,
+    deliveredAt: null,
     completedAt: null,
   };
 };
@@ -262,8 +264,12 @@ const getShipdayDeliveryOrderId = (order) => {
     response.orderId ||
     response.order_id ||
     response.id ||
+    response.orderNumber ||
+    response.order_number ||
     response.order?.orderId ||
+    response.order?.orderNumber ||
     response.data?.orderId ||
+    response.data?.orderNumber ||
     null
   );
 };
@@ -304,10 +310,10 @@ const normalizeShipdayStatus = (status) =>
 
 const SHIPDAY_STATUS_MAP = {
   ACCEPTED: 'ACCEPTED',
-  PICKED_UP: 'READY_FOR_PICKUP',
-  READY_TO_DELIVER: 'READY_FOR_PICKUP',
-  DELIVERED: 'COMPLETED',
-  ALREADY_DELIVERED: 'COMPLETED',
+  PICKED_UP: 'DRIVER_PICKED_UP',
+  READY_TO_DELIVER: 'DRIVER_PICKED_UP',
+  DELIVERED: 'DELIVERED',
+  ALREADY_DELIVERED: 'DELIVERED',
 };
 
 const getShipdayOrderFilter = (orderId) => {
@@ -847,7 +853,7 @@ exports.validateOrder = async (req, res, next) => {
       // Count user's completed orders and prior redemptions
       const completedOrders = await Service.getCount({
         userId: user._id,
-        orderStatus: 'COMPLETED',
+        orderStatus: { $in: ['DELIVERED', 'COMPLETED'] },
         deletedAt: null,
       });
       const appliedRedemptions = await Service.getCount({
@@ -1429,6 +1435,8 @@ exports.refundPosOrder = async (req, res, next) => {
       rejectedAt: null,
       preparingAt: null,
       readyAt: null,
+      driverPickedUpAt: null,
+      deliveredAt: null,
       completedAt: null,
     };
     order.statusTime.canceledAt = new Date().toISOString();
@@ -1495,6 +1503,8 @@ exports.list = async (req, res, next) => {
               'REJECTED',
               'PREPARING',
               'READY_FOR_PICKUP',
+              'DRIVER_PICKED_UP',
+              'DELIVERED',
               'COMPLETED',
             ].includes(itm)
         )
@@ -2280,7 +2290,7 @@ exports.add = async (req, res, next) => {
       // Count user's completed orders and prior redemptions
       const completedOrders = await Service.getCount({
         userId: user._id,
-        orderStatus: 'COMPLETED',
+        orderStatus: { $in: ['DELIVERED', 'COMPLETED'] },
         deletedAt: null,
       });
       const appliedRedemptions = await Service.getCount({
@@ -2426,7 +2436,9 @@ exports.update = async (req, res, next) => {
       ACCEPTED: 4,
       PREPARING: 5,
       READY_FOR_PICKUP: 6,
-      COMPLETED: 7,
+      DRIVER_PICKED_UP: 7,
+      DELIVERED: 8,
+      COMPLETED: 9,
     };
 
     const statusTimeKey = {
@@ -2436,6 +2448,8 @@ exports.update = async (req, res, next) => {
       ACCEPTED: 'acceptedAt',
       PREPARING: 'preparingAt',
       READY_FOR_PICKUP: 'readyAt',
+      DRIVER_PICKED_UP: 'driverPickedUpAt',
+      DELIVERED: 'deliveredAt',
       COMPLETED: 'completedAt',
     };
 
@@ -2506,6 +2520,8 @@ exports.update = async (req, res, next) => {
         rejectedAt: null,
         preparingAt: null,
         readyAt: null,
+        driverPickedUpAt: null,
+        deliveredAt: null,
         completedAt: null,
       };
 
@@ -2808,9 +2824,11 @@ exports.shipdayUpdate = async (req, res, next) => {
       ACCEPTED: 2,
       PREPARING: 3,
       READY_FOR_PICKUP: 4,
-      COMPLETED: 5,
-      CANCEL: 6,
-      REJECTED: 6,
+      DRIVER_PICKED_UP: 5,
+      DELIVERED: 6,
+      COMPLETED: 7,
+      CANCEL: 8,
+      REJECTED: 8,
     };
 
     if (
@@ -2851,6 +2869,15 @@ exports.shipdayUpdate = async (req, res, next) => {
       update['statusTime.readyAt'] = order.statusTime?.readyAt || now;
     }
 
+    if (mappedStatus === 'DRIVER_PICKED_UP') {
+      update['statusTime.driverPickedUpAt'] =
+        order.statusTime?.driverPickedUpAt || now;
+    }
+
+    if (mappedStatus === 'DELIVERED') {
+      update['statusTime.deliveredAt'] = order.statusTime?.deliveredAt || now;
+    }
+
     if (mappedStatus === 'COMPLETED') {
       update['statusTime.completedAt'] = order.statusTime?.completedAt || now;
     }
@@ -2866,6 +2893,22 @@ exports.shipdayUpdate = async (req, res, next) => {
       matchedCount: result.matchedCount,
       modifiedCount: result.modifiedCount,
     });
+
+    if (result.modifiedCount && order.orderStatus !== mappedStatus) {
+      try {
+        await CustomNotification.sendOrderStatusNotification(
+          { _id: order.userId },
+          order._id,
+          mappedStatus
+        );
+      } catch (notificationError) {
+        console.error('Shipday status notification failed', {
+          orderId,
+          mappedStatus,
+          message: notificationError.message,
+        });
+      }
+    }
 
     return res.json({ success: true });
   } catch (e) {
@@ -2978,7 +3021,7 @@ exports.getFreeDessertEligibility = async (req, res, next) => {
     // Count user's completed orders and applied redemptions (for recurring logic)
     const completedOrders = await Service.getCount({
       userId: user._id,
-      orderStatus: 'COMPLETED',
+      orderStatus: { $in: ['DELIVERED', 'COMPLETED'] },
       deletedAt: null,
     });
     const priorRedemptionCount = await Service.getCount({

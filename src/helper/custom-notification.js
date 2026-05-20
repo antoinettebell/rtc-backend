@@ -94,6 +94,14 @@ exports.sendOrderStatusNotification = async (user, orderId, status) => {
         title: 'Order ready',
         body: 'Your food is ready for the pickup.',
       },
+      DRIVER_PICKED_UP: {
+        title: 'Driver picked up your order',
+        body: 'Your order is on the way.',
+      },
+      DELIVERED: {
+        title: 'Order delivered',
+        body: 'Your order has been delivered.',
+      },
       COMPLETED: {
         title: 'Order complete',
         body: 'Enjoy your food.',
@@ -163,5 +171,4 @@ exports.sendBadReviewNotificationToVendor = async (vendor, orderId = null,foodTr
     console.log('========Error in sendNewOrderNotification', e);
   }
 };
-
 

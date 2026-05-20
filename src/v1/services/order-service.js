@@ -413,7 +413,7 @@ class OrderService extends BaseService {
   async getVendorEarningsWithFreeDessert(foodTruckId, startDate, endDate) {
     const matchQuery = {
       foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
-      orderStatus: 'COMPLETED',
+      orderStatus: { $in: ['DELIVERED', 'COMPLETED'] },
       deletedAt: null,
     };
 
@@ -469,7 +469,7 @@ class OrderService extends BaseService {
     async getVendorEarningsWithFreeDessertTest(foodTruckId) {
     const baseMatch = {
       foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
-      orderStatus: 'COMPLETED',
+      orderStatus: { $in: ['DELIVERED', 'COMPLETED'] },
       deletedAt: null,
     };
 
@@ -626,7 +626,7 @@ if (startDate && endDate) {
   // Query condition
   const q = {
     foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
-    orderStatus: 'COMPLETED',
+    orderStatus: { $in: ['DELIVERED', 'COMPLETED'] },
     deletedAt: null,
     createdAt: { $gte: startDate, $lte: endDate },
   };
@@ -769,12 +769,12 @@ if (startDate && endDate) {
           _id: null,
           totalOrders: { $sum: 1 },
           totalSales: {
-            $sum: { $cond: [{ $eq: ['$orderStatus', 'COMPLETED'] }, '$total', 0] }
+            $sum: { $cond: [{ $in: ['$orderStatus', ['DELIVERED', 'COMPLETED']] }, '$total', 0] }
           },
           deliveredDessertsCount: {
             $sum: {
               $cond: [
-                { $and: [{ $eq: ['$orderStatus', 'COMPLETED'] }, { $eq: ['$freeDessertApplied', true] }] },
+                { $and: [{ $in: ['$orderStatus', ['DELIVERED', 'COMPLETED']] }, { $eq: ['$freeDessertApplied', true] }] },
                 1,
                 0
               ]
@@ -783,7 +783,7 @@ if (startDate && endDate) {
           deliveredDessertsSum: {
             $sum: {
               $cond: [
-                { $and: [{ $eq: ['$orderStatus', 'COMPLETED'] }, { $eq: ['$freeDessertApplied', true] }] },
+                { $and: [{ $in: ['$orderStatus', ['DELIVERED', 'COMPLETED']] }, { $eq: ['$freeDessertApplied', true] }] },
                 '$freeDessertAmount',
                 0
               ]

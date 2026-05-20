@@ -659,7 +659,7 @@ exports.getFreeDessertProgress = async (req, res, next) => {
 
     const completedOrders = await OrderService.getCount({
       userId: user._id,
-      orderStatus: 'COMPLETED',
+      orderStatus: { $in: ['DELIVERED', 'COMPLETED'] },
       deletedAt: null,
     });
     const appliedRedemptions = await OrderService.getCount({

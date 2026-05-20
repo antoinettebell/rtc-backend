@@ -236,6 +236,8 @@ const mSchema = mongoose.Schema(
         'REJECTED',
         'PREPARING',
         'READY_FOR_PICKUP',
+        'DRIVER_PICKED_UP',
+        'DELIVERED',
         'COMPLETED',
       ],
     },
@@ -269,6 +271,14 @@ const mSchema = mongoose.Schema(
         default: null,
       },
       readyAt: {
+        type: Date,
+        default: null,
+      },
+      driverPickedUpAt: {
+        type: Date,
+        default: null,
+      },
+      deliveredAt: {
         type: Date,
         default: null,
       },

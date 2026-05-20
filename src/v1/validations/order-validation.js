@@ -107,6 +107,8 @@ module.exports = {
           'REJECTED',
           'PREPARING',
           'READY_FOR_PICKUP',
+          'DRIVER_PICKED_UP',
+          'DELIVERED',
           'COMPLETED'
         )
         .trim(),
