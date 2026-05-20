@@ -61,11 +61,28 @@ const mSchema = mongoose.Schema(
       type: Date,
       default: null,
     },
+    shipdayCreationStartedAt: {
+      type: Date,
+      default: null,
+    },
+    shipdayCreationStatus: {
+      type: String,
+      enum: ['PENDING', 'SUCCESS', 'FAILED'],
+      default: null,
+    },
     shipdayResponse: {
       type: Object,
       default: null,
     },
     shipdayError: {
+      type: Object,
+      default: null,
+    },
+    shipdayStatusResponse: {
+      type: Object,
+      default: null,
+    },
+    shipdayStatusError: {
       type: Object,
       default: null,
     },

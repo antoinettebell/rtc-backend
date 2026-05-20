@@ -190,8 +190,14 @@ const createShipdayDeliveryForAcceptedOrder = async (order, foodTruck) => {
     return null;
   }
 
-  if (!process.env.SHIPDAY_DELIVERY_FUNCTION_URL) {
-    throw new Error('Missing SHIPDAY_DELIVERY_FUNCTION_URL');
+  const shipdayDeliveryFunctionUrl =
+    process.env.SHIPDAY_DELIVERY_FUNCTION_URL ||
+    process.env.AZURE_SHIPDAY_FUNCTION_URL;
+
+  if (!shipdayDeliveryFunctionUrl) {
+    throw new Error(
+      'Missing SHIPDAY_DELIVERY_FUNCTION_URL or AZURE_SHIPDAY_FUNCTION_URL'
+    );
   }
 
   const customer = await UserService.getById(order.userId);
@@ -207,7 +213,7 @@ const createShipdayDeliveryForAcceptedOrder = async (order, foodTruck) => {
     throw new Error('Vendor pickup address is required for Shipday');
   }
 
-  return postJson(process.env.SHIPDAY_DELIVERY_FUNCTION_URL, {
+  return postJson(shipdayDeliveryFunctionUrl, {
     fulfillmentType: 'DELIVERY',
     orderId: order.orderNumber || order._id.toString(),
     customerName: [customer?.firstName, customer?.lastName]
@@ -228,6 +234,68 @@ const createShipdayDeliveryForAcceptedOrder = async (order, foodTruck) => {
   });
 };
 
+const claimShipdayDeliveryCreation = async (order) => {
+  if (!shouldCreateShipdayDelivery(order) || order.shipdayOrderCreatedAt) {
+    return false;
+  }
+
+  const result = await OrderModel.updateOne(
+    {
+      _id: order._id,
+      shipdayOrderCreatedAt: null,
+      shipdayCreationStatus: { $ne: 'PENDING' },
+    },
+    {
+      $set: {
+        shipdayCreationStartedAt: new Date(),
+        shipdayCreationStatus: 'PENDING',
+      },
+    }
+  );
+
+  return result.modifiedCount === 1;
+};
+
+const getShipdayDeliveryOrderId = (order) => {
+  const response = order?.shipdayResponse || {};
+  return (
+    response.orderId ||
+    response.order_id ||
+    response.id ||
+    response.order?.orderId ||
+    response.data?.orderId ||
+    null
+  );
+};
+
+const updateShipdayReadyForPickup = async (order) => {
+  if (!shouldCreateShipdayDelivery(order)) {
+    return null;
+  }
+
+  const shipdayOrderId = getShipdayDeliveryOrderId(order);
+  if (!shipdayOrderId) {
+    throw new Error('Missing Shipday order id for ready for pickup update');
+  }
+
+  const shipdayStatusFunctionUrl =
+    process.env.SHIPDAY_DELIVERY_STATUS_FUNCTION_URL ||
+    process.env.AZURE_SHIPDAY_STATUS_FUNCTION_URL;
+
+  if (!shipdayStatusFunctionUrl) {
+    throw new Error(
+      'Missing SHIPDAY_DELIVERY_STATUS_FUNCTION_URL or AZURE_SHIPDAY_STATUS_FUNCTION_URL'
+    );
+  }
+
+  return postJson(shipdayStatusFunctionUrl, {
+    action: 'READY_FOR_PICKUP',
+    orderId: order.orderNumber || order._id.toString(),
+    shipdayOrderId,
+    readyToPickup: true,
+  });
+};
+
 const normalizeShipdayStatus = (status) =>
   String(status || '')
     .trim()
@@ -235,10 +303,11 @@ const normalizeShipdayStatus = (status) =>
     .replace(/[\s-]+/g, '_');
 
 const SHIPDAY_STATUS_MAP = {
-  ACCEPTED: 'accepted',
-  PICKED_UP: 'picked_up',
-  DELIVERED: 'delivered',
-  FAILED: 'failed',
+  ACCEPTED: 'ACCEPTED',
+  PICKED_UP: 'READY_FOR_PICKUP',
+  READY_TO_DELIVER: 'READY_FOR_PICKUP',
+  DELIVERED: 'COMPLETED',
+  ALREADY_DELIVERED: 'COMPLETED',
 };
 
 const getShipdayOrderFilter = (orderId) => {
@@ -2551,31 +2620,81 @@ exports.update = async (req, res, next) => {
       previousOrderStatus !== 'ACCEPTED' &&
       shouldCreateShipdayDelivery(item)
     ) {
-      const foodTruck = await FoodTruckService.getById(item.foodTruckId);
-      try {
-        const shipdayResponse = await createShipdayDeliveryForAcceptedOrder(
-          item,
-          foodTruck
-        );
+      const shipdayClaimed = await claimShipdayDeliveryCreation(item);
+      if (shipdayClaimed) {
+        item.shipdayCreationStartedAt = new Date();
+        item.shipdayCreationStatus = 'PENDING';
+        const foodTruck = await FoodTruckService.getById(item.foodTruckId);
+        try {
+          const shipdayResponse = await createShipdayDeliveryForAcceptedOrder(
+            item,
+            foodTruck
+          );
 
-        if (shipdayResponse) {
-          item.shipdayOrderCreatedAt = new Date();
-          item.shipdayResponse = shipdayResponse;
-          item.shipdayError = null;
+          if (shipdayResponse) {
+            item.shipdayOrderCreatedAt = new Date();
+            item.shipdayCreationStatus = 'SUCCESS';
+            item.shipdayResponse = shipdayResponse;
+            item.shipdayError = null;
+          }
+        } catch (shipdayError) {
+          item.shipdayCreationStatus = 'FAILED';
+          item.shipdayError = {
+            message: shipdayError.message || 'Shipday delivery creation failed',
+            statusCode: shipdayError.statusCode || null,
+            responseBody: shipdayError.responseBody || null,
+            date: new Date().toISOString(),
+          };
+          console.error(
+            'Shipday delivery creation failed after order acceptance',
+            {
+              orderId: item._id.toString(),
+              orderNumber: item.orderNumber,
+              statusCode: item.shipdayError.statusCode,
+              responseBody: item.shipdayError.responseBody,
+              message: item.shipdayError.message,
+            }
+          );
         }
-      } catch (shipdayError) {
-        item.shipdayError = {
-          message: shipdayError.message || 'Shipday delivery creation failed',
-          statusCode: shipdayError.statusCode || null,
-          responseBody: shipdayError.responseBody || null,
-          date: new Date().toISOString(),
-        };
-        console.error('Shipday delivery creation failed after order acceptance', {
+      } else {
+        console.log('Shipday delivery creation skipped for claimed order', {
           orderId: item._id.toString(),
           orderNumber: item.orderNumber,
-          statusCode: item.shipdayError.statusCode,
-          responseBody: item.shipdayError.responseBody,
-          message: item.shipdayError.message,
+        });
+      }
+    }
+
+    if (
+      orderStatus === 'READY_FOR_PICKUP' &&
+      previousOrderStatus !== 'READY_FOR_PICKUP' &&
+      shouldCreateShipdayDelivery(item)
+    ) {
+      try {
+        const shipdayStatusResponse = await updateShipdayReadyForPickup(item);
+        if (shipdayStatusResponse) {
+          item.shipdayStatusResponse = {
+            ...(item.shipdayStatusResponse || {}),
+            readyForPickup: shipdayStatusResponse,
+            readyForPickupAt: new Date().toISOString(),
+          };
+          item.shipdayStatusError = null;
+        }
+      } catch (shipdayStatusError) {
+        item.shipdayStatusError = {
+          action: 'READY_FOR_PICKUP',
+          message:
+            shipdayStatusError.message ||
+            'Shipday ready for pickup update failed',
+          statusCode: shipdayStatusError.statusCode || null,
+          responseBody: shipdayStatusError.responseBody || null,
+          date: new Date().toISOString(),
+        };
+        console.error('Shipday ready for pickup update failed', {
+          orderId: item._id.toString(),
+          orderNumber: item.orderNumber,
+          statusCode: item.shipdayStatusError.statusCode,
+          responseBody: item.shipdayStatusError.responseBody,
+          message: item.shipdayStatusError.message,
         });
       }
     }
@@ -2684,8 +2803,32 @@ exports.shipdayUpdate = async (req, res, next) => {
       return res.json({ success: true });
     }
 
+    const statusSort = {
+      PLACED: 1,
+      ACCEPTED: 2,
+      PREPARING: 3,
+      READY_FOR_PICKUP: 4,
+      COMPLETED: 5,
+      CANCEL: 6,
+      REJECTED: 6,
+    };
+
+    if (
+      statusSort[mappedStatus] &&
+      statusSort[order.orderStatus] &&
+      statusSort[mappedStatus] < statusSort[order.orderStatus]
+    ) {
+      console.log('Shipday update stale status ignored:', {
+        orderId,
+        currentStatus: order.orderStatus,
+        mappedStatus,
+      });
+      return res.json({ success: true });
+    }
+
     const now = new Date();
     const update = {
+      orderStatus: mappedStatus,
       status: mappedStatus,
       driverName,
       deliveryTime,
@@ -2703,6 +2846,14 @@ exports.shipdayUpdate = async (req, res, next) => {
           : processedEventIds,
       },
     };
+
+    if (mappedStatus === 'READY_FOR_PICKUP') {
+      update['statusTime.readyAt'] = order.statusTime?.readyAt || now;
+    }
+
+    if (mappedStatus === 'COMPLETED') {
+      update['statusTime.completedAt'] = order.statusTime?.completedAt || now;
+    }
 
     const result = await OrderModel.collection.updateOne(
       { _id: order._id },
