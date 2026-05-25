@@ -1,0 +1,70 @@
+/**
+ * Contains vendor employee routes
+ */
+const express = require('express');
+const router = express.Router();
+const { VendorEmployeeController: Controller } = require('../controllers');
+const {
+  validate,
+  VendorEmployeeValidation: Validation,
+} = require('../validations');
+const { allowedTo } = require('../../middleware/allow-route');
+
+router.get(
+  '/',
+  allowedTo(['VENDOR']),
+  validate(Validation.list),
+  Controller.list
+);
+
+router.post(
+  '/',
+  allowedTo(['VENDOR']),
+  validate(Validation.add),
+  Controller.add
+);
+
+router.get('/dashboard', allowedTo(['EMPLOYEE']), Controller.dashboard);
+
+router.post('/session/end', allowedTo(['EMPLOYEE']), Controller.endSession);
+
+router.post('/session/duty', allowedTo(['EMPLOYEE']), Controller.toggleDuty);
+
+router.get(
+  '/refund-cancel-requests',
+  allowedTo(['VENDOR', 'EMPLOYEE']),
+  validate(Validation.listRefundCancelRequests),
+  Controller.listRefundCancelRequests
+);
+
+router.post(
+  '/refund-cancel-requests',
+  allowedTo(['EMPLOYEE']),
+  validate(Validation.submitRefundCancelRequest),
+  Controller.submitRefundCancelRequest
+);
+
+router.put(
+  '/refund-cancel-requests/:requestId/review',
+  allowedTo(['VENDOR']),
+  validate(Validation.reviewRefundCancelRequest),
+  Controller.reviewRefundCancelRequest
+);
+
+router.put(
+  '/:id',
+  allowedTo(['VENDOR']),
+  validate(Validation.update),
+  Controller.update
+);
+
+router.put(
+  '/:id/reset-pin',
+  allowedTo(['VENDOR']),
+  validate(Validation.resetPin),
+  Controller.resetPin
+);
+
+router.delete('/:id', allowedTo(['VENDOR']), Controller.archive);
+
+module.exports = router;

@@ -6,9 +6,10 @@ const {
   CouponService,
   CouponUsageService,
   OrderCounterService,
-  TaxRatesService,
   SettingService,
   PaymentsLogService,
+  PlanService,
+  EmployeeSessionService,
 } = require('../services');
 const entityName = 'Order';
 const mongoose = require('mongoose');
@@ -17,6 +18,12 @@ const http = require('http');
 const CustomNotification = require('../../helper/custom-notification');
 const PaymentHelper = require('../../helper/payment-helper');
 const MailHelper = require('../../helper/mail-helper');
+const TaxHelper = require('../../helper/tax-helper');
+const {
+  assertWalkUpPosPaymentMethodAllowed,
+  assertVendorPlanCapability,
+  normalizeVendorPlan,
+} = require('../../helper/vendor-plan-helper');
 const { OrderModel } = require('../../models');
 
 const { env } = require('../../config');
@@ -27,6 +34,7 @@ const toMoney = (value, fallback = 0) => {
 };
 
 const BUILT_IN_DELIVERY_FEE = 6.49;
+const PLATFORM_SERVICE_FEE_RATE = 3.5;
 
 const normalizeDeliveryFee = (fulfillmentType, deliveryFee) => {
   if (fulfillmentType !== 'DELIVERY') {
@@ -43,14 +51,247 @@ const normalizeDeliveryFee = (fulfillmentType, deliveryFee) => {
 const normalizeDriverTip = (fulfillmentType, tip, tips) =>
   fulfillmentType === 'DELIVERY' ? toMoney(tip ?? tips) : 0;
 
+const calculatePlatformServiceFee = (baseAmount, applyFee) =>
+  applyFee
+    ? toMoney((PLATFORM_SERVICE_FEE_RATE * toMoney(baseAmount)) / 100)
+    : 0;
+
+const buildAvalaraAddress = async (addressData) => {
+  const parsed = await TaxHelper.parseDynamicAddress(addressData);
+
+  return {
+    line1: parsed.lines || null,
+    city: parsed.city,
+    region: parsed.region,
+    postalCode: parsed.postalCode,
+    country: parsed.country,
+    latitude: parsed.latitude || null,
+    longitude: parsed.longitude || null,
+  };
+};
+
+const getOrderAvalaraAddresses = async ({
+  foodTruck,
+  locationId,
+  fulfillmentType,
+  deliveryAddress,
+  deliveryLat,
+  deliveryLong,
+}) => {
+  const loc = (foodTruck.locations || []).find(
+    (itm) => itm.zipcode && itm._id.toString() === locationId
+  );
+
+  if (!loc) {
+    return { loc: null, shipFrom: null, shipTo: null };
+  }
+
+  const shipFrom = await buildAvalaraAddress(loc);
+  const shipTo =
+    fulfillmentType === 'DELIVERY' && deliveryAddress
+      ? await buildAvalaraAddress({
+          address: deliveryAddress,
+          lat: deliveryLat,
+          long: deliveryLong,
+        })
+      : shipFrom;
+
+  return { loc, shipFrom, shipTo };
+};
+
+const calculateAvalaraOrderTax = async ({
+  foodTruck,
+  locationId,
+  fulfillmentType,
+  deliveryAddress,
+  deliveryLat,
+  deliveryLong,
+  foodAmount,
+  deliveryFee,
+  serviceFee = 0,
+  type = 'SalesOrder',
+  commit = false,
+  code,
+  customerCode,
+  purchaseOrderNo,
+}) => {
+  const { loc, shipFrom, shipTo } = await getOrderAvalaraAddresses({
+    foodTruck,
+    locationId,
+    fulfillmentType,
+    deliveryAddress,
+    deliveryLat,
+    deliveryLong,
+  });
+
+  if (!loc) {
+    return { loc: null, result: null };
+  }
+
+  const result = await TaxHelper.calculateMarketplaceFoodDeliveryTax({
+    shipFrom,
+    shipTo,
+    foodAmount,
+    deliveryFee: fulfillmentType === 'DELIVERY' ? deliveryFee : 0,
+    serviceFee,
+    type,
+    commit,
+    code,
+    customerCode,
+    purchaseOrderNo,
+  });
+
+  return { loc, result };
+};
+
+const WALK_UP_ORDER_SOURCES = ['VENDOR_POS', 'WALK_UP_EMPLOYEE'];
+
 const isVendorPosOrder = (user, orderSource) =>
-  user?.userType === 'VENDOR' && orderSource === 'VENDOR_POS';
+  ['VENDOR', 'EMPLOYEE'].includes(user?.userType) &&
+  WALK_UP_ORDER_SOURCES.includes(orderSource);
+
+const normalizeWalkUpOrderSource = (user, orderSource) => {
+  if (user?.userType === 'EMPLOYEE' && orderSource === 'VENDOR_POS') {
+    return 'WALK_UP_EMPLOYEE';
+  }
+
+  return orderSource;
+};
 
 const isCashPaymentMethod = (paymentMethod) =>
   ['COD', 'CASH'].includes(paymentMethod);
 
 const isGatewayPaymentMethod = (paymentMethod) =>
   !isCashPaymentMethod(paymentMethod);
+
+const getFoodTruckPlan = async (foodTruck) =>
+  foodTruck?.planId ? PlanService.getById(foodTruck.planId) : null;
+
+const assertVendorPosAccess = async (foodTruck, paymentMethod) => {
+  const plan = await getFoodTruckPlan(foodTruck);
+  assertWalkUpPosPaymentMethodAllowed(plan, paymentMethod);
+
+  if (paymentMethod === 'TAP_TO_PAY') {
+    assertVendorPlanCapability(
+      plan,
+      'tapToPay',
+      'Tap to Pay is not available for your current vendor plan.'
+    );
+  }
+
+  return normalizeVendorPlan(plan);
+};
+
+const buildWalkUpAuditFields = ({
+  user,
+  foodTruck,
+  locationId,
+  orderSource,
+  paymentMethod,
+  plan,
+}) => {
+  if (!WALK_UP_ORDER_SOURCES.includes(orderSource)) {
+    return {};
+  }
+
+  const vendorUserId =
+    user.userType === 'EMPLOYEE' ? user.vendor_user_id : user._id;
+  const foodTruckId = foodTruck?._id;
+  const employeeName =
+    user.userType === 'EMPLOYEE'
+      ? [user.first_name, user.last_name].filter(Boolean).join(' ')
+      : null;
+
+  return {
+    created_by_type: user.userType === 'EMPLOYEE' ? 'EMPLOYEE' : 'VENDOR',
+    employee_internal_id:
+      user.userType === 'EMPLOYEE' ? user.employee_internal_id : null,
+    employee_session_id:
+      user.userType === 'EMPLOYEE' ? user.employee_session_id : null,
+    employee_login_id:
+      user.userType === 'EMPLOYEE' ? user.employee_login_id : null,
+    employee_name: employeeName || null,
+    vendor_user_id: vendorUserId,
+    food_truck_id: foodTruckId,
+    location_id: locationId,
+    order_source: orderSource,
+    payment_method: paymentMethod,
+    vendor_tier_at_transaction: plan
+      ? {
+          slug: plan.slug,
+          name: plan.name,
+          rate: plan.rate,
+          payoutTimingLabel: plan.payoutTimingLabel,
+          capabilities: plan.capabilities,
+        }
+      : null,
+    created_at: new Date(),
+  };
+};
+
+const touchEmployeeSession = async (user) => {
+  if (user?.userType !== 'EMPLOYEE') {
+    return;
+  }
+
+  await EmployeeSessionService.touchSession(
+    user.employee_session_id,
+    user.employee_internal_id
+  );
+};
+
+const assertActiveEmployeeSession = async (user) => {
+  if (user?.userType !== 'EMPLOYEE') {
+    return null;
+  }
+
+  return EmployeeSessionService.assertActiveEmployeeSession(
+    user.employee_session_id,
+    user.employee_internal_id
+  );
+};
+
+const assertPosActorFoodTruckAccess = (user, foodTruck, locationId = null) => {
+  if (user?.userType === 'VENDOR') {
+    return foodTruck.userId?.toString() === user._id?.toString();
+  }
+
+  if (user?.userType === 'EMPLOYEE') {
+    const hasTruckAccess =
+      foodTruck._id?.toString() === user.food_truck_id?.toString() &&
+      foodTruck.userId?.toString() === user.vendor_user_id?.toString();
+    const hasLocationAccess =
+      !locationId ||
+      locationId?.toString() === user.assigned_location_id?.toString();
+
+    return hasTruckAccess && hasLocationAccess;
+  }
+
+  return false;
+};
+
+const assertVendorTapToPayAccess = async (user) => {
+  if (!['VENDOR', 'EMPLOYEE'].includes(user?.userType)) {
+    return;
+  }
+
+  const foodTruck =
+    user.userType === 'EMPLOYEE'
+      ? await FoodTruckService.getByData(
+          { _id: user.food_truck_id, userId: user.vendor_user_id },
+          { singleResult: true }
+        )
+      : await FoodTruckService.getByData(
+          { userId: user._id },
+          { singleResult: true }
+        );
+  const plan = await getFoodTruckPlan(foodTruck);
+  assertVendorPlanCapability(
+    plan,
+    'tapToPay',
+    'Tap to Pay is not available for your current vendor plan.'
+  );
+};
 
 const normalizeOpaquePaymentData = (paymentData) => {
   if (!paymentData || typeof paymentData !== 'object') {
@@ -64,8 +305,8 @@ const normalizeOpaquePaymentData = (paymentData) => {
     paymentData.opaqueToken && typeof paymentData.opaqueToken === 'object'
       ? paymentData.opaqueToken
       : paymentData.opaqueData && typeof paymentData.opaqueData === 'object'
-        ? paymentData.opaqueData
-        : paymentData;
+      ? paymentData.opaqueData
+      : paymentData;
 
   return {
     opaqueToken:
@@ -76,9 +317,7 @@ const normalizeOpaquePaymentData = (paymentData) => {
       paymentData.token ||
       null,
     dataDescriptor:
-      tokenSource.dataDescriptor ||
-      paymentData.dataDescriptor ||
-      null,
+      tokenSource.dataDescriptor || paymentData.dataDescriptor || null,
   };
 };
 
@@ -448,20 +687,23 @@ exports.validateOrder = async (req, res, next) => {
         deliveryFee,
         fulfillmentType = 'PICKUP',
         deliveryAddress = null,
+        deliveryLat = null,
+        deliveryLong = null,
         availabilityId,
         paymentMethod,
-        orderSource = 'CUSTOMER_APP',
+        orderSource: incomingOrderSource = 'CUSTOMER_APP',
       },
       user,
     } = req;
+    const orderSource = normalizeWalkUpOrderSource(user, incomingOrderSource);
     const vendorPosOrder = isVendorPosOrder(user, orderSource);
     const applyGatewayFee = paymentMethod
       ? isGatewayPaymentMethod(paymentMethod)
       : !vendorPosOrder;
-    if (user?.userType === 'VENDOR' && !vendorPosOrder) {
+    if (['VENDOR', 'EMPLOYEE'].includes(user?.userType) && !vendorPosOrder) {
       return res.error(new Error('Vendor orders must use the POS flow'), 403);
     }
-    const normalizedTaxAmount = toMoney(tax ?? taxAmount);
+    let normalizedTaxAmount = toMoney(tax ?? taxAmount);
     const normalizedDeliveryFee = normalizeDeliveryFee(
       fulfillmentType,
       deliveryFee
@@ -476,9 +718,16 @@ exports.validateOrder = async (req, res, next) => {
     }
     if (
       vendorPosOrder &&
-      foodTruck.userId?.toString() !== user._id?.toString()
+      !assertPosActorFoodTruckAccess(user, foodTruck, locationId)
     ) {
       return res.error(new Error('Food truck not found or access denied'), 404);
+    }
+    const vendorTierAtTransaction = vendorPosOrder
+      ? await assertVendorPosAccess(foodTruck, paymentMethod || 'CASH')
+      : null;
+    if (vendorPosOrder) {
+      await assertActiveEmployeeSession(user);
+      await touchEmployeeSession(user);
     }
 
     if (availabilityId) {
@@ -673,20 +922,20 @@ exports.validateOrder = async (req, res, next) => {
           } else {
             // Fallback to old logic if no discountRules
             // ✅ Only replace bogoItems if discount type is "bogo"
-	            if (discountType && discountType === 'BOGO') {
-	              updatedFullMenuItemData = {
-	                ...updatedFullMenuItemData,
-	                bogoItems: Array.isArray(bogoItemsatrray)
-	                  ? bogoItemsatrray.map((bogo) => ({
-	                      ...bogo,
-	                      price: bogo.isSameItem
-	                        ? selectedDiscountOptionsCost
-	                        : bogo.price,
-	                      qty: item.qty, // update quantity same as parent
-	                    }))
-	                  : [],
-	              };
-	            }
+            if (discountType && discountType === 'BOGO') {
+              updatedFullMenuItemData = {
+                ...updatedFullMenuItemData,
+                bogoItems: Array.isArray(bogoItemsatrray)
+                  ? bogoItemsatrray.map((bogo) => ({
+                      ...bogo,
+                      price: bogo.isSameItem
+                        ? selectedDiscountOptionsCost
+                        : bogo.price,
+                      qty: item.qty, // update quantity same as parent
+                    }))
+                  : [],
+              };
+            }
             // ---------- BOGOHO Discount (Buy One Get One Half Off) ----------
             if (
               !(discountRules && discountRules.discount > 0) &&
@@ -710,17 +959,19 @@ exports.validateOrder = async (req, res, next) => {
                   : [],
               };
               itemTotal =
-                mainSubtotal + (price * 0.5 + selectedDiscountOptionsCost) * item.qty;
+                mainSubtotal +
+                (price * 0.5 + selectedDiscountOptionsCost) * item.qty;
             }
 
-	            if (discountType === 'BOGO') {
-	              itemTotal = mainSubtotal + selectedDiscountOptionsCost * item.qty;
-	            } else if (discountType === 'BOGOHO') {
-	              itemTotal =
-	                mainSubtotal + (price * 0.5 + selectedDiscountOptionsCost) * item.qty;
-	            } else {
-	              itemTotal = mainSubtotal;
-	            }
+            if (discountType === 'BOGO') {
+              itemTotal = mainSubtotal + selectedDiscountOptionsCost * item.qty;
+            } else if (discountType === 'BOGOHO') {
+              itemTotal =
+                mainSubtotal +
+                (price * 0.5 + selectedDiscountOptionsCost) * item.qty;
+            } else {
+              itemTotal = mainSubtotal;
+            }
           }
 
           menuItems.push({
@@ -813,29 +1064,38 @@ exports.validateOrder = async (req, res, next) => {
       }
     }
 
+    const taxableFoodAmount = Math.max(0, subTotal - disAmount);
+    let paymentProcessingFee = calculatePlatformServiceFee(
+      taxableFoodAmount + normalizedDeliveryFee,
+      applyGatewayFee
+    );
+    const avalaraTax = await calculateAvalaraOrderTax({
+      foodTruck,
+      locationId,
+      fulfillmentType,
+      deliveryAddress,
+      deliveryLat,
+      deliveryLong,
+      foodAmount: taxableFoodAmount,
+      deliveryFee: normalizedDeliveryFee,
+      serviceFee: paymentProcessingFee,
+      type: 'SalesOrder',
+      commit: false,
+      customerCode: user?._id?.toString(),
+    });
+    if (avalaraTax.result?.success) {
+      normalizedTaxAmount = toMoney(avalaraTax.result.totalTax);
+    }
+
     let total =
       subTotal -
       disAmount +
       normalizedDeliveryFee +
+      paymentProcessingFee +
       normalizedTaxAmount +
-      normalizedDriverTip +
-      normalizedFoodTruckTip;
-    let paymentProcessingFee = 0;
-    const loc = foodTruck.locations.find(
-      (itm) => itm.zipcode && itm._id.toString() === locationId
-    );
-    if (loc && applyGatewayFee) {
-      const tax = await TaxRatesService.getByData(
-        { zip: loc.zipcode },
-        { singleResult: true }
-      );
-
-      // taxAmount = ((tax?.estimatedCombineRate || 0) * total) / 100;
-      // total += taxAmount || 0 ;
-
-      paymentProcessingFee = (3.5 * total) / 100;
-      total += paymentProcessingFee;
-    }
+      normalizedDriverTip;
+    const loc = avalaraTax.loc;
+    total += normalizedFoodTruckTip;
 
     // const counter = await OrderCounterService.updateTheCounter(foodTruck?._id);
 
@@ -882,8 +1142,24 @@ exports.validateOrder = async (req, res, next) => {
     }
     const orderPlaceData = {
       foodTruckId: foodTruck?._id,
-      userId: user._id,
-      createdByUserId: vendorPosOrder ? user._id : null,
+      userId:
+        vendorPosOrder && user.userType === 'EMPLOYEE'
+          ? user.vendor_user_id
+          : user._id,
+      createdByUserId:
+        vendorPosOrder && user.userType === 'VENDOR' ? user._id : null,
+      createdByEmployeeInternalId:
+        vendorPosOrder && user.userType === 'EMPLOYEE'
+          ? user.employee_internal_id
+          : null,
+      ...buildWalkUpAuditFields({
+        user,
+        foodTruck,
+        locationId,
+        orderSource,
+        paymentMethod: paymentMethod || 'CASH',
+        plan: vendorTierAtTransaction,
+      }),
       orderSource,
       locationId,
       deliveryTime: deliveryTime || null,
@@ -908,6 +1184,14 @@ exports.validateOrder = async (req, res, next) => {
       paymentProcessingFee,
       totalOrderCost: total,
       total,
+      avalaraTaxAmount: avalaraTax.result?.success
+        ? normalizedTaxAmount
+        : undefined,
+      avalaraEstimateStatus: avalaraTax.result?.success ? 'SUCCESS' : 'FAILED',
+      avalaraEstimateError: avalaraTax.result?.success
+        ? null
+        : { message: avalaraTax.result?.message || 'Avalara estimate failed' },
+      avalaraEstimateResponse: avalaraTax.result?.data || null,
       freeDessertAmount,
       isFreeDessertEligible,
       freeDessertApplied: isFreeDessertEligible,
@@ -958,10 +1242,11 @@ exports.paymentCheckout = async (req, res, next) => {
               : paymentData
           ).toString('base64');
 
-    const userId = user._id;
+    const userId =
+      user.userType === 'EMPLOYEE' ? user.vendor_user_id || user._id : user._id;
     const email = user.email;
-    const firstName = user.firstName;
-    const lastName = user.lastName;
+    const firstName = user.firstName || 'Employee';
+    const lastName = user.lastName || '';
 
     // const opaqueToken = applePayToken || googlePayToken;
     const opaqueToken = base64String;
@@ -970,6 +1255,9 @@ exports.paymentCheckout = async (req, res, next) => {
 
     if (!opaqueToken) {
       return res.error(new Error('Payment token missing'), 400);
+    }
+    if (paymentMethod === 'TAP_TO_PAY') {
+      await assertVendorTapToPayAccess(user);
     }
     //  CHARGE PAYMENT
     const chargeResp = await PaymentHelper.chargePaymentUnified({
@@ -1897,12 +2185,15 @@ exports.add = async (req, res, next) => {
         deliveryFee,
         fulfillmentType = 'PICKUP',
         deliveryAddress = null,
+        deliveryLat = null,
+        deliveryLong = null,
         availabilityId,
-        orderSource = 'CUSTOMER_APP',
+        orderSource: incomingOrderSource = 'CUSTOMER_APP',
         guestCustomer = {},
       },
       user,
     } = req;
+    const orderSource = normalizeWalkUpOrderSource(user, incomingOrderSource);
     const vendorPosOrder = isVendorPosOrder(user, orderSource);
     const initialOrderStatus = vendorPosOrder ? 'PREPARING' : 'PLACED';
     const normalizedPaymentMethod =
@@ -1910,10 +2201,10 @@ exports.add = async (req, res, next) => {
     const normalizedPaymentStatus =
       paymentStatus ||
       (isCashPaymentMethod(normalizedPaymentMethod) ? 'PENDING' : 'PAID');
-    if (user?.userType === 'VENDOR' && !vendorPosOrder) {
+    if (['VENDOR', 'EMPLOYEE'].includes(user?.userType) && !vendorPosOrder) {
       return res.error(new Error('Vendor orders must use the POS flow'), 403);
     }
-    const normalizedTaxAmount = toMoney(tax ?? taxAmount);
+    let normalizedTaxAmount = toMoney(tax ?? taxAmount);
     const normalizedDeliveryFee = normalizeDeliveryFee(
       fulfillmentType,
       deliveryFee
@@ -1928,9 +2219,16 @@ exports.add = async (req, res, next) => {
     }
     if (
       vendorPosOrder &&
-      foodTruck.userId?.toString() !== user._id?.toString()
+      !assertPosActorFoodTruckAccess(user, foodTruck, locationId)
     ) {
       return res.error(new Error('Food truck not found or access denied'), 404);
+    }
+    const vendorTierAtTransaction = vendorPosOrder
+      ? await assertVendorPosAccess(foodTruck, normalizedPaymentMethod)
+      : null;
+    if (vendorPosOrder) {
+      await assertActiveEmployeeSession(user);
+      await touchEmployeeSession(user);
     }
 
     if (availabilityId) {
@@ -2120,21 +2418,21 @@ exports.add = async (req, res, next) => {
               },
             ];
           } else {
-	            if (discountType && discountType === 'BOGO') {
-	              updatedFullMenuItemData = {
-	                ...updatedFullMenuItemData,
-	                bogoItems: Array.isArray(bogoItemsatrray)
-	                  ? bogoItemsatrray.map((bogo) => ({
-	                      ...bogo,
-	                      price: bogo.isSameItem
-	                        ? selectedDiscountOptionsCost
-	                        : bogo.price,
-	                      qty: item.qty,
-	                    }))
-	                  : [],
-	              };
-	              itemTotal = mainSubtotal + selectedDiscountOptionsCost * item.qty;
-	            }
+            if (discountType && discountType === 'BOGO') {
+              updatedFullMenuItemData = {
+                ...updatedFullMenuItemData,
+                bogoItems: Array.isArray(bogoItemsatrray)
+                  ? bogoItemsatrray.map((bogo) => ({
+                      ...bogo,
+                      price: bogo.isSameItem
+                        ? selectedDiscountOptionsCost
+                        : bogo.price,
+                      qty: item.qty,
+                    }))
+                  : [],
+              };
+              itemTotal = mainSubtotal + selectedDiscountOptionsCost * item.qty;
+            }
 
             if (discountType && discountType === 'BOGOHO') {
               updatedFullMenuItemData = {
@@ -2154,7 +2452,8 @@ exports.add = async (req, res, next) => {
                   : [],
               };
               itemTotal =
-                mainSubtotal + (price * 0.5 + selectedDiscountOptionsCost) * item.qty;
+                mainSubtotal +
+                (price * 0.5 + selectedDiscountOptionsCost) * item.qty;
             }
           }
 
@@ -2250,29 +2549,38 @@ exports.add = async (req, res, next) => {
       }
     }
 
+    const taxableFoodAmount = Math.max(0, subTotal - disAmount);
+    let paymentProcessingFee = calculatePlatformServiceFee(
+      taxableFoodAmount + normalizedDeliveryFee,
+      isGatewayPaymentMethod(normalizedPaymentMethod)
+    );
+    const avalaraEstimate = await calculateAvalaraOrderTax({
+      foodTruck,
+      locationId,
+      fulfillmentType,
+      deliveryAddress,
+      deliveryLat,
+      deliveryLong,
+      foodAmount: taxableFoodAmount,
+      deliveryFee: normalizedDeliveryFee,
+      serviceFee: paymentProcessingFee,
+      type: 'SalesOrder',
+      commit: false,
+      customerCode: user?._id?.toString(),
+    });
+    if (avalaraEstimate.result?.success) {
+      normalizedTaxAmount = toMoney(avalaraEstimate.result.totalTax);
+    }
+
     let total =
       subTotal -
       disAmount +
       normalizedDeliveryFee +
+      paymentProcessingFee +
       normalizedTaxAmount +
-      normalizedDriverTip +
-      normalizedFoodTruckTip;
-    let paymentProcessingFee = 0;
-    const loc = foodTruck.locations.find(
-      (itm) => itm.zipcode && itm._id.toString() === locationId
-    );
-    if (loc && isGatewayPaymentMethod(normalizedPaymentMethod)) {
-      const tax = await TaxRatesService.getByData(
-        { zip: loc.zipcode },
-        { singleResult: true }
-      );
-
-      // taxAmount = ((tax?.estimatedCombineRate || 0) * total) / 100;
-      // total += taxAmount || 0 ;
-
-      paymentProcessingFee = (3.5 * total) / 100;
-      total += paymentProcessingFee;
-    }
+      normalizedDriverTip;
+    const loc = avalaraEstimate.loc;
+    total += normalizedFoodTruckTip;
 
     const counter = await OrderCounterService.updateTheCounter(foodTruck?._id);
 
@@ -2319,8 +2627,24 @@ exports.add = async (req, res, next) => {
     }
     const data = await Service.create({
       foodTruckId: foodTruck?._id,
-      userId: user._id,
-      createdByUserId: vendorPosOrder ? user._id : null,
+      userId:
+        vendorPosOrder && user.userType === 'EMPLOYEE'
+          ? user.vendor_user_id
+          : user._id,
+      createdByUserId:
+        vendorPosOrder && user.userType === 'VENDOR' ? user._id : null,
+      createdByEmployeeInternalId:
+        vendorPosOrder && user.userType === 'EMPLOYEE'
+          ? user.employee_internal_id
+          : null,
+      ...buildWalkUpAuditFields({
+        user,
+        foodTruck,
+        locationId,
+        orderSource,
+        paymentMethod: normalizedPaymentMethod,
+        plan: vendorTierAtTransaction,
+      }),
       orderSource,
       guestCustomer: vendorPosOrder
         ? { phone: guestCustomer?.phone || null }
@@ -2349,6 +2673,19 @@ exports.add = async (req, res, next) => {
       paymentProcessingFee,
       totalOrderCost: total,
       total,
+      avalaraTaxAmount: avalaraEstimate.result?.success
+        ? normalizedTaxAmount
+        : undefined,
+      avalaraEstimateStatus: avalaraEstimate.result?.success
+        ? 'SUCCESS'
+        : 'FAILED',
+      avalaraEstimateError: avalaraEstimate.result?.success
+        ? null
+        : {
+            message:
+              avalaraEstimate.result?.message || 'Avalara estimate failed',
+          },
+      avalaraEstimateResponse: avalaraEstimate.result?.data || null,
       freeDessertAmount,
       isFreeDessertEligible,
       freeDessertApplied: isFreeDessertEligible,
@@ -2364,6 +2701,56 @@ exports.add = async (req, res, next) => {
       accountType,
       statusTime: buildInitialStatusTime(initialOrderStatus),
     });
+
+    if (!vendorPosOrder && normalizedPaymentStatus === 'PAID') {
+      try {
+        const avalaraInvoice = await calculateAvalaraOrderTax({
+          foodTruck,
+          locationId,
+          fulfillmentType,
+          deliveryAddress,
+          deliveryLat,
+          deliveryLong,
+          foodAmount: taxableFoodAmount,
+          deliveryFee: normalizedDeliveryFee,
+          serviceFee: paymentProcessingFee,
+          type: 'SalesInvoice',
+          commit: true,
+          code: `RTC-ORDER-${data._id}`,
+          customerCode: user?._id?.toString(),
+          purchaseOrderNo: data.orderNumber
+            ? `RTC-${data.orderNumber}`
+            : undefined,
+        });
+
+        data.avalaraTransactionCode =
+          avalaraInvoice.result?.payload?.code || null;
+        data.avalaraTransactionId = avalaraInvoice.result?.data?.id || null;
+        data.avalaraTaxAmount = avalaraInvoice.result?.success
+          ? toMoney(avalaraInvoice.result.totalTax)
+          : data.avalaraTaxAmount;
+        data.avalaraCommitStatus = avalaraInvoice.result?.success
+          ? 'SUCCESS'
+          : 'FAILED';
+        data.avalaraCommittedAt = avalaraInvoice.result?.success
+          ? new Date()
+          : null;
+        data.avalaraError = avalaraInvoice.result?.success
+          ? null
+          : {
+              message:
+                avalaraInvoice.result?.message || 'Avalara invoice failed',
+            };
+        data.avalaraResponse = avalaraInvoice.result?.data || null;
+        await data.save();
+      } catch (err) {
+        data.avalaraCommitStatus = 'FAILED';
+        data.avalaraError = {
+          message: err.message || 'Avalara invoice commit failed',
+        };
+        await data.save();
+      }
+    }
 
     if (couponId) {
       await CouponUsageService.create({ couponId, userId: user._id });
@@ -2458,13 +2845,19 @@ exports.update = async (req, res, next) => {
       return res.error(new Error('No Order found'), 409);
     }
     const previousOrderStatus = item.orderStatus;
-    if (user.userType === 'VENDOR') {
+    if (['VENDOR', 'EMPLOYEE'].includes(user.userType)) {
       const foodTruck = await FoodTruckService.getByData(
-        { _id: item.foodTruckId, userId: user._id },
+        user.userType === 'EMPLOYEE'
+          ? { _id: item.foodTruckId, userId: user.vendor_user_id }
+          : { _id: item.foodTruckId, userId: user._id },
         { singleResult: true }
       );
 
-      if (!foodTruck) {
+      if (
+        !foodTruck ||
+        (user.userType === 'EMPLOYEE' &&
+          item.locationId?.toString() !== user.assigned_location_id?.toString())
+      ) {
         return res.error(new Error('Order not found or access denied'), 404);
       }
     }
@@ -2474,7 +2867,7 @@ exports.update = async (req, res, next) => {
         !(
           item.orderSource === 'VENDOR_POS' &&
           isCashPaymentMethod(item.paymentMethod) &&
-          user.userType === 'VENDOR'
+          ['VENDOR', 'EMPLOYEE'].includes(user.userType)
         )
       ) {
         return res.error(
@@ -2484,6 +2877,30 @@ exports.update = async (req, res, next) => {
       }
 
       item.paymentStatus = paymentStatus;
+    }
+
+    if (user.userType === 'EMPLOYEE' && orderStatus) {
+      const employeeAllowedStatuses = [
+        'PREPARING',
+        'READY_FOR_PICKUP',
+        'COMPLETED',
+      ];
+
+      if (!employeeAllowedStatuses.includes(orderStatus)) {
+        return res.error(
+          new Error('Employees can only advance assigned POS orders'),
+          403
+        );
+      }
+
+      if (!WALK_UP_ORDER_SOURCES.includes(item.orderSource)) {
+        return res.error(
+          new Error('Employees can only update walk-up POS orders'),
+          403
+        );
+      }
+
+      await assertActiveEmployeeSession(user);
     }
 
     if (
@@ -2629,6 +3046,14 @@ exports.update = async (req, res, next) => {
       isCashPaymentMethod(item.paymentMethod)
     ) {
       item.paymentStatus = 'PAID';
+    }
+
+    if (orderStatus === 'COMPLETED' && !item.completed_at) {
+      item.completed_at = new Date();
+    }
+
+    if (user.userType === 'EMPLOYEE' && (orderStatus || paymentStatus)) {
+      await touchEmployeeSession(user);
     }
 
     if (
@@ -2961,7 +3386,15 @@ exports.getVendorDashboard = async (req, res, next) => {
 exports.getVendorEarnings = async (req, res, next) => {
   try {
     const {
-      query: { foodTruckId, startDate, endDate },
+      query: {
+        foodTruckId,
+        startDate,
+        endDate,
+        locationId,
+        employeeInternalId,
+        paymentMethod,
+        refundCancelStatus,
+      },
       user,
     } = req;
 
@@ -2987,9 +3420,20 @@ exports.getVendorEarnings = async (req, res, next) => {
     const earningsFulldata = await Service.getVendorEarningsWithFreeDessertTest(
       foodTruckId
     );
+    const employeeAnalytics =
+      await EmployeeSessionService.getVendorEmployeeAnalytics({
+        vendorUserId: user._id,
+        foodTruck,
+        startDate,
+        endDate,
+        locationId,
+        employeeInternalId,
+        paymentMethod,
+        refundCancelStatus,
+      });
 
     return res.data(
-      { earnings, earningsFulldata },
+      { earnings, earningsFulldata, employeeAnalytics },
       'Vendor earnings retrieved successfully'
     );
   } catch (e) {

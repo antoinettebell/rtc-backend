@@ -6,6 +6,7 @@ const publicRoutes = require('./public');
 const authRoutes = require('./auth');
 const userRoutes = require('./user');
 const foodTruckRoutes = require('./food-truck');
+const vendorEmployeeRoutes = require('./vendor-employee');
 const cuisineRoutes = require('./cuisine');
 const settingRoutes = require('./setting');
 const categoryRoutes = require('./category');
@@ -45,6 +46,9 @@ router.use('/user', userRoutes);
 
 /** food-truck routes */
 router.use('/food-truck', foodTruckRoutes);
+
+/** vendor employee routes */
+router.use('/vendor-employee', vendorEmployeeRoutes);
 
 /** cuisine routes */
 router.use('/cuisine', cuisineRoutes);

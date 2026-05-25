@@ -42,6 +42,14 @@ router.put(
   Controller.update
 );
 
+/** [PATCH] /api/v1/food-truck/:id/location/:locationId/ordering-open */
+router.patch(
+  '/:id/location/:locationId/ordering-open',
+  allowedTo(['VENDOR', 'EMPLOYEE']),
+  validate(Validation.toggleLocationOrdering),
+  Controller.toggleLocationOrdering
+);
+
 /** [PUT] /api/v1/food-truck/:id */
 router.put(
   '/:id/update-extra',

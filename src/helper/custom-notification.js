@@ -67,6 +67,32 @@ exports.sendNewOrderNotification = async (vendor, orderId) => {
   }
 };
 
+exports.sendEmployeeRefundCancelRequestNotification = async (
+  vendor,
+  request,
+  order
+) => {
+  try {
+    const title = 'Employee refund/cancel request';
+    const body = `Order #${order?.orderNumber || order?._id} needs review.`;
+    const noteData = {
+      [vendor._id.toString()]: {
+        title,
+        body,
+        data: {
+          requestId: request.request_id.toString(),
+          orderId: request.order_id.toString(),
+          activityType: 'EMPLOYEE_REFUND_CANCEL_REQUEST',
+        },
+      },
+    };
+
+    await this.sendNotificationToUsers(noteData);
+  } catch (e) {
+    console.log('========Error in sendEmployeeRefundCancelRequestNotification', e);
+  }
+};
+
 exports.sendOrderStatusNotification = async (user, orderId, status) => {
   try {
     const statusKey = {
@@ -171,4 +197,3 @@ exports.sendBadReviewNotificationToVendor = async (vendor, orderId = null,foodTr
     console.log('========Error in sendNewOrderNotification', e);
   }
 };
-

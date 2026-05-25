@@ -34,6 +34,47 @@ const mSchema = mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    payoutTimingLabel: {
+      type: String,
+      default: null,
+    },
+    capabilities: {
+      payoutTiming: {
+        type: String,
+        enum: ['THREE_DAY', 'DAILY', null],
+        default: null,
+      },
+      employeeLogin: {
+        type: Boolean,
+        default: false,
+      },
+      employeeWalkUpPos: {
+        type: Boolean,
+        default: false,
+      },
+      walkUpPosPaymentMethods: [
+        {
+          type: String,
+          enum: ['CASH', 'TAP_TO_PAY'],
+        },
+      ],
+      tapToPay: {
+        type: Boolean,
+        default: false,
+      },
+      eventMarketplace: {
+        type: Boolean,
+        default: false,
+      },
+      maxSocialMediaLinks: {
+        type: Number,
+        default: 0,
+      },
+      newDishHighlight: {
+        type: Boolean,
+        default: false,
+      },
+    },
     details: [
       {
         type: String,

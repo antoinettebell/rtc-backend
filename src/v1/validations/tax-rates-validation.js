@@ -20,6 +20,12 @@ avalarataxCheck:{
       foodTruckId: Joi.string().trim().required(),
       locationId: Joi.string().trim().required(),
       amount: Joi.number().min(0).required(),
+      deliveryFee: Joi.number().min(0),
+      serviceFee: Joi.number().min(0),
+      fulfillmentType: Joi.string().valid('PICKUP', 'DELIVERY').default('PICKUP'),
+      deliveryAddress: Joi.string().allow(null, ''),
+      deliveryLat: Joi.number().allow(null),
+      deliveryLong: Joi.number().allow(null),
 
     }),
 },

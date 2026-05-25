@@ -8,6 +8,14 @@ module.exports = {
     }),
   },
 
+  employeeAuth: {
+    body: Joi.object({
+      vendorAccessCode: Joi.string().required().length(6).trim(),
+      employeeLoginId: Joi.string().required().lowercase().trim(),
+      pin: Joi.string().required().trim(),
+    }),
+  },
+
   register: {
     body: Joi.object({
       firstName: Joi.string().required().min(2).trim(),

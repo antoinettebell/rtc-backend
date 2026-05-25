@@ -105,7 +105,17 @@ exports.check = async (req, res, next) => {
 exports.avalarataxcheck = async (req, res, next) => {
   try {
     let {
-      query: { foodTruckId, locationId, amount },
+      query: {
+        foodTruckId,
+        locationId,
+        amount,
+        deliveryFee = 0,
+        serviceFee = 0,
+        fulfillmentType = 'PICKUP',
+        deliveryAddress = null,
+        deliveryLat = null,
+        deliveryLong = null,
+      },
     } = req;
 
     const data = {};
@@ -113,8 +123,7 @@ exports.avalarataxcheck = async (req, res, next) => {
     const ft = await FoodTruckService.getById(foodTruckId);
     if (ft) {
       const loc = ft.locations.find(
-        (itm) => itm.zipcode && itm._id.toString() ===  locationId
-          // (itm) => itm.zipcode && itm._id.toString() === '68e92372cd977c83ce036729'
+        (itm) => itm.zipcode && itm._id.toString() === locationId
       );
       if (loc) {
         const tax = await Service.getByData(
@@ -128,7 +137,6 @@ exports.avalarataxcheck = async (req, res, next) => {
           DEFAULT_TAX_RATE
         );
         const parsed = await taxHelper.parseDynamicAddress(loc);
-        console.log("parsing address",parsed);
         const from = {
           line1: parsed.lines || null,
           city: parsed.city,
@@ -138,14 +146,46 @@ exports.avalarataxcheck = async (req, res, next) => {
           latitude: parsed.latitude || null,
           longitude: parsed.longitude || null,
         };
-        const result = await taxHelper.calculateAvalaraTax({
-          shipFrom:from,
-          shipTo:from,
-          amount: amount || 100,
+        const parsedDeliveryAddress = await taxHelper.parseDynamicAddress({
+          address: deliveryAddress || '',
+          lat: deliveryLat,
+          long: deliveryLong,
+        });
+        const to =
+          fulfillmentType === 'DELIVERY' && deliveryAddress
+            ? {
+                line1: parsedDeliveryAddress.lines || null,
+                city: parsedDeliveryAddress.city,
+                region: parsedDeliveryAddress.region,
+                postalCode: parsedDeliveryAddress.postalCode,
+                country: parsedDeliveryAddress.country,
+                latitude: parsedDeliveryAddress.latitude || null,
+                longitude: parsedDeliveryAddress.longitude || null,
+              }
+            : from;
+
+        const result = await taxHelper.calculateMarketplaceFoodDeliveryTax({
+          shipFrom: from,
+          shipTo: to,
+          foodAmount: amount,
+          deliveryFee: fulfillmentType === 'DELIVERY' ? deliveryFee : 0,
+          serviceFee,
+          type: 'SalesOrder',
+          commit: false,
         });
         if (result?.success) {
             data.salesTax = result?.totalTax || 0;
             data.salesTaxAmount = result?.totalTax || 0;
+            data.avalaraPayload = result?.payload || null;
+            data.avalaraTransactionId = result?.data?.id || null;
+            data.avalaraTransactionCode = result?.data?.code || null;
+            data.avalaraLineTax = (result?.data?.lines || []).map((line) => ({
+              lineNumber: line.lineNumber || line.number || null,
+              taxCode: line.taxCode || null,
+              taxableAmount: line.taxableAmount || 0,
+              tax: line.tax || 0,
+              description: line.description || null,
+            }));
           } else {
             data.avalaraError = result?.message || null;
           }

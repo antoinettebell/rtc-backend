@@ -13,6 +13,13 @@ router.post('/', validate(Validation.auth), Controller.login);
 /** [POST] /api/v1/auth/vendor-login */
 router.post('/vendor-login', validate(Validation.auth), Controller.loginVendor);
 
+/** [POST] /api/v1/auth/employee-login */
+router.post(
+  '/employee-login',
+  validate(Validation.employeeAuth),
+  Controller.loginEmployee
+);
+
 /** [POST] /api/v1/auth/admin-login */
 router.post('/admin-login', validate(Validation.auth), Controller.loginAdmin);
 

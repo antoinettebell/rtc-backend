@@ -2,12 +2,15 @@ const {
   UserService: Service,
   FoodTruckService,
   FileService,
+  VendorEmployeeService,
+  EmployeeSessionService,
 } = require('../services');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { server, JWT } = require('../../config');
 const MailHelper = require('../../helper/mail-helper');
 const { FORGOT_PASSWORD_TEMPLATE } = require('../../helper/templates');
+const { normalizeVendorPlan } = require('../../helper/vendor-plan-helper');
 const disposableDomains = require('disposable-email-domains');
 const { addObject } = require('../../helper/aws');
 const fs = require('fs');
@@ -488,7 +491,7 @@ exports.loginVendor = async (req, res, next) => {
             user.foodTruck.planId &&
             typeof user.foodTruck.planId === 'object'
           ) {
-            user.foodTruck.plan = user.foodTruck.planId;
+            user.foodTruck.plan = normalizeVendorPlan(user.foodTruck.planId);
             user.foodTruck.planId = user.foodTruck.plan._id;
           }
 
@@ -505,6 +508,79 @@ exports.loginVendor = async (req, res, next) => {
 
     customError.message = 'User does not exist.';
     throw customError;
+  } catch (e) {
+    return next(e);
+  }
+};
+
+/**
+ * To authenticate vendor employee
+ * Support POST request
+ *
+ * @param req
+ * @param res
+ * @param next
+ * @returns {Promise<*>}
+ */
+exports.loginEmployee = async (req, res, next) => {
+  try {
+    const {
+      body: { vendorAccessCode, employeeLoginId, pin },
+    } = req;
+
+    const { employee, foodTruck, assignedLocation, employeeCapabilities } =
+      await VendorEmployeeService.validateEmployeeLogin({
+        vendorAccessCode,
+        employeeLoginId,
+        pin,
+      });
+    const employeeSession = await EmployeeSessionService.startSessionForEmployee({
+      employee,
+      foodTruck,
+      assignedLocation,
+    });
+
+    const authToken = jwt.sign(
+      {
+        _id: employee._id,
+        userType: 'EMPLOYEE',
+        role: 'EMPLOYEE',
+        employee_internal_id: employee.employee_internal_id,
+        employee_session_id: employeeSession.employee_session_id,
+        vendor_user_id: employee.vendor_user_id,
+        food_truck_id: employee.food_truck_id,
+        assigned_location_id: employee.assigned_location_id,
+      },
+      JWT.secret,
+      { expiresIn: '168h' }
+    );
+
+    return res.data(
+      {
+        employee: {
+          _id: employee._id,
+          employee_internal_id: employee.employee_internal_id,
+          employee_session_id: employeeSession.employee_session_id,
+          vendor_user_id: employee.vendor_user_id,
+          food_truck_id: employee.food_truck_id,
+          assigned_location_id: employee.assigned_location_id,
+          employee_login_id: employee.employee_login_id,
+          first_name: employee.first_name,
+          last_name: employee.last_name,
+          role: 'EMPLOYEE',
+          userType: 'EMPLOYEE',
+          is_active: employee.is_active,
+          is_working: employee.is_working,
+          last_login_at: employee.last_login_at,
+          employeeCapabilities,
+        },
+        foodTruck,
+        assignedLocation,
+        employeeCapabilities,
+        authToken,
+      },
+      'Employee Login successfully'
+    );
   } catch (e) {
     return next(e);
   }

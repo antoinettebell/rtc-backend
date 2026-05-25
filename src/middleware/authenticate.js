@@ -3,7 +3,7 @@
  */
 const jwt = require('jsonwebtoken');
 const { JWT } = require('../config');
-const { UserModel: Model } = require('../models');
+const { UserModel: Model, VendorEmployeeModel } = require('../models');
 
 const IGNORE_ROUTES = [
   '/public/food-truck-filter',
@@ -49,6 +49,36 @@ const Authenticate = async (req, res, next) => {
     if (!verifyToken.userType) {
       customError.message = 'Invalid token';
       throw customError;
+    }
+
+    if (verifyToken.userType === 'EMPLOYEE' || verifyToken.role === 'EMPLOYEE') {
+      const employee = await VendorEmployeeModel.findOne({
+        employee_internal_id: verifyToken.employee_internal_id,
+        is_active: true,
+        is_archived: false,
+      }).lean();
+
+      if (!employee) {
+        customError.message = 'Employee not Found';
+        throw customError;
+      }
+
+      req.user = {
+        _id: employee._id,
+        userType: 'EMPLOYEE',
+        role: 'EMPLOYEE',
+        employee_internal_id: employee.employee_internal_id,
+        employee_session_id: verifyToken.employee_session_id,
+        employee_login_id: employee.employee_login_id,
+        first_name: employee.first_name,
+        last_name: employee.last_name,
+        vendor_user_id: employee.vendor_user_id,
+        food_truck_id: employee.food_truck_id,
+        assigned_location_id: employee.assigned_location_id,
+        authToken: authorization,
+      };
+      next();
+      return;
     }
 
     const rootUser = await Model.findOne({ _id: verifyToken._id }).lean();

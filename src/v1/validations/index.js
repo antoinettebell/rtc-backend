@@ -9,6 +9,9 @@ exports.UserValidation = require('./user-validation');
 /** Validation schema for food-truck */
 exports.FoodTruckValidation = require('./food-truck-validation');
 
+/** Validation schema for vendor employee */
+exports.VendorEmployeeValidation = require('./vendor-employee-validation');
+
 /** Validation schema for cuisine */
 exports.CuisineValidation = require('./cuisine-validation');
 

@@ -47,6 +47,12 @@ module.exports = {
     }),
   },
 
+  toggleLocationOrdering: {
+    body: Joi.object({
+      isOrderingOpen: Joi.boolean().required(),
+    }),
+  },
+
   filtersNew: {
     query: Joi.object({
       // day: Joi.string()

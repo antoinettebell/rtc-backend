@@ -35,6 +35,10 @@ class OrderService extends BaseService {
     if (user?.userType === 'VENDOR') {
       q['foodTruck.userId'] = new mongoose.Types.ObjectId(user._id);
     }
+    if (user?.userType === 'EMPLOYEE') {
+      q.foodTruckId = new mongoose.Types.ObjectId(user.food_truck_id);
+      q.locationId = user.assigned_location_id;
+    }
     if (id) {
       q['_id'] = new mongoose.Types.ObjectId(id);
     }

@@ -4,6 +4,18 @@ exports.UserModel = require('./user');
 /** Define food-truck model */
 exports.FoodTruckModel = require('./food-truck');
 
+/** Define vendor employee model */
+exports.VendorEmployeeModel = require('./vendor-employee');
+
+/** Define employee session model */
+exports.EmployeeSessionModel = require('./employee-session');
+
+/** Define employee refund/cancel request model */
+exports.EmployeeRefundCancelRequestModel = require('./employee-refund-cancel-request');
+
+/** Define employee item availability audit model */
+exports.EmployeeItemAvailabilityAuditModel = require('./employee-item-availability-audit');
+
 /** Define favorite-food-truck model */
 exports.FavoriteFoodTruckModel = require('./favorite-food-truck');
 
@@ -39,6 +51,9 @@ exports.PlanModel = require('./plan');
 
 /** Define banner model */
 exports.BannerModel = require('./banner');
+
+/** Define banner ad event model */
+exports.BannerAdEventModel = require('./banner-ad-event');
 
 /** Define diet model */
 exports.DietModel = require('./diet');

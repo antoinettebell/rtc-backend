@@ -77,6 +77,9 @@ router.get('/plan', PlanController.list);
 /** [GET] /api/v1/public/banner */
 router.get('/banner', BannerController.list);
 
+/** [POST] /api/v1/public/banner/:id/:eventType */
+router.post('/banner/:id/:eventType', BannerController.trackEvent);
+
 /** [GET] /api/v1/public/diet */
 router.get('/diet', DietController.list);
 

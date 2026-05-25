@@ -7,6 +7,9 @@ exports.UserController = require('./user-controller');
 /** Define food-truck controller */
 exports.FoodTruckController = require('./food-truck-controller');
 
+/** Define vendor employee controller */
+exports.VendorEmployeeController = require('./vendor-employee-controller');
+
 /** Define cuisine controller */
 exports.CuisineController = require('./cuisine-controller');
 

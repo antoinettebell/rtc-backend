@@ -1,4 +1,5 @@
 const { PlanService: Service } = require('../services');
+const { normalizeVendorPlan } = require('../../helper/vendor-plan-helper');
 const entityName = 'Plan';
 
 /**
@@ -16,7 +17,7 @@ exports.list = async (req, res, next) => {
       query: { limit = 10, page = 1, search },
       params: { id: _id },
     } = req;
-    const data = await Service.getByData({});
+    const data = (await Service.getByData({})).map(normalizeVendorPlan);
     return res.data(
       {
         [`${entityName.toLocaleLowerCase()}List`]: data,

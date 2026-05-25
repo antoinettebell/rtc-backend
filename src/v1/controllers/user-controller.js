@@ -9,6 +9,7 @@ const {
   AdminNotificationService,
 } = require('../services');
 const EncryptionService = require('../../helper/encryption');
+const { normalizeVendorPlan } = require('../../helper/vendor-plan-helper');
 const bcrypt = require('bcrypt');
 const entityName = 'User';
 const MailHelper = require('../../helper/mail-helper');
@@ -60,7 +61,7 @@ exports.list = async (req, res, next) => {
               item.foodTruck.planId &&
               typeof item.foodTruck.planId === 'object'
             ) {
-              item.foodTruck.plan = item.foodTruck.planId;
+              item.foodTruck.plan = normalizeVendorPlan(item.foodTruck.planId);
               item.foodTruck.planId = item.foodTruck.plan._id;
             }
 

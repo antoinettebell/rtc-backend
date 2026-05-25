@@ -4,6 +4,15 @@ exports.UserService = require('./user-service');
 /** Define food-truck service */
 exports.FoodTruckService = require('./food-truck-service');
 
+/** Define vendor employee service */
+exports.VendorEmployeeService = require('./vendor-employee-service');
+
+/** Define employee session service */
+exports.EmployeeSessionService = require('./employee-session-service');
+
+/** Define employee refund/cancel request service */
+exports.EmployeeRefundCancelRequestService = require('./employee-refund-cancel-request-service');
+
 /** Define favorite-food-truck service */
 exports.FavoriteFoodTruckService = require('./favorite-food-truck-service');
 

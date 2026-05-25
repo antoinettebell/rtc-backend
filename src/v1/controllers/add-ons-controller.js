@@ -1,6 +1,26 @@
 const { AddOnsService: Service } = require('../services');
 const entityName = 'AddOns';
 
+const normalizeAddOn = (addOn) => {
+  if (!addOn) {
+    return addOn;
+  }
+
+  const source = typeof addOn.toObject === 'function' ? addOn.toObject() : addOn;
+  const isEventAddOn = /event/i.test(source.name || '');
+
+  if (!isEventAddOn) {
+    return source;
+  }
+
+  return {
+    ...source,
+    name: 'Accept Event Bookings / Event Marketplace Access',
+    priceLabel: '$25/month',
+    description: 'Optional add-on for Basic and Platinum vendors. Included with Elite.',
+  };
+};
+
 /**
  * To list out or find data by id of given collection
  * Support GET request
@@ -17,7 +37,7 @@ exports.list = async (req, res, next) => {
       params: { id: _id },
     } = req;
     if (_id) {
-      let item = await Service.getById(_id);
+      let item = normalizeAddOn(await Service.getById(_id));
       return res.data(
         { [`${entityName.toLocaleLowerCase()}`]: item },
         `${entityName} item`
@@ -30,10 +50,10 @@ exports.list = async (req, res, next) => {
         $or: [{ name: { $regex: search.trim().toLowerCase(), $options: 'i' } }],
       };
     }
-    const data = await Service.getByData(
+    const data = (await Service.getByData(
       { ...q, deletedAt: null },
       { paging: { limit, page }, lean: true }
-    );
+    )).map(normalizeAddOn);
 
     const total = await Service.getCount({
       ...q,

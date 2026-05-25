@@ -25,9 +25,69 @@ const mSchema = mongoose.Schema(
       ref: 'users',
       default: null,
     },
+    createdByEmployeeInternalId: {
+      type: String,
+      default: null,
+    },
+    created_by_type: {
+      type: String,
+      enum: ['CUSTOMER', 'VENDOR', 'EMPLOYEE', null],
+      default: null,
+    },
+    employee_internal_id: {
+      type: String,
+      default: null,
+    },
+    employee_session_id: {
+      type: String,
+      default: null,
+    },
+    employee_login_id: {
+      type: String,
+      default: null,
+    },
+    employee_name: {
+      type: String,
+      default: null,
+    },
+    vendor_user_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'users',
+      default: null,
+    },
+    food_truck_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'food-trucks',
+      default: null,
+    },
+    location_id: {
+      type: String,
+      default: null,
+    },
+    order_source: {
+      type: String,
+      enum: ['CUSTOMER_APP', 'VENDOR_POS', 'WALK_UP_EMPLOYEE', null],
+      default: null,
+    },
+    payment_method: {
+      type: String,
+      default: null,
+    },
+    vendor_tier_at_transaction: {
+      type: Object,
+      default: null,
+    },
+    created_at: {
+      type: Date,
+      default: null,
+    },
+    completed_at: {
+      type: Date,
+      default: null,
+    },
     orderSource: {
       type: String,
-      enum: ['CUSTOMER_APP', 'VENDOR_POS'],
+      enum: ['CUSTOMER_APP', 'VENDOR_POS', 'WALK_UP_EMPLOYEE'],
       default: 'CUSTOMER_APP',
     },
     guestCustomer: {
@@ -55,6 +115,48 @@ const mSchema = mongoose.Schema(
     },
     deliveryAddress: {
       type: String,
+      default: null,
+    },
+    avalaraTaxAmount: {
+      type: Number,
+      default: 0,
+    },
+    avalaraEstimateStatus: {
+      type: String,
+      enum: ['SUCCESS', 'FAILED'],
+      default: null,
+    },
+    avalaraEstimateError: {
+      type: Object,
+      default: null,
+    },
+    avalaraEstimateResponse: {
+      type: Object,
+      default: null,
+    },
+    avalaraTransactionCode: {
+      type: String,
+      default: null,
+    },
+    avalaraTransactionId: {
+      type: String,
+      default: null,
+    },
+    avalaraCommitStatus: {
+      type: String,
+      enum: ['SUCCESS', 'FAILED'],
+      default: null,
+    },
+    avalaraCommittedAt: {
+      type: Date,
+      default: null,
+    },
+    avalaraResponse: {
+      type: Object,
+      default: null,
+    },
+    avalaraError: {
+      type: Object,
       default: null,
     },
     shipdayOrderCreatedAt: {

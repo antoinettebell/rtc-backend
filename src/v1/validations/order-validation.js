@@ -38,8 +38,12 @@ module.exports = {
       deliveryDate: Joi.string(),
       fulfillmentType: Joi.string().valid('PICKUP', 'DELIVERY').default('PICKUP'),
       deliveryAddress: Joi.string().allow(null, ''),
+      deliveryLat: Joi.number().allow(null),
+      deliveryLong: Joi.number().allow(null),
       availabilityId: Joi.string(),
-      orderSource: Joi.string().valid('CUSTOMER_APP', 'VENDOR_POS').default('CUSTOMER_APP'),
+      orderSource: Joi.string()
+        .valid('CUSTOMER_APP', 'VENDOR_POS', 'WALK_UP_EMPLOYEE')
+        .default('CUSTOMER_APP'),
       guestCustomer: Joi.object({
         phone: Joi.string().allow(null, ''),
       }).optional(),
@@ -133,6 +137,14 @@ module.exports = {
       foodTruckId: Joi.string().required(),
       startDate: Joi.date().iso(),
       endDate: Joi.date().iso(),
+      locationId: Joi.string().trim(),
+      employeeInternalId: Joi.string().trim(),
+      paymentMethod: Joi.string()
+        .valid('CASH', 'COD', 'TAP_TO_PAY', 'APPLE_PAY', 'GOOGLE_PAY', 'CARD')
+        .optional(),
+      refundCancelStatus: Joi.string()
+        .valid('pending', 'approved', 'rejected')
+        .optional(),
     }),
   },
   vendorDashboard: {
@@ -148,8 +160,12 @@ module.exports = {
       deliveryDate: Joi.string(),
       fulfillmentType: Joi.string().valid('PICKUP', 'DELIVERY').default('PICKUP'),
       deliveryAddress: Joi.string().allow(null, ''),
+      deliveryLat: Joi.number().allow(null),
+      deliveryLong: Joi.number().allow(null),
       availabilityId: Joi.string(),
-      orderSource: Joi.string().valid('CUSTOMER_APP', 'VENDOR_POS').default('CUSTOMER_APP'),
+      orderSource: Joi.string()
+        .valid('CUSTOMER_APP', 'VENDOR_POS', 'WALK_UP_EMPLOYEE')
+        .default('CUSTOMER_APP'),
       guestCustomer: Joi.object({
         phone: Joi.string().allow(null, ''),
       }).optional(),

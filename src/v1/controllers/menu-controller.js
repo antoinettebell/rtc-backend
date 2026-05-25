@@ -2,8 +2,15 @@ const {
   MenuItemService: Service,
   CommonDataListService,
   MenuCsvImportService,
+  FoodTruckService,
+  PlanService,
+  EmployeeSessionService,
 } = require('../services');
+const { EmployeeItemAvailabilityAuditModel } = require('../../models');
 const mongoose = require('mongoose');
+const {
+  assertNewDishHighlightAllowed,
+} = require('../../helper/vendor-plan-helper');
 const entityName = 'Menu';
 
 const toTitleCase = (value) =>
@@ -17,12 +24,28 @@ const normalizeOptionNames = (items = []) =>
   (Array.isArray(items) ? items : []).map((item) => toTitleCase(item));
 
 const normalizePaidOptions = (options = [], names = []) =>
-  (Array.isArray(options) && options.length ? options : names.map((name) => ({ name })))
+  (Array.isArray(options) && options.length
+    ? options
+    : names.map((name) => ({ name }))
+  )
     .map((option, index) => ({
       ...option,
       name: toTitleCase(option?.name || names[index] || ''),
     }))
     .filter((option) => option.name);
+
+const getVendorPlanForUser = async (userId) => {
+  const foodTruck = await FoodTruckService.getByData(
+    { userId },
+    { singleResult: true }
+  );
+  return foodTruck?.planId ? PlanService.getById(foodTruck.planId) : null;
+};
+
+const assertNewDishAllowedForUser = async (userId) => {
+  const plan = await getVendorPlanForUser(userId);
+  assertNewDishHighlightAllowed(plan);
+};
 
 /**
  * Helper to process BOGO items and handle isSameItem logic
@@ -83,8 +106,10 @@ exports.list = async (req, res, next) => {
     if (_id) {
       console.log('list call', _id);
 
+      const scopedUserId =
+        user.userType === 'EMPLOYEE' ? user.vendor_user_id : user._id;
       let item = await Service.getByData(
-        { _id, userId: user._id },
+        { _id, userId: scopedUserId },
         {
           singleResult: true,
           populate: [
@@ -194,7 +219,9 @@ exports.list = async (req, res, next) => {
     if (categoryId) {
       q.categoryId = categoryId;
     }
-    if (user && user.userType !== 'SUPER_ADMIN') {
+    if (user && user.userType === 'EMPLOYEE') {
+      q.userId = user.vendor_user_id;
+    } else if (user && user.userType !== 'SUPER_ADMIN') {
       q.userId = user._id;
     }
     if (user && user.userType === 'SUPER_ADMIN' && userId) {
@@ -522,6 +549,11 @@ exports.add = async (req, res, next) => {
         409
       );
     }
+
+    if (newDish) {
+      await assertNewDishAllowedForUser(user._id);
+    }
+
     let finalDiscountType = discountType || 'FIXED';
     let finalDiscountValue = discount || 0;
     let finalDiscountMode = discountMode || 'CUSTOM';
@@ -704,6 +736,10 @@ exports.update = async (req, res, next) => {
     const item = await Service.getById(id);
     if (!item || item.deletedAt) {
       return res.error(new Error('Menu not found.'), 404);
+    }
+
+    if (newDish) {
+      await assertNewDishAllowedForUser(user._id);
     }
 
     // ---------- Discount Logic ----------
@@ -1025,10 +1061,61 @@ exports.updateaAvailability = async (req, res, next) => {
       return res.error(new Error('No Menu found'), 409);
     }
 
+    if (user.userType === 'EMPLOYEE') {
+      await EmployeeSessionService.assertActiveEmployeeSession(
+        user.employee_session_id,
+        user.employee_internal_id
+      );
+
+      if (item.userId?.toString() !== user.vendor_user_id?.toString()) {
+        return res.error(new Error('No Menu found'), 404);
+      }
+
+      const foodTruck = await FoodTruckService.getByData(
+        { _id: user.food_truck_id, userId: user.vendor_user_id },
+        { singleResult: true }
+      );
+      const assignedLocationExists = !!(foodTruck?.locations || []).find(
+        (location) =>
+          location?._id?.toString() === user.assigned_location_id?.toString()
+      );
+
+      if (!foodTruck || !assignedLocationExists) {
+        return res.error(
+          new Error('Employee assigned location is unavailable'),
+          404
+        );
+      }
+    } else if (
+      user.userType !== 'SUPER_ADMIN' &&
+      item.userId?.toString() !== user._id?.toString()
+    ) {
+      return res.error(new Error('No Menu found'), 404);
+    }
+
+    const previousStatus = !!item.available;
+
     if ([true, false].includes(available)) {
       item.available = available;
     }
     await item.save();
+
+    if (
+      user.userType === 'EMPLOYEE' &&
+      [true, false].includes(available) &&
+      previousStatus !== available
+    ) {
+      await EmployeeItemAvailabilityAuditModel.create({
+        employee_internal_id: user.employee_internal_id,
+        employee_session_id: user.employee_session_id || null,
+        food_truck_id: user.food_truck_id,
+        location_id: user.assigned_location_id,
+        item_id: item._id,
+        previous_status: previousStatus,
+        new_status: available,
+        changed_at: new Date(),
+      });
+    }
 
     return res.data(
       { [`${entityName.toLocaleLowerCase()}`]: item },

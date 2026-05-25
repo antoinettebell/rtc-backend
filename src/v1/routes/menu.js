@@ -9,7 +9,11 @@ const { allowedTo } = require('../../middleware/allow-route');
 const UploadCsv = require('../../middleware/upload-csv');
 
 /** [GET] /api/v1/menu */
-router.get('/', allowedTo(['SUPER_ADMIN', 'VENDOR']), Controller.list);
+router.get(
+  '/',
+  allowedTo(['SUPER_ADMIN', 'VENDOR', 'EMPLOYEE']),
+  Controller.list
+);
 
 /** [POST] /api/v1/menu/import-csv */
 router.post(
@@ -20,7 +24,11 @@ router.post(
 );
 
 /** [GET] /api/v1/menu/:id */
-router.get('/:id', allowedTo(['SUPER_ADMIN', 'VENDOR']), Controller.list);
+router.get(
+  '/:id',
+  allowedTo(['SUPER_ADMIN', 'VENDOR', 'EMPLOYEE']),
+  Controller.list
+);
 
 /** [POST] /api/v1/menu */
 router.post(
@@ -45,13 +53,12 @@ router.put(
   Controller.update
 );
 
-router.put( 
+router.put(
   '/change-availability/:id',
-  allowedTo(['SUPER_ADMIN', 'VENDOR']),
+  allowedTo(['SUPER_ADMIN', 'VENDOR', 'EMPLOYEE']),
   validate(Validation.availability),
   Controller.updateaAvailability
 );
-
 
 /** [DELETE] /api/v1/menu/:id */
 router.delete('/:id', allowedTo(['SUPER_ADMIN', 'VENDOR']), Controller.destroy);

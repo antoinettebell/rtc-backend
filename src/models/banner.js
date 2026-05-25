@@ -22,6 +22,18 @@ const mSchema = mongoose.Schema(
       type: String,
       required: true,
     },
+    adVendorName: {
+      type: String,
+      default: null,
+    },
+    adDestinationUrl: {
+      type: String,
+      default: null,
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
     fromDate: {
       type: Date,
       default: null,

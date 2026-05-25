@@ -5,9 +5,16 @@ const {
   UserService,
   UserRestictDietService,
   BankDetailService,
+  PlanService,
+  EmployeeSessionService,
 } = require('../services');
 const { Joi } = require('express-validation');
 const MailHelper = require('../../helper/mail-helper');
+const {
+  assertNewDishHighlightAllowed,
+  assertSocialMediaLinksAllowed,
+  normalizeVendorPlan,
+} = require('../../helper/vendor-plan-helper');
 const entityName = 'FoodTruck';
 
 const normalizeLocations = (incomingLocations, existingLocations = []) => {
@@ -48,6 +55,26 @@ const syncOrderingLocationFlags = (foodTruck) => {
       loc._id?.toString() === foodTruck.currentLocation.toString();
     return loc;
   });
+};
+
+const getPlanForFoodTruck = async (foodTruck, nextPlanId = null) => {
+  const planId = nextPlanId || foodTruck?.planId;
+  return planId ? PlanService.getById(planId) : null;
+};
+
+const assertPlanChangeAllowedForCurrentData = async (foodTruck, nextPlanId) => {
+  const plan = await getPlanForFoodTruck(foodTruck, nextPlanId);
+  assertSocialMediaLinksAllowed(plan, foodTruck.socialMedia || []);
+
+  const newDishCount = await MenuItemService.getCount({
+    userId: foodTruck.userId,
+    deletedAt: null,
+    newDish: true,
+  });
+
+  if (newDishCount > 0) {
+    assertNewDishHighlightAllowed(plan);
+  }
 };
 
 /**
@@ -127,7 +154,7 @@ exports.list = async (req, res, next) => {
       }
 
       if (item && item.planId && typeof item.planId === 'object') {
-        item.plan = item.planId;
+        item.plan = normalizeVendorPlan(item.planId);
         item.planId = item.plan._id;
       }
 
@@ -402,6 +429,8 @@ exports.update = async (req, res, next) => {
     //   item.instagramLink = instagramLink;
     // }
     if (socialMedia !== undefined) {
+      const plan = await getPlanForFoodTruck(item, planId || null);
+      assertSocialMediaLinksAllowed(plan, socialMedia);
       item.socialMedia = socialMedia;
     }
 
@@ -435,6 +464,7 @@ exports.update = async (req, res, next) => {
     }
 
     if (planId) {
+      await assertPlanChangeAllowedForCurrentData(item, planId);
       item.planId = planId;
     }
 
@@ -567,6 +597,105 @@ exports.updateExtra = async (req, res, next) => {
 
     return res.data(
       { [`${entityName.toLocaleLowerCase()}`]: item },
+      `${entityName} updated`
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.toggleLocationOrdering = async (req, res, next) => {
+  try {
+    const {
+      body: { isOrderingOpen },
+      params: { id, locationId },
+      user,
+    } = req;
+
+    const item = await Service.getByData(
+      {
+        _id: id,
+        ...(user.userType === 'EMPLOYEE'
+          ? { userId: user.vendor_user_id }
+          : { userId: user._id }),
+      },
+      { singleResult: true }
+    );
+
+    if (!item) {
+      return res.error(new Error('No food truck found'), 404);
+    }
+
+    if (
+      user.userType === 'EMPLOYEE' &&
+      (item._id.toString() !== user.food_truck_id?.toString() ||
+        locationId?.toString() !== user.assigned_location_id?.toString())
+    ) {
+      return res.error(new Error('Location not found or access denied'), 403);
+    }
+
+    const locationExists = (item.locations || []).some(
+      (loc) => loc._id?.toString() === locationId?.toString()
+    );
+
+    if (!locationExists) {
+      return res.error(new Error('Location not found'), 404);
+    }
+
+    if (isOrderingOpen) {
+      const menuItemsCount = await MenuItemService.getCount({
+        userId: item.userId,
+        deletedAt: null,
+        available: true,
+      });
+
+      if (menuItemsCount <= 0) {
+        return res.error(
+          new Error('Cannot open location when no menu items are available'),
+          409
+        );
+      }
+
+      item.currentLocation = locationId;
+    } else if (item.currentLocation?.toString() === locationId?.toString()) {
+      item.currentLocation = null;
+    }
+
+    syncOrderingLocationFlags(item);
+    await item.save();
+
+    if (user.userType === 'EMPLOYEE') {
+      await EmployeeSessionService.touchSession(
+        user.employee_session_id,
+        user.employee_internal_id
+      );
+    }
+
+    const latest = await Service.getByData(
+      { _id: id },
+      { singleResult: true, populate: ['cuisine', 'addOns', 'planId'] }
+    );
+
+    if (latest?.planId && typeof latest.planId === 'object') {
+      latest.plan = normalizeVendorPlan(latest.planId);
+      latest.planId = latest.plan._id;
+    }
+
+    const responseFoodTruck =
+      user.userType === 'EMPLOYEE'
+        ? {
+            _id: latest._id,
+            name: latest.name,
+            logo: latest.logo,
+            currentLocation: latest.currentLocation,
+            locations: (latest.locations || []).filter(
+              (loc) => loc._id?.toString() === locationId?.toString()
+            ),
+          }
+        : latest;
+
+    return res.data(
+      { [`${entityName.toLocaleLowerCase()}`]: responseFoodTruck },
       `${entityName} updated`
     );
   } catch (e) {
@@ -760,6 +889,7 @@ exports.changePlan = async (req, res, next) => {
         }
       }
 
+      await assertPlanChangeAllowedForCurrentData(item, planId);
       item.planId = planId;
       item.planUpdateDate = new Date().toISOString();
     }

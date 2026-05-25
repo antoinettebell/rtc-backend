@@ -17,13 +17,10 @@ router.get(
   Controller.getFreeDessertEligibility
 );
 
-/** [GET] /api/v1/order/:id */
-router.get('/:id', Controller.list);
-
 /** [POST] /api/v1/order */
 router.post(
   '/',
-  allowedTo(['CUSTOMER', 'VENDOR']),
+  allowedTo(['CUSTOMER', 'VENDOR', 'EMPLOYEE']),
   validate(Validation.add),
   Controller.add
 );
@@ -42,7 +39,7 @@ router.get('/vendor/earning_list', allowedTo(['VENDOR']), validate(Validation.Ea
 
 router.post(
   '/validate-order',
-  allowedTo(['CUSTOMER', 'VENDOR']),
+  allowedTo(['CUSTOMER', 'VENDOR', 'EMPLOYEE']),
   validate(Validation.validateOrder),
   Controller.validateOrder
 );
@@ -50,7 +47,7 @@ router.post(
 /** [GET] /api/v1/order/payment-checkout */
 router.post(
   '/payment-checkout',
-  allowedTo(['CUSTOMER', 'VENDOR']),
+  allowedTo(['CUSTOMER', 'VENDOR', 'EMPLOYEE']),
   validate(Validation.checkout),
   Controller.paymentCheckout
 );
@@ -71,5 +68,8 @@ router.post(
 
 /** [GET] /api/v1/order/admin/transaction-list */
 router.get('/admin/transaction-list',allowedTo(['SUPER_ADMIN']), validate(Validation.paymentTransactionslist), Controller.paymentTransactionslist);
+
+/** [GET] /api/v1/order/:id */
+router.get('/:id', Controller.list);
 
 module.exports = router;
