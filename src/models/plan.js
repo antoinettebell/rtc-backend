@@ -41,7 +41,7 @@ const mSchema = mongoose.Schema(
     capabilities: {
       payoutTiming: {
         type: String,
-        enum: ['THREE_DAY', 'DAILY', null],
+        enum: ['THREE_DAY', 'TWO_DAY', 'DAILY', null],
         default: null,
       },
       deliveryAcceptance: {

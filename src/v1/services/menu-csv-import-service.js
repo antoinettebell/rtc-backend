@@ -6,9 +6,13 @@ const {
   MenuCategoryModel,
   MenuItemModel,
   UserModel,
+  FoodTruckModel,
   categoriesModel,
 } = require('../../models');
 const { addObjectFromBuffer } = require('../../helper/aws');
+const {
+  getVendorPlanCapabilities,
+} = require('../../helper/vendor-plan-helper');
 
 const URL_PATTERN = /^https?:\/\//i;
 const WINDOWS_1252_REPLACEMENTS = {
@@ -569,6 +573,17 @@ class MenuCsvImportService {
     return vendor;
   }
 
+  async getVendorCapabilities(vendorUserId) {
+    const foodTruck = await FoodTruckModel.findOne({
+      userId: vendorUserId,
+      deletedAt: null,
+    })
+      .populate('planId')
+      .lean();
+
+    return getVendorPlanCapabilities(foodTruck?.planId);
+  }
+
   async importFromCsv({ csvText, vendorUserId, imageFiles = [] }) {
     const records = this.toRecords(csvText);
     const normalizedVendorUserId = String(vendorUserId || '').trim();
@@ -586,6 +601,8 @@ class MenuCsvImportService {
     );
 
     await this.validateVendor(vendorObjectId);
+    const vendorCapabilities = await this.getVendorCapabilities(vendorObjectId);
+    const canHighlightNewDish = !!vendorCapabilities.newDishHighlight;
 
     const summary = {
       totalRows: records.length,
@@ -594,6 +611,7 @@ class MenuCsvImportService {
       updatedCount: 0,
       categoryCreatedCount: 0,
       uploadedImageCount: 0,
+      skippedNewDishHighlightCount: 0,
       failedCount: 0,
       errors: [],
     };
@@ -617,6 +635,10 @@ class MenuCsvImportService {
           rowUserId,
           imgUrls
         );
+        if (menuItem.newDish && !canHighlightNewDish) {
+          menuItem.newDish = false;
+          summary.skippedNewDishHighlightCount += 1;
+        }
         const updateFilter = await this.buildMenuItemUpdateFilter(
           row,
           menuItem,

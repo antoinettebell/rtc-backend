@@ -1,4 +1,12 @@
-const { UserModel, PlanModel, AddOnsModel, categoriesModel, MeatModel, commonDatalistModel, DietModel } = require('../models');
+const {
+  UserModel,
+  PlanModel,
+  AddOnsModel,
+  categoriesModel,
+  MeatModel,
+  commonDatalistModel,
+  DietModel,
+} = require('../models');
 
 const addAdminIfNotExist = async () => {
   const sudo = await UserModel.findOne({ userType: 'SUPER_ADMIN' });
@@ -80,60 +88,60 @@ const seedMeatWellness = async () => {
   try {
     const defaultMeatWellness = [
       {
-        name: "Rare",
-        key: "meat_wellness",
-        value: "rare",
-        type: "meat_wellness"
+        name: 'Rare',
+        key: 'meat_wellness',
+        value: 'rare',
+        type: 'meat_wellness',
       },
       {
-        name: "Medium Rare",
-        key: "meat_wellness",
-        value: "medium_rare",
-        type: "meat_wellness"
+        name: 'Medium Rare',
+        key: 'meat_wellness',
+        value: 'medium_rare',
+        type: 'meat_wellness',
       },
       {
-        name: "Medium",
-        key: "meat_wellness",
-        value: "medium",
-        type: "meat_wellness"
+        name: 'Medium',
+        key: 'meat_wellness',
+        value: 'medium',
+        type: 'meat_wellness',
       },
       {
-        name: "Medium Well",
-        key: "meat_wellness",
-        value: "medium_well",
-        type: "meat_wellness"
+        name: 'Medium Well',
+        key: 'meat_wellness',
+        value: 'medium_well',
+        type: 'meat_wellness',
       },
       {
-        name: "Well",
-        key: "meat_wellness",
-        value: "well",
-        type: "meat_wellness"
+        name: 'Well',
+        key: 'meat_wellness',
+        value: 'well',
+        type: 'meat_wellness',
       },
       {
-        name: "Charbroiled",
-        key: "meat_wellness",
-        value: "charbroiled",
-        type: "meat_wellness"
+        name: 'Charbroiled',
+        key: 'meat_wellness',
+        value: 'charbroiled',
+        type: 'meat_wellness',
       },
       {
-        name: "Customer Choice",
-        key: "meat_wellness",
-        value: "customer_choice",
-        type: "meat_wellness"
+        name: 'Customer Choice',
+        key: 'meat_wellness',
+        value: 'customer_choice',
+        type: 'meat_wellness',
       },
       {
-        name: "NA",
-        key: "meat_wellness",
-        value: "NA",
-        type: "meat_wellness"
+        name: 'NA',
+        key: 'meat_wellness',
+        value: 'NA',
+        type: 'meat_wellness',
       },
     ];
     const defaultDiscounts = [
-      { name: "10% Off", key: "PERCENTAGE", value: "10", type: "discount" },
-      { name: "15% Off", key: "PERCENTAGE", value: "15", type: "discount" },
-      { name: "20% Off", key: "PERCENTAGE", value: "20", type: "discount" },
-      { name: "BOGO", key: "BOGO", value: "bogo", type: "discount" },
-      { name: "BOGOHO", key: "BOGOHO", value: "bogoho", type: "discount" }
+      { name: '10% Off', key: 'PERCENTAGE', value: '10', type: 'discount' },
+      { name: '15% Off', key: 'PERCENTAGE', value: '15', type: 'discount' },
+      { name: '20% Off', key: 'PERCENTAGE', value: '20', type: 'discount' },
+      { name: 'BOGO', key: 'BOGO', value: 'bogo', type: 'discount' },
+      { name: 'BOGOHO', key: 'BOGOHO', value: 'bogoho', type: 'discount' },
     ];
     const allData = [...defaultMeatWellness, ...defaultDiscounts];
 
@@ -142,7 +150,7 @@ const seedMeatWellness = async () => {
         key: item.key,
         value: item.value,
         type: item.type,
-        deletedAt: null
+        deletedAt: null,
       });
 
       if (!exists) {
@@ -166,7 +174,7 @@ const dietsExistfNotExist = async () => {
       { name: 'Veg' },
       { name: 'Vegen' },
       { name: 'Eggetarian' },
-      { name: 'Keto' }
+      { name: 'Keto' },
     ];
 
     for (const diet of defaultDiet) {
@@ -203,7 +211,7 @@ const dietsExistfNotExist = async () => {
 //     titleColor: '#FC7B03',
 //     slug: 'SUB_BASIC',
 //     rate: '3.5',
-//     rateType: '/vendor-side tier rate',
+//     rateType: '',
 //     isPopular: true,
 //     payoutTimingLabel: '3-day payout',
 //     capabilities: {
@@ -237,11 +245,11 @@ const dietsExistfNotExist = async () => {
 //     titleColor: '#AF52DE',
 //     slug: 'SUB_PLATINUM',
 //     rate: '4.5',
-//     rateType: '/vendor-side tier rate',
+//     rateType: '',
 //     isPopular: false,
-//     payoutTimingLabel: 'Daily payout',
+//     payoutTimingLabel: '2-day payout',
 //     capabilities: {
-//       payoutTiming: 'DAILY',
+//       payoutTiming: 'TWO_DAY',
 //       deliveryAcceptance: true,
 //       employeeLogin: true,
 //       employeeWalkUpPos: true,
@@ -255,7 +263,7 @@ const dietsExistfNotExist = async () => {
 //       'All Basic features',
 //       'Employee Login/Cashier Mode',
 //       'Walk-up POS for Cash Payments Only',
-//       'Daily payouts',
+//       '2-day payouts',
 //       'Advanced reporting',
 //       '2 media links and 2 social/website links',
 //       'No highlight new dishes',
@@ -268,7 +276,7 @@ const dietsExistfNotExist = async () => {
 //     titleColor: '#FFCC00',
 //     slug: 'SUB_ELITE',
 //     rate: '5.5',
-//     rateType: '/vendor-side tier rate',
+//     rateType: '',
 //     isPopular: false,
 //     payoutTimingLabel: 'Daily payout',
 //     capabilities: {

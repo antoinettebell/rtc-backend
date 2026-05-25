@@ -2,7 +2,7 @@ const VENDOR_PLAN_TIERS = {
   SUB_BASIC: {
     name: 'Basic',
     rate: 3.5,
-    rateType: '/vendor-side tier rate',
+    rateType: '',
     payoutTimingLabel: '3-day payout',
     details: [
       'Marketplace ordering',
@@ -32,20 +32,20 @@ const VENDOR_PLAN_TIERS = {
   SUB_PLATINUM: {
     name: 'Platinum',
     rate: 4.5,
-    rateType: '/vendor-side tier rate',
-    payoutTimingLabel: 'Daily payout',
+    rateType: '',
+    payoutTimingLabel: '2-day payout',
     details: [
       'All Basic features',
       'Employee Login/Cashier Mode',
       'Walk-up POS for Cash Payments Only',
-      'Daily payouts',
+      '2-day payouts',
       'Advanced reporting',
       '2 media links and 2 social/website links',
       'No highlight new dishes',
       'No Tap to Pay',
     ],
     capabilities: {
-      payoutTiming: 'DAILY',
+      payoutTiming: 'TWO_DAY',
       deliveryAcceptance: true,
       employeeLogin: true,
       employeeWalkUpPos: true,
@@ -59,7 +59,7 @@ const VENDOR_PLAN_TIERS = {
   SUB_ELITE: {
     name: 'Elite',
     rate: 5.5,
-    rateType: '/vendor-side tier rate',
+    rateType: '',
     payoutTimingLabel: 'Daily payout',
     details: [
       'All Platinum features',
@@ -98,33 +98,40 @@ const getVendorPlanCapabilities = (plan) => {
 };
 
 const canUseEmployeeLogin = (foodTruckOrPlan) =>
-  !!getVendorPlanCapabilities(foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan)
-    .employeeLogin;
+  !!getVendorPlanCapabilities(
+    foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan
+  ).employeeLogin;
 
 const canUseWalkupPOS = (foodTruckOrPlan) =>
-  !!getVendorPlanCapabilities(foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan)
-    .employeeWalkUpPos;
+  !!getVendorPlanCapabilities(
+    foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan
+  ).employeeWalkUpPos;
 
 const canUseCashPOS = (foodTruckOrPlan) =>
-  (getVendorPlanCapabilities(foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan)
-    .walkUpPosPaymentMethods || []
+  (
+    getVendorPlanCapabilities(
+      foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan
+    ).walkUpPosPaymentMethods || []
   ).includes('CASH');
 
 const canUseTapToPay = (foodTruckOrPlan) =>
-  !!getVendorPlanCapabilities(foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan)
-    .tapToPay;
+  !!getVendorPlanCapabilities(
+    foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan
+  ).tapToPay;
 
 const hasEventMarketplaceAddOn = (foodTruck) =>
   Array.isArray(foodTruck?.addOns) &&
   foodTruck.addOns.some((addOn) => /event/i.test(addOn?.name || ''));
 
 const canAccessEventMarketplace = (foodTruckOrPlan) =>
-  !!getVendorPlanCapabilities(foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan)
-    .eventMarketplace || hasEventMarketplaceAddOn(foodTruckOrPlan);
+  !!getVendorPlanCapabilities(
+    foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan
+  ).eventMarketplace || hasEventMarketplaceAddOn(foodTruckOrPlan);
 
 const getPayoutSpeed = (foodTruckOrPlan) =>
-  getVendorPlanCapabilities(foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan)
-    .payoutTiming || null;
+  getVendorPlanCapabilities(
+    foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan
+  ).payoutTiming || null;
 
 const normalizeVendorPlan = (plan) => {
   if (!plan) {
