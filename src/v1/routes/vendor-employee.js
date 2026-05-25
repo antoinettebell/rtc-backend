@@ -65,6 +65,8 @@ router.put(
   Controller.resetPin
 );
 
-router.delete('/:id', allowedTo(['VENDOR']), Controller.archive);
+router.patch('/:id/archive', allowedTo(['VENDOR']), Controller.archive);
+
+router.delete('/:id', allowedTo(['VENDOR']), Controller.remove);
 
 module.exports = router;

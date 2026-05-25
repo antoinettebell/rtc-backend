@@ -1,4 +1,9 @@
-const { VendorEmployeeModel: Model } = require('../../models');
+const {
+  EmployeeRefundCancelRequestModel,
+  EmployeeSessionModel,
+  OrderModel,
+  VendorEmployeeModel: Model,
+} = require('../../models');
 const { BaseService } = require('../../common-services');
 const FoodTruckService = require('./food-truck-service');
 const PlanService = require('./plan-service');
@@ -16,6 +21,38 @@ const buildError = (message, code = 409) => {
 class VendorEmployeeService extends BaseService {
   constructor() {
     super(Model);
+  }
+
+  async generateUniqueEmployeeLoginId({
+    food_truck_id,
+    first_name,
+    last_name,
+    zip_code,
+  }) {
+    const baseLoginId = Model.formatEmployeeLoginId({
+      first_name,
+      last_name,
+      zip_code,
+    });
+
+    if (!baseLoginId) {
+      throw buildError('Employee login ID could not be generated.', 400);
+    }
+
+    let employee_login_id = baseLoginId;
+    let suffix = 2;
+
+    while (
+      await Model.exists({
+        food_truck_id,
+        employee_login_id,
+      })
+    ) {
+      employee_login_id = `${baseLoginId}-${suffix}`;
+      suffix += 1;
+    }
+
+    return employee_login_id;
   }
 
   async createForVendor({
@@ -52,6 +89,13 @@ class VendorEmployeeService extends BaseService {
       throw buildError('Employee PIN is required.');
     }
 
+    const employee_login_id = await this.generateUniqueEmployeeLoginId({
+      food_truck_id,
+      first_name,
+      last_name,
+      zip_code,
+    });
+
     return this.create({
       ...rest,
       vendor_user_id,
@@ -60,6 +104,7 @@ class VendorEmployeeService extends BaseService {
       first_name,
       last_name,
       zip_code,
+      employee_login_id,
       pin_hash: pin,
     });
   }
@@ -122,6 +167,7 @@ class VendorEmployeeService extends BaseService {
 
   async updateForVendor({ vendor_user_id, employee_id, update }) {
     const employee = await this.getScopedEmployee({ vendor_user_id, employee_id });
+    let assignedLocationChanged = false;
 
     if (update.assigned_location_id) {
       const foodTruck = await this.getVendorFoodTruck(
@@ -129,6 +175,9 @@ class VendorEmployeeService extends BaseService {
         employee.food_truck_id
       );
       this.assertExistingLocation(foodTruck, update.assigned_location_id);
+      assignedLocationChanged =
+        employee.assigned_location_id?.toString() !==
+        update.assigned_location_id?.toString();
       employee.assigned_location_id = update.assigned_location_id;
     }
 
@@ -143,6 +192,10 @@ class VendorEmployeeService extends BaseService {
         employee[field] = update[field];
       }
     });
+
+    if (assignedLocationChanged) {
+      employee.is_working = false;
+    }
 
     await employee.save();
     return employee;
@@ -165,6 +218,30 @@ class VendorEmployeeService extends BaseService {
     employee.is_working = false;
     employee.is_archived = true;
     await employee.save();
+    return employee;
+  }
+
+  async deleteForVendor({ vendor_user_id, employee_id }) {
+    const employee = await this.getScopedEmployee({ vendor_user_id, employee_id });
+    const employeeQuery = {
+      employee_internal_id: employee.employee_internal_id,
+      vendor_user_id,
+    };
+
+    const [sessionExists, orderExists, requestExists] = await Promise.all([
+      EmployeeSessionModel.exists(employeeQuery),
+      OrderModel.exists(employeeQuery),
+      EmployeeRefundCancelRequestModel.exists(employeeQuery),
+    ]);
+
+    if (sessionExists || orderExists || requestExists) {
+      throw buildError(
+        'This employee has activity history and cannot be deleted. Archive the employee instead.',
+        409
+      );
+    }
+
+    await Model.deleteOne({ _id: employee._id, vendor_user_id });
     return employee;
   }
 

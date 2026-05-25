@@ -107,6 +107,10 @@ exports.update = async (req, res, next) => {
       vendor_user_id: user._id,
       employee_id: id,
     });
+    const assignedLocationChanged =
+      body.assigned_location_id &&
+      employee.assigned_location_id?.toString() !==
+        body.assigned_location_id?.toString();
     const foodTruck = await Service.getVendorFoodTruck(
       user._id,
       employee.food_truck_id
@@ -119,7 +123,11 @@ exports.update = async (req, res, next) => {
       update: body,
     });
 
-    if (body.is_working === false || body.is_active === false) {
+    if (
+      body.is_working === false ||
+      body.is_active === false ||
+      assignedLocationChanged
+    ) {
       await EmployeeSessionService.endActiveSessions(
         updated.employee_internal_id
       );
@@ -195,6 +203,37 @@ exports.archive = async (req, res, next) => {
     return res.data(
       { [`${entityName.toLocaleLowerCase()}`]: archived },
       `${entityName} archived`
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.remove = async (req, res, next) => {
+  try {
+    const {
+      params: { id },
+      user,
+    } = req;
+
+    const employee = await Service.getScopedEmployee({
+      vendor_user_id: user._id,
+      employee_id: id,
+    });
+    const foodTruck = await Service.getVendorFoodTruck(
+      user._id,
+      employee.food_truck_id
+    );
+    await assertEmployeeManagementAllowed(foodTruck);
+
+    const deleted = await Service.deleteForVendor({
+      vendor_user_id: user._id,
+      employee_id: id,
+    });
+
+    return res.data(
+      { [`${entityName.toLocaleLowerCase()}`]: deleted },
+      `${entityName} deleted`
     );
   } catch (e) {
     return next(e);
