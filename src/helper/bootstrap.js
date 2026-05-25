@@ -208,6 +208,7 @@ const dietsExistfNotExist = async () => {
 //     payoutTimingLabel: '3-day payout',
 //     capabilities: {
 //       payoutTiming: 'THREE_DAY',
+//       deliveryAcceptance: true,
 //       employeeLogin: false,
 //       employeeWalkUpPos: false,
 //       walkUpPosPaymentMethods: [],
@@ -218,6 +219,7 @@ const dietsExistfNotExist = async () => {
 //     },
 //     details: [
 //       'Marketplace ordering',
+//       'Delivery acceptance',
 //       'Preorder ordering',
 //       'QR ordering',
 //       'Printing',
@@ -240,24 +242,23 @@ const dietsExistfNotExist = async () => {
 //     payoutTimingLabel: 'Daily payout',
 //     capabilities: {
 //       payoutTiming: 'DAILY',
+//       deliveryAcceptance: true,
 //       employeeLogin: true,
 //       employeeWalkUpPos: true,
 //       walkUpPosPaymentMethods: ['CASH'],
 //       tapToPay: false,
 //       eventMarketplace: false,
 //       maxSocialMediaLinks: 2,
-//       newDishHighlight: true,
+//       newDishHighlight: false,
 //     },
 //     details: [
 //       'All Basic features',
-//       'Employee login',
-//       'Walk-up POS',
-//       'Cashier mode',
-//       'Cash payments only',
+//       'Employee Login/Cashier Mode',
+//       'Walk-up POS for Cash Payments Only',
 //       'Daily payouts',
 //       'Advanced reporting',
 //       '2 media links and 2 social/website links',
-//       'Highlight new dishes',
+//       'No highlight new dishes',
 //       'No Tap to Pay',
 //     ],
 //   });
@@ -272,6 +273,7 @@ const dietsExistfNotExist = async () => {
 //     payoutTimingLabel: 'Daily payout',
 //     capabilities: {
 //       payoutTiming: 'DAILY',
+//       deliveryAcceptance: true,
 //       employeeLogin: true,
 //       employeeWalkUpPos: true,
 //       walkUpPosPaymentMethods: ['CASH', 'TAP_TO_PAY'],
@@ -282,6 +284,7 @@ const dietsExistfNotExist = async () => {
 //     },
 //     details: [
 //       'All Platinum features',
+//       'Ability to highlight dishes',
 //       'Tap to Pay enabled',
 //       'Event marketplace included',
 //       'Customizable reporting',

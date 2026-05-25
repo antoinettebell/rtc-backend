@@ -6,6 +6,7 @@ const VENDOR_PLAN_TIERS = {
     payoutTimingLabel: '3-day payout',
     details: [
       'Marketplace ordering',
+      'Delivery acceptance',
       'Preorder ordering',
       'QR ordering',
       'Printing',
@@ -18,6 +19,7 @@ const VENDOR_PLAN_TIERS = {
     ],
     capabilities: {
       payoutTiming: 'THREE_DAY',
+      deliveryAcceptance: true,
       employeeLogin: false,
       employeeWalkUpPos: false,
       walkUpPosPaymentMethods: [],
@@ -34,25 +36,24 @@ const VENDOR_PLAN_TIERS = {
     payoutTimingLabel: 'Daily payout',
     details: [
       'All Basic features',
-      'Employee login',
-      'Walk-up POS',
-      'Cashier mode',
-      'Cash payments only',
+      'Employee Login/Cashier Mode',
+      'Walk-up POS for Cash Payments Only',
       'Daily payouts',
       'Advanced reporting',
       '2 media links and 2 social/website links',
-      'Highlight new dishes',
+      'No highlight new dishes',
       'No Tap to Pay',
     ],
     capabilities: {
       payoutTiming: 'DAILY',
+      deliveryAcceptance: true,
       employeeLogin: true,
       employeeWalkUpPos: true,
       walkUpPosPaymentMethods: ['CASH'],
       tapToPay: false,
       eventMarketplace: false,
       maxSocialMediaLinks: 2,
-      newDishHighlight: true,
+      newDishHighlight: false,
     },
   },
   SUB_ELITE: {
@@ -62,6 +63,7 @@ const VENDOR_PLAN_TIERS = {
     payoutTimingLabel: 'Daily payout',
     details: [
       'All Platinum features',
+      'Ability to highlight dishes',
       'Tap to Pay enabled',
       'Event marketplace included',
       'Customizable reporting',
@@ -69,6 +71,7 @@ const VENDOR_PLAN_TIERS = {
     ],
     capabilities: {
       payoutTiming: 'DAILY',
+      deliveryAcceptance: true,
       employeeLogin: true,
       employeeWalkUpPos: true,
       walkUpPosPaymentMethods: ['CASH', 'TAP_TO_PAY'],

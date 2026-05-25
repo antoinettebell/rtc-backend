@@ -44,6 +44,10 @@ const mSchema = mongoose.Schema(
         enum: ['THREE_DAY', 'DAILY', null],
         default: null,
       },
+      deliveryAcceptance: {
+        type: Boolean,
+        default: true,
+      },
       employeeLogin: {
         type: Boolean,
         default: false,
