@@ -27,6 +27,18 @@ module.exports = {
       addressState: Joi.string().trim().optional(),
       addressCountry: Joi.string().trim().optional(),
       addressPostal: Joi.string().trim().optional(),
+      isEventCoordinator: Joi.boolean(),
+      eventCoordinatorCompanyName: Joi.when('isEventCoordinator', {
+        is: true,
+        then: Joi.string().trim().required(),
+        otherwise: Joi.string().trim().allow(null, ''),
+      }),
+      eventCoordinatorCompanyAddress: Joi.string().trim().allow(null, ''),
+      eventCoordinatorEin: Joi.when('isEventCoordinator', {
+        is: true,
+        then: Joi.string().trim().required(),
+        otherwise: Joi.string().trim().allow(null, ''),
+      }),
       // mailing: Joi.object({
       //   address: Joi.string().trim().required(),
       //   city: Joi.string().trim().required(),

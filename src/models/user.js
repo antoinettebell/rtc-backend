@@ -74,6 +74,23 @@ const mSchema = mongoose.Schema(
       default: false,
       required: false,
     },
+    isEventCoordinator: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    eventCoordinatorCompanyName: {
+      type: String,
+      default: null,
+    },
+    eventCoordinatorCompanyAddress: {
+      type: String,
+      default: null,
+    },
+    eventCoordinatorEin: {
+      type: String,
+      default: null,
+    },
       addressLine1: {
         type: String,
         default: 'NA',

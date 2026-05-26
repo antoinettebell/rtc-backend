@@ -26,6 +26,18 @@ module.exports = {
       mobileNumber: Joi.string().required().trim(),
       password: Joi.string().required().min(8).max(16).trim(),
       subscribedForOffGrid:Joi.boolean().optional(),
+      isEventCoordinator: Joi.boolean().default(false),
+      eventCoordinatorCompanyName: Joi.when('isEventCoordinator', {
+        is: true,
+        then: Joi.string().trim().required(),
+        otherwise: Joi.string().trim().allow(null, ''),
+      }),
+      eventCoordinatorCompanyAddress: Joi.string().trim().allow(null, ''),
+      eventCoordinatorEin: Joi.when('isEventCoordinator', {
+        is: true,
+        then: Joi.string().trim().required(),
+        otherwise: Joi.string().trim().allow(null, ''),
+      }),
     }),
   },
 

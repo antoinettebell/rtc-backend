@@ -246,6 +246,10 @@ exports.update = async (req, res, next) => {
         addressState,
         addressCountry,
         addressPostal,
+        isEventCoordinator,
+        eventCoordinatorCompanyName,
+        eventCoordinatorCompanyAddress,
+        eventCoordinatorEin,
         // mailing,
       },
       params: { id: _id },
@@ -290,6 +294,16 @@ exports.update = async (req, res, next) => {
     if (addressCity) existRecord.addressCity = addressCity;
     if (addressCountry) existRecord.addressCountry = addressCountry;
     if (addressPostal) existRecord.addressPostal = addressPostal;
+
+    if (isEventCoordinator !== undefined) {
+      existRecord.isEventCoordinator = isEventCoordinator;
+      if (isEventCoordinator) {
+        existRecord.eventCoordinatorCompanyName = eventCoordinatorCompanyName;
+        existRecord.eventCoordinatorCompanyAddress =
+          eventCoordinatorCompanyAddress || null;
+        existRecord.eventCoordinatorEin = eventCoordinatorEin;
+      }
+    }
 
     if (password && user.userType === 'SUPER_ADMIN') {
       existRecord.password = password;

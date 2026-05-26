@@ -248,7 +248,24 @@ const getVendorMarketplaceFoodTruck = async (userId) => {
   return foodTruck;
 };
 
+const assertCustomerEventCoordinator = async (userId) => {
+  const customer = await UserService.getById(userId);
+  if (
+    !customer ||
+    !customer.isEventCoordinator ||
+    !customer.eventCoordinatorEin
+  ) {
+    throw buildError(
+      'Event coordination profile with company EIN is required to access My Events.',
+      403
+    );
+  }
+
+  return customer;
+};
+
 const getOwnedEvent = async (eventId, userId) => {
+  await assertCustomerEventCoordinator(userId);
   const event = await MarketplaceEventService.getByData(
     { event_id: eventId, customer_user_id: userId },
     { singleResult: true }
@@ -587,6 +604,7 @@ exports.createEvent = async (req, res, next) => {
     if (req.user.userType !== 'CUSTOMER') {
       throw buildError('Only customers can create marketplace events', 403);
     }
+    await assertCustomerEventCoordinator(req.user._id);
 
     const marketplaceEvent = await MarketplaceEventService.create({
       ...req.body,
@@ -605,6 +623,7 @@ exports.myEvents = async (req, res, next) => {
     if (req.user.userType !== 'CUSTOMER') {
       throw buildError('Only customers can view their marketplace events', 403);
     }
+    await assertCustomerEventCoordinator(req.user._id);
 
     const marketplaceEventList = await MarketplaceEventService.getMyEvents(
       req.user._id

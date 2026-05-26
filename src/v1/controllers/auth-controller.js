@@ -35,6 +35,10 @@ exports.add = async (req, res, next) => {
         mobileNumber,
         countryCode,
         subscribedForOffGrid = false,
+        isEventCoordinator = false,
+        eventCoordinatorCompanyName,
+        eventCoordinatorCompanyAddress,
+        eventCoordinatorEin,
       },
       file,
     } = req;
@@ -107,6 +111,14 @@ exports.add = async (req, res, next) => {
       user.mobileNumber = mobileNumber;
       user.countryCode = countryCode;
       user.subscribedForOffGrid = subscribedForOffGrid;
+      user.isEventCoordinator = isEventCoordinator;
+      user.eventCoordinatorCompanyName = isEventCoordinator
+        ? eventCoordinatorCompanyName
+        : null;
+      user.eventCoordinatorCompanyAddress = isEventCoordinator
+        ? eventCoordinatorCompanyAddress || null
+        : null;
+      user.eventCoordinatorEin = isEventCoordinator ? eventCoordinatorEin : null;
       user.profilePic = profilePic || null;
       user.deletedAt = null;
 
@@ -121,6 +133,14 @@ exports.add = async (req, res, next) => {
         countryCode,
         profilePic: profilePic || null,
         subscribedForOffGrid: subscribedForOffGrid,
+        isEventCoordinator,
+        eventCoordinatorCompanyName: isEventCoordinator
+          ? eventCoordinatorCompanyName
+          : null,
+        eventCoordinatorCompanyAddress: isEventCoordinator
+          ? eventCoordinatorCompanyAddress || null
+          : null,
+        eventCoordinatorEin: isEventCoordinator ? eventCoordinatorEin : null,
         userType: 'CUSTOMER',
         requestStatus: 'APPROVED',
         verified: false,
