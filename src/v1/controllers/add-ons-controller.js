@@ -17,7 +17,7 @@ const normalizeAddOn = (addOn) => {
     ...source,
     name: 'Accept Event Bookings / Event Marketplace Access',
     priceLabel: '$25/month',
-    description: 'Optional add-on for Basic and Platinum vendors. Included with Elite.',
+    description: 'Required add-on for Event Marketplace access.',
   };
 };
 

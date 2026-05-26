@@ -57,3 +57,6 @@ exports.MeatController = require('./meat-controller');
 
 /** Define add-ons controller */
 exports.AddOnsController = require('./add-ons-controller');
+
+/** Define marketplace controller */
+exports.MarketplaceController = require('./marketplace-controller');

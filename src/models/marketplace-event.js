@@ -1,0 +1,195 @@
+const mongoose = require('mongoose');
+const { v4: uuidv4 } = require('uuid');
+
+const mSchema = mongoose.Schema(
+  {
+    event_id: {
+      type: String,
+      default: uuidv4,
+      unique: true,
+    },
+    customer_user_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'users',
+      required: true,
+      index: true,
+    },
+    event_name: {
+      type: String,
+      required: true,
+    },
+    event_description: {
+      type: String,
+      default: null,
+    },
+    event_type: {
+      type: String,
+      required: true,
+    },
+    event_style: {
+      type: String,
+      default: null,
+    },
+    service_type: {
+      type: String,
+      default: null,
+    },
+    primary_service_style: {
+      type: String,
+      default: null,
+    },
+    event_date: {
+      type: Date,
+      required: true,
+      index: true,
+    },
+    event_time: {
+      type: String,
+      default: null,
+    },
+    event_address: {
+      type: String,
+      required: true,
+    },
+    event_city: {
+      type: String,
+      required: true,
+    },
+    event_state: {
+      type: String,
+      required: true,
+    },
+    event_zip: {
+      type: String,
+      default: null,
+    },
+    number_of_guests: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+    number_of_vendors_needed: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+    power_required: {
+      type: [String],
+      default: [],
+    },
+    permits_required: {
+      type: [String],
+      default: [],
+    },
+    insurance_required: {
+      type: Boolean,
+      default: false,
+    },
+    alcohol_required: {
+      type: Boolean,
+      default: false,
+    },
+    cuisine_preferences: {
+      type: [String],
+      default: [],
+    },
+    dietary_restrictions: {
+      type: [String],
+      default: [],
+    },
+    equipment_needed: {
+      type: [String],
+      default: [],
+    },
+    vendor_fee: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    budgeted_amount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    event_close_date: {
+      type: Date,
+      required: true,
+      index: true,
+    },
+    status: {
+      type: String,
+      enum: ['DRAFT', 'OPEN', 'CLOSED', 'AWARDED', 'REOPENED', 'CANCELLED'],
+      default: 'DRAFT',
+      index: true,
+    },
+    award_payment_id: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    award_payment_status: {
+      type: String,
+      enum: ['NOT_REQUIRED', 'PENDING', 'PAID', 'FAILED', 'CANCELLED', 'REFUNDED'],
+      default: 'NOT_REQUIRED',
+      index: true,
+    },
+    agreement_provider: {
+      type: String,
+      enum: ['NONE', 'DOCUSIGN'],
+      default: 'NONE',
+    },
+    agreement_envelope_id: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    agreement_status: {
+      type: String,
+      enum: [
+        'NOT_REQUIRED',
+        'ACKNOWLEDGED',
+        'PENDING_SIGNATURE',
+        'SENT',
+        'VIEWED',
+        'SIGNED',
+        'DECLINED',
+        'VOIDED',
+        'ERROR',
+      ],
+      default: 'NOT_REQUIRED',
+      index: true,
+    },
+    agreement_sent_at: {
+      type: Date,
+      default: null,
+    },
+    agreement_signed_at: {
+      type: Date,
+      default: null,
+    },
+    signed_document_url: {
+      type: String,
+      default: null,
+    },
+    signer_name: {
+      type: String,
+      default: null,
+    },
+    signer_email: {
+      type: String,
+      default: null,
+    },
+    agreement_error_message: {
+      type: String,
+      default: null,
+    },
+  },
+  {
+    timestamps: {
+      createdAt: 'created_at',
+      updatedAt: 'updated_at',
+    },
+  }
+);
+
+module.exports = new mongoose.model('marketplace-events', mSchema);

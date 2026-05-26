@@ -48,6 +48,9 @@ exports.TaxRatesValidation = require('./tax-rates-validation');
 /** Validation schema for meat */
 exports.MeatValidation = require('./meat-validation');
 
+/** Validation schema for marketplace */
+exports.MarketplaceValidation = require('./marketplace-validation');
+
 /**
  * export validate function which is imported from 'express-validation'
  */

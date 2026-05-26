@@ -60,6 +60,14 @@ module.exports = {
       TRANSACTION_KEY: "2G26GAuuQv22s4K6",
       PAYMENT_MODE: "prod",
     },
+    docusign: {
+      integrationKey: process.env.DOCUSIGN_INTEGRATION_KEY,
+      clientSecret: process.env.DOCUSIGN_CLIENT_SECRET,
+      userId: process.env.DOCUSIGN_USER_ID,
+      accountId: process.env.DOCUSIGN_ACCOUNT_ID,
+      privateKey: process.env.DOCUSIGN_PRIVATE_KEY,
+      basePath: process.env.DOCUSIGN_BASE_PATH || 'https://demo.docusign.net/restapi',
+      authServer: process.env.DOCUSIGN_AUTH_SERVER || 'account-d.docusign.com',
+    },
   };
-
 

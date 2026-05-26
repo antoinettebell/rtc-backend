@@ -85,5 +85,19 @@ exports.MeatService = require('./meat-service');
 /** Define add-ons service */
 exports.AddOnsService = require('./add-ons-service');
 
+/** Define marketplace event service */
+exports.MarketplaceEventService = require('./marketplace-event-service');
+
+/** Define marketplace event image service */
+exports.MarketplaceEventImageService = require('./marketplace-event-image-service');
+
+/** Define marketplace bid service */
+exports.MarketplaceBidService = require('./marketplace-bid-service');
+exports.MarketplaceAttachmentService = require('./marketplace-attachment-service');
+exports.MarketplaceFileAuditService = require('./marketplace-file-audit-service');
+exports.MarketplacePaymentService = require('./marketplace-payment-service');
+exports.MarketplacePaymentAuditService = require('./marketplace-payment-audit-service');
+exports.MarketplaceAgreementAuditService = require('./marketplace-agreement-audit-service');
+
 /** Define admin-notification service */
 exports.AdminNotificationService = require('./admin-notification-service');

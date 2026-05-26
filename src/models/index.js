@@ -85,6 +85,30 @@ exports.MeatModel = require('./meat');
 /** Define add-ons model */
 exports.AddOnsModel = require('./add-ons');
 
+/** Define marketplace event model */
+exports.MarketplaceEventModel = require('./marketplace-event');
+
+/** Define marketplace event image model */
+exports.MarketplaceEventImageModel = require('./marketplace-event-image');
+
+/** Define marketplace bid model */
+exports.MarketplaceBidModel = require('./marketplace-bid');
+
+/** Define marketplace attachment model */
+exports.MarketplaceAttachmentModel = require('./marketplace-attachment');
+
+/** Define marketplace file audit model */
+exports.MarketplaceFileAuditModel = require('./marketplace-file-audit');
+
+/** Define marketplace payment model */
+exports.MarketplacePaymentModel = require('./marketplace-payment');
+
+/** Define marketplace payment audit model */
+exports.MarketplacePaymentAuditModel = require('./marketplace-payment-audit');
+
+/** Define marketplace agreement audit model */
+exports.MarketplaceAgreementAuditModel = require('./marketplace-agreement-audit');
+
 /** Define admin-notification model */
 exports.AdminNotificationModel = require('./admin-notification');
 

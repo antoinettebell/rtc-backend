@@ -15,6 +15,7 @@ const {
   TaxRatesController,
   CouponController,
   AddOnsController,
+  MarketplaceController,
 } = require('../controllers');
 const {
   FoodTruckValidation,
@@ -127,6 +128,9 @@ router.get(
 
 /** [GET] /api/v1/public/add-ons */
 router.get('/add-ons', AddOnsController.list);
+
+/** [POST] /api/v1/public/marketplace/docusign/webhook */
+router.post('/marketplace/docusign/webhook', MarketplaceController.docusignWebhook);
 
 /** [GET] /api/v1/public/diet */
 router.get('/common-list', CommonDataListController.list);

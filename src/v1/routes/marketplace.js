@@ -1,0 +1,152 @@
+const express = require('express');
+const router = express.Router();
+const { MarketplaceController: Controller } = require('../controllers');
+const { validate, MarketplaceValidation: Validation } = require('../validations');
+const { allowedTo } = require('../../middleware/allow-route');
+const MarketplaceUpload = require('../../middleware/marketplace-upload');
+
+router.post(
+  '/events',
+  allowedTo(['CUSTOMER']),
+  validate(Validation.createEvent),
+  Controller.createEvent
+);
+
+router.get(
+  '/events/my',
+  allowedTo(['CUSTOMER']),
+  Controller.myEvents
+);
+
+router.get(
+  '/events/open',
+  allowedTo(['VENDOR']),
+  validate(Validation.openEvents),
+  Controller.getOpenEvents
+);
+
+router.get(
+  '/repository/files',
+  allowedTo(['CUSTOMER', 'VENDOR', 'SUPER_ADMIN']),
+  validate(Validation.repositoryFiles),
+  Controller.repositoryFiles
+);
+
+router.get(
+  '/repository/files/:attachmentId/access',
+  allowedTo(['CUSTOMER', 'VENDOR', 'SUPER_ADMIN']),
+  Controller.repositoryFileAccess
+);
+
+router.patch(
+  '/repository/files/:attachmentId/status',
+  allowedTo(['CUSTOMER', 'VENDOR', 'SUPER_ADMIN']),
+  validate(Validation.updateRepositoryFileStatus),
+  Controller.updateRepositoryFileStatus
+);
+
+router.get(
+  '/payments',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.adminMarketplacePayments),
+  Controller.adminMarketplacePayments
+);
+
+router.get(
+  '/payments/:paymentId',
+  allowedTo(['CUSTOMER', 'VENDOR', 'SUPER_ADMIN']),
+  Controller.getPayment
+);
+
+router.post(
+  '/payments/:paymentId/checkout',
+  allowedTo(['CUSTOMER', 'VENDOR']),
+  validate(Validation.checkoutPayment),
+  Controller.checkoutPayment
+);
+
+router.post(
+  '/payments/:paymentId/call',
+  allowedTo(['CUSTOMER', 'VENDOR']),
+  Controller.initiateCallPayment
+);
+
+router.post(
+  '/payments/:paymentId/admin-mark-paid',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.adminMarkPaymentPaid),
+  Controller.adminMarkPaymentPaid
+);
+
+router.get(
+  '/events/:eventId',
+  allowedTo(['CUSTOMER', 'VENDOR', 'SUPER_ADMIN']),
+  Controller.getEvent
+);
+
+router.get(
+  '/events/:eventId/bids',
+  allowedTo(['CUSTOMER']),
+  Controller.getEventBids
+);
+
+router.post(
+  '/events/:eventId/bids',
+  allowedTo(['VENDOR']),
+  validate(Validation.submitBid),
+  Controller.submitBid
+);
+
+router.post(
+  '/events/:eventId/award',
+  allowedTo(['CUSTOMER']),
+  validate(Validation.awardBids),
+  Controller.awardBids
+);
+
+router.patch(
+  '/events/:eventId/status',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.updateEventStatus),
+  Controller.updateEventStatus
+);
+
+router.post(
+  '/events/:eventId/images',
+  allowedTo(['CUSTOMER', 'SUPER_ADMIN']),
+  MarketplaceUpload.single(),
+  Controller.addEventImage
+);
+
+router.delete(
+  '/events/:eventId/images/:imageId',
+  allowedTo(['CUSTOMER', 'SUPER_ADMIN']),
+  Controller.deleteEventImage
+);
+
+router.post(
+  '/bids/:bidId/attachments',
+  allowedTo(['VENDOR']),
+  MarketplaceUpload.single(),
+  Controller.addBidAttachment
+);
+
+router.delete(
+  '/bids/:bidId/attachments/:attachmentId',
+  allowedTo(['VENDOR']),
+  Controller.deleteBidAttachment
+);
+
+router.get(
+  '/bids/my',
+  allowedTo(['VENDOR']),
+  Controller.myBids
+);
+
+router.get(
+  '/bids/awarded',
+  allowedTo(['VENDOR']),
+  Controller.awardedBids
+);
+
+module.exports = router;

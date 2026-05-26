@@ -20,6 +20,7 @@ const couponRoutes = require('./coupon');
 const reviewRoutes = require('./review');
 const taxRatesRoutes = require('./tax-rates');
 const meatRoutes = require('./meat');
+const marketplaceRoutes = require('./marketplace');
 const authenticate = require('../../middleware/authenticate');
 const router = express.Router();
 
@@ -88,6 +89,9 @@ router.use('/tax-rates', taxRatesRoutes);
 
 /** meat-routes routes */
 router.use('/meat', meatRoutes);
+
+/** marketplace routes */
+router.use('/marketplace', marketplaceRoutes);
 
 /** Exports default route */
 module.exports = router;
