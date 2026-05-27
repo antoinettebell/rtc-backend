@@ -49,6 +49,14 @@ router.get(
   FoodTruckController.filterNewFT
 );
 
+/** [GET] /api/v1/public/near-me */
+router.get(
+  '/near-me',
+  authenticate,
+  validate(FoodTruckValidation.nearMe),
+  FoodTruckController.nearMe
+);
+
 /** [GET] /api/v1/public/global-search */
 router.get(
   '/global-search',
@@ -131,6 +139,20 @@ router.get('/add-ons', AddOnsController.list);
 
 /** [POST] /api/v1/public/marketplace/docusign/webhook */
 router.post('/marketplace/docusign/webhook', MarketplaceController.docusignWebhook);
+
+/** [GET] /api/v1/public/marketplace/events/:eventId */
+router.get(
+  '/marketplace/events/:eventId',
+  authenticate,
+  MarketplaceController.getPublicOpenEvent
+);
+
+/** [POST] /api/v1/public/marketplace/events/:eventId/ticket-click */
+router.post(
+  '/marketplace/events/:eventId/ticket-click',
+  authenticate,
+  MarketplaceController.trackPublicEventTicketClick
+);
 
 /** [GET] /api/v1/public/diet */
 router.get('/common-list', CommonDataListController.list);

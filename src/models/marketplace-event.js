@@ -22,6 +22,24 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    ticket_sales_enabled: {
+      type: Boolean,
+      default: false,
+    },
+    ticket_url: {
+      type: String,
+      default: null,
+    },
+    event_impression_count: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    ticket_click_count: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     event_type: {
       type: String,
       required: true,
@@ -37,6 +55,35 @@ const mSchema = mongoose.Schema(
     primary_service_style: {
       type: String,
       default: null,
+    },
+    plated_number_of_courses: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    plated_single_entree: {
+      type: Boolean,
+      default: false,
+    },
+    plated_choice_entrees: {
+      type: Boolean,
+      default: false,
+    },
+    plated_tableside_choice: {
+      type: Boolean,
+      default: false,
+    },
+    plated_bread_salad_dessert: {
+      type: Boolean,
+      default: false,
+    },
+    buffet_options: {
+      type: [String],
+      default: [],
+    },
+    food_truck_options: {
+      type: [String],
+      default: [],
     },
     event_date: {
       type: Date,
@@ -61,6 +108,36 @@ const mSchema = mongoose.Schema(
     },
     event_zip: {
       type: String,
+      default: null,
+    },
+    latitude: {
+      type: Number,
+      default: null,
+    },
+    longitude: {
+      type: Number,
+      default: null,
+    },
+    formatted_address: {
+      type: String,
+      default: null,
+    },
+    geocoded_address: {
+      type: String,
+      default: null,
+    },
+    place_id: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    geocoding_provider: {
+      type: String,
+      enum: ['GOOGLE_PLACES', null],
+      default: null,
+    },
+    geocoded_at: {
+      type: Date,
       default: null,
     },
     number_of_guests: {

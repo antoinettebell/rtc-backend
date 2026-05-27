@@ -2,6 +2,9 @@ const { FoodTruckModel: Model,UserRestrictDietModel } = require('../../models');
 const { BaseService } = require('../../common-services');
 const mongoose = require('mongoose');
 
+const escapeRegExp = (value = '') =>
+  value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 class FoodTruckService extends BaseService {
   constructor() {
     super(Model);
@@ -808,61 +811,81 @@ class FoodTruckService extends BaseService {
           .toLowerCase()
           .split(/\s+/)
           .filter((w) => w);
-        const regex = new RegExp(search, 'i');
-        const wordRegexes = words.map((w) => new RegExp(w, 'i'));
-  
-        extraLookup.push({
-          $lookup: {
-            from: 'diets',
-            localField: 'menu.diet',
-            foreignField: '_id',
-            as: 'diets',
-          },
-        });
-  
+        const regex = new RegExp(escapeRegExp(search.trim()), 'i');
+        const wordRegexes = [
+          ...new Set(
+            words.flatMap((word) => {
+              const variants = [word];
+              if (word.endsWith('s') && word.length > 3) {
+                variants.push(word.slice(0, -1));
+              } else if (word.length > 2) {
+                variants.push(`${word}s`);
+              }
+              return variants;
+            })
+          ),
+        ].map((word) => new RegExp(escapeRegExp(word), 'i'));
+
         const fullPhraseConditions = [
-          { name: regex },
-          { 'cuisine.name': regex },
           { 'menu.name': regex },
-          { 'diets.name': regex },
-          { 'user.firstName': regex },
-          { 'user.lastName': regex },
-
-          // { 'locations.title': regex },
-          // { 'locations.address': regex },
+          { 'menu.description': regex },
         ];
-  
+
         const wordConditions = wordRegexes.flatMap((r) => [
-          { name: r },
-          { 'cuisine.name': r },
           { 'menu.name': r },
-          { 'diets.name': r },
-          { 'user.firstName': r },
-          { 'user.lastName': r },
-
-
+          { 'menu.description': r },
         ]);
-  
-        q = { 
-          $or: [...fullPhraseConditions, ...wordConditions]
-         };
-  
+
+        const menuMatchConditions = [...fullPhraseConditions, ...wordConditions];
+        q = {
+          $or: menuMatchConditions,
+        };
+
         extraConf = [
           {
             $addFields: {
-              searchScore: {
-                $cond: [
-                  {
-                    $or: fullPhraseConditions.map((condition) => ({
-                      $regexMatch: {
-                        input: { $toString: Object.keys(condition)[0] },
-                        regex: regex,
+              matchedMenuItems: {
+                $filter: {
+                  input: '$menu',
+                  as: 'menuItem',
+                  cond: {
+                    $or: [
+                      {
+                        $regexMatch: {
+                          input: { $ifNull: ['$$menuItem.name', ''] },
+                          regex,
+                        },
                       },
-                    })),
+                      {
+                        $regexMatch: {
+                          input: { $ifNull: ['$$menuItem.description', ''] },
+                          regex,
+                        },
+                      },
+                      ...wordRegexes.flatMap((wordRegex) => [
+                        {
+                          $regexMatch: {
+                            input: { $ifNull: ['$$menuItem.name', ''] },
+                            regex: wordRegex,
+                          },
+                        },
+                        {
+                          $regexMatch: {
+                            input: { $ifNull: ['$$menuItem.description', ''] },
+                            regex: wordRegex,
+                          },
+                        },
+                      ]),
+                    ],
                   },
-                  2,
-                  1,
-                ],
+                },
+              },
+            },
+          },
+          {
+            $addFields: {
+              searchScore: {
+                $size: '$matchedMenuItems',
               },
             },
           },
@@ -975,9 +998,15 @@ class FoodTruckService extends BaseService {
               photos: 1,
               currentLocation: 1,
               featured: 1,
-              'menu._id': 1,
-              'menu.name': 1,
-              'user.firstName': 1,
+	              'menu._id': 1,
+	              'menu.name': 1,
+	              'menu.description': 1,
+	              'menu.imgUrls': 1,
+	              'matchedMenuItems._id': 1,
+	              'matchedMenuItems.name': 1,
+	              'matchedMenuItems.description': 1,
+	              'matchedMenuItems.imgUrls': 1,
+	              'user.firstName': 1,
               'user.lastName': 1,
               'menu.diet': 1,
               'diets._id': 1,

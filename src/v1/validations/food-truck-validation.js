@@ -70,6 +70,18 @@ module.exports = {
     }),
   },
 
+  nearMe: {
+    query: Joi.object({
+      userLat: Joi.string().required(),
+      userLong: Joi.string().required(),
+      search: Joi.string().allow(''),
+      distanceInMeters: Joi.number(),
+      type: Joi.string().valid('ALL', 'FOOD', 'EVENT', 'all', 'food', 'event'),
+      limit: Joi.number(),
+      page: Joi.number(),
+    }),
+  },
+
   globalSearch: {
     query: Joi.object({
       userLat: Joi.string().required(),

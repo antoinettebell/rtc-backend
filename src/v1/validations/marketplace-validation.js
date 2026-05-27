@@ -3,16 +3,43 @@ const { Joi } = require('express-validation');
 const marketplaceEventBody = {
   event_name: Joi.string().trim().required(),
   event_description: Joi.string().allow(null, ''),
+  ticket_sales_enabled: Joi.boolean().default(false),
+  ticket_url: Joi.string().uri().allow(null, ''),
   event_type: Joi.string().trim().required(),
   event_style: Joi.string().allow(null, ''),
   service_type: Joi.string().allow(null, ''),
   primary_service_style: Joi.string().allow(null, ''),
+  plated_number_of_courses: Joi.number().integer().min(0).allow(null, ''),
+  plated_single_entree: Joi.boolean().default(false),
+  plated_choice_entrees: Joi.boolean().default(false),
+  plated_tableside_choice: Joi.boolean().default(false),
+  plated_bread_salad_dessert: Joi.boolean().default(false),
+  buffet_options: Joi.array()
+    .items(Joi.string().valid('Full Menu', 'Self-Service', 'Staff-Service', 'Stations'))
+    .default([]),
+  food_truck_options: Joi.array()
+    .items(
+      Joi.string().valid(
+        'Full Menu',
+        'Full Menu Order Anything',
+        'Desserts Only',
+        'Desserts Only - Event Pays'
+      )
+    )
+    .default([]),
   event_date: Joi.date().required(),
   event_time: Joi.string().allow(null, ''),
   event_address: Joi.string().trim().required(),
   event_city: Joi.string().trim().required(),
   event_state: Joi.string().trim().required(),
   event_zip: Joi.string().allow(null, ''),
+  latitude: Joi.number().min(-90).max(90).allow(null, ''),
+  longitude: Joi.number().min(-180).max(180).allow(null, ''),
+  formatted_address: Joi.string().allow(null, ''),
+  geocoded_address: Joi.string().allow(null, ''),
+  place_id: Joi.string().allow(null, ''),
+  geocoding_provider: Joi.string().valid('GOOGLE_PLACES').allow(null, ''),
+  geocoded_at: Joi.date().allow(null, ''),
   number_of_guests: Joi.number().integer().min(1).required(),
   number_of_vendors_needed: Joi.number().integer().min(1).required(),
   power_required: Joi.array().items(Joi.string()).default([]),

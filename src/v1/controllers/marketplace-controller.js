@@ -29,6 +29,36 @@ const COORDINATOR_AWARD_FEE_RATE = 0.035;
 
 const roundMoney = (value) => Number((Number(value || 0)).toFixed(2));
 
+const normalizeMarketplaceEventLocation = (body) => {
+  const latitude =
+    body.latitude === '' || body.latitude == null ? null : Number(body.latitude);
+  const longitude =
+    body.longitude === '' || body.longitude == null ? null : Number(body.longitude);
+  const hasCoordinates =
+    Number.isFinite(latitude) && Number.isFinite(longitude);
+
+  return {
+    ...body,
+    latitude: hasCoordinates ? latitude : null,
+    longitude: hasCoordinates ? longitude : null,
+    formatted_address: body.formatted_address || body.event_address,
+    geocoded_address: body.geocoded_address || body.formatted_address || null,
+    place_id: body.place_id || null,
+    geocoding_provider: hasCoordinates
+      ? body.geocoding_provider || 'GOOGLE_PLACES'
+      : null,
+    geocoded_at: hasCoordinates ? body.geocoded_at || new Date() : null,
+  };
+};
+
+const normalizeMarketplaceVendorCount = (body) => {
+  if (body.primary_service_style === 'Food Truck') {
+    return Math.max(1, Math.ceil(Number(body.number_of_guests || 0) / 75));
+  }
+
+  return Math.max(1, Number(body.number_of_vendors_needed || 1));
+};
+
 const normalizeOpaquePaymentData = (paymentData) => {
   if (!paymentData || typeof paymentData !== 'object') {
     return {
@@ -607,7 +637,8 @@ exports.createEvent = async (req, res, next) => {
     await assertCustomerEventCoordinator(req.user._id);
 
     const marketplaceEvent = await MarketplaceEventService.create({
-      ...req.body,
+      ...normalizeMarketplaceEventLocation(req.body),
+      number_of_vendors_needed: normalizeMarketplaceVendorCount(req.body),
       customer_user_id: req.user._id,
       status: req.body.status || 'DRAFT',
     });
@@ -706,6 +737,51 @@ exports.getOpenEvents = async (req, res, next) => {
   }
 };
 
+exports.getPublicOpenEvent = async (req, res, next) => {
+  try {
+    const event = await MarketplaceEventService.update(
+      { event_id: req.params.eventId, status: 'OPEN' },
+      { $inc: { event_impression_count: 1 } },
+      { directApply: true, getNew: true, lean: true }
+    );
+
+    if (!event) {
+      throw buildError('Open marketplace event not found', 404);
+    }
+
+    const marketplaceEvent = await MarketplaceEventService.getWithImages(
+      event.event_id
+    );
+
+    return res.data({ marketplaceEvent }, 'Open marketplace event');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.trackPublicEventTicketClick = async (req, res, next) => {
+  try {
+    const marketplaceEvent = await MarketplaceEventService.update(
+      {
+        event_id: req.params.eventId,
+        status: 'OPEN',
+        ticket_sales_enabled: true,
+        ticket_url: { $nin: [null, ''] },
+      },
+      { $inc: { ticket_click_count: 1 } },
+      { directApply: true, getNew: true, lean: true }
+    );
+
+    if (!marketplaceEvent) {
+      throw buildError('Open ticketed marketplace event not found', 404);
+    }
+
+    return res.data({ marketplaceEvent }, 'Marketplace ticket click tracked');
+  } catch (e) {
+    return next(e);
+  }
+};
+
 exports.getEventBids = async (req, res, next) => {
   try {
     await getOwnedEvent(req.params.eventId, req.user._id);
@@ -747,6 +823,13 @@ exports.submitBid = async (req, res, next) => {
 
     if (req.body.nda_required && !req.body.nda_acknowledged) {
       throw buildError('NDA acknowledgment is required for this bid', 400);
+    }
+
+    if (event.alcohol_required && !req.body.liquor_license_confirmed) {
+      throw buildError(
+        'Liquor license confirmation is required for this event',
+        400
+      );
     }
 
     const existingBid = await MarketplaceBidService.getByData(
@@ -870,7 +953,7 @@ exports.awardBids = async (req, res, next) => {
 
     if (selectedBidIds.length > event.number_of_vendors_needed) {
       throw buildError(
-        'Selected vendor count cannot exceed vendors needed',
+        `You can only award up to ${event.number_of_vendors_needed} vendor(s) for this event.`,
         400
       );
     }

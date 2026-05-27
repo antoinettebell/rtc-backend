@@ -7,15 +7,122 @@ const {
   BankDetailService,
   PlanService,
   EmployeeSessionService,
+  MarketplaceEventService,
+  MarketplaceEventImageService,
 } = require('../services');
 const { Joi } = require('express-validation');
 const MailHelper = require('../../helper/mail-helper');
+const Utils = require('../../helper/utils');
 const {
   assertNewDishHighlightAllowed,
   assertSocialMediaLinksAllowed,
   normalizeVendorPlan,
 } = require('../../helper/vendor-plan-helper');
 const entityName = 'FoodTruck';
+
+const toNumberOrNull = (value) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const getMarketplaceEventAddress = (event) =>
+  event.formatted_address ||
+  event.geocoded_address ||
+  [event.event_address, event.event_city, event.event_state, event.event_zip]
+    .filter(Boolean)
+    .join(', ');
+
+const getFirstImageUrl = (images = []) => images.find(Boolean)?.image_url || null;
+
+const getFoodPreview = (truck, matchedMenuItem) =>
+  matchedMenuItem?.description ||
+  matchedMenuItem?.name ||
+  truck.cuisine?.map((item) => item.name).filter(Boolean).join(', ') ||
+  truck.name;
+
+const normalizeNearMeFood = (truck) => {
+  const matchedMenuItem = truck.matchedMenuItems?.[0] || truck.menu?.[0] || null;
+  const imageUrl =
+    matchedMenuItem?.imgUrls?.[0] || truck.logo || truck.photos?.[0] || null;
+  const location = truck.location || null;
+
+  return {
+    type: 'FOOD',
+    marker_type: 'TRUCK',
+    id: matchedMenuItem?._id?.toString() || truck._id?.toString(),
+    food_truck_id: truck._id,
+    menu_item_id: matchedMenuItem?._id || null,
+    title: matchedMenuItem?.name || truck.name,
+    name: matchedMenuItem?.name || truck.name,
+    food_truck_name: truck.name,
+    description: getFoodPreview(truck, matchedMenuItem),
+    preview: getFoodPreview(truck, matchedMenuItem),
+    location,
+    address: location?.address || location?.title || '',
+    latitude: toNumberOrNull(location?.lat),
+    longitude: toNumberOrNull(location?.long),
+    image_url: imageUrl,
+    distance: truck.distanceInMeters ?? null,
+    distanceInMeters: truck.distanceInMeters ?? null,
+    raw: truck,
+  };
+};
+
+const normalizeNearMeEvent = (event, imagesByEventId, userLat, userLong) => {
+  const latitude = toNumberOrNull(event.latitude);
+  const longitude = toNumberOrNull(event.longitude);
+  const hasCoordinates = latitude !== null && longitude !== null;
+  const distance =
+    hasCoordinates && userLat !== null && userLong !== null
+      ? Utils.getDistanceInMeters(userLat, userLong, latitude, longitude)
+      : null;
+
+  return {
+    type: 'EVENT',
+    marker_type: 'TENT',
+    id: event.event_id,
+    event_id: event.event_id,
+    title: event.event_name,
+    name: event.event_name,
+    description: event.event_description || event.event_type || '',
+    preview: event.event_description || event.event_type || '',
+    event_type: event.event_type,
+    event_date: event.event_date,
+    event_time: event.event_time,
+    location: getMarketplaceEventAddress(event),
+    address: getMarketplaceEventAddress(event),
+    event_city: event.event_city,
+    event_state: event.event_state,
+    event_zip: event.event_zip,
+    latitude,
+    longitude,
+    image_url: getFirstImageUrl(imagesByEventId[event.event_id] || []),
+    distance,
+    distanceInMeters: distance,
+    raw: event,
+  };
+};
+
+const matchesEventSearch = (event, search) => {
+  const query = search?.trim().toLowerCase();
+  if (!query) return true;
+
+  const words = query.split(/\s+/).filter(Boolean);
+  const haystack = [
+    event.event_name,
+    event.event_description,
+    event.event_type,
+    event.event_address,
+    event.event_city,
+    event.event_state,
+    event.event_zip,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  return haystack.includes(query) || words.some((word) => haystack.includes(word));
+};
 
 const normalizeLocations = (incomingLocations, existingLocations = []) => {
   const existingById = {};
@@ -848,6 +955,111 @@ exports.filterNewFT = async (req, res, next) => {
         totalPages: total < limit ? 1 : Math.ceil(total / limit),
       },
       `${entityName} items`
+    );
+  } catch (e) {
+    console.log(e);
+    return next(e);
+  }
+};
+
+exports.nearMe = async (req, res, next) => {
+  try {
+    const {
+      query: {
+        limit = 50,
+        page = 1,
+        search,
+        userLat,
+        userLong,
+        distanceInMeters,
+        type = 'ALL',
+      },
+      user,
+    } = req;
+
+    const normalizedType = String(type || 'ALL').toUpperCase();
+    const includeFood = normalizedType === 'ALL' || normalizedType === 'FOOD';
+    const includeEvents = normalizedType === 'ALL' || normalizedType === 'EVENT';
+    const numericLimit = Number(limit || 50);
+    const numericPage = Number(page || 1);
+    const numericUserLat = toNumberOrNull(userLat);
+    const numericUserLong = toNumberOrNull(userLong);
+    const numericDistance = toNumberOrNull(distanceInMeters);
+
+    const [foodResult, eventList] = await Promise.all([
+      includeFood
+        ? Service.getWithFiltersNew(
+            user,
+            null,
+            null,
+            userLat,
+            userLong,
+            numericLimit,
+            numericPage,
+            search,
+            distanceInMeters,
+            true,
+            null
+          )
+        : { data: [], total: 0 },
+      includeEvents
+        ? MarketplaceEventService.getByData(
+            { status: 'OPEN' },
+            {
+              sort: { event_date: 1, event_time: 1, created_at: -1 },
+              lean: true,
+            }
+          )
+        : [],
+    ]);
+
+    const eventIds = eventList.map((event) => event.event_id);
+    const eventImages = eventIds.length
+      ? await MarketplaceEventImageService.getByData(
+          { event_id: { $in: eventIds }, status: 'ACTIVE' },
+          { sort: { created_at: 1 }, lean: true }
+        )
+      : [];
+    const imagesByEventId = eventImages.reduce((acc, image) => {
+      if (!acc[image.event_id]) acc[image.event_id] = [];
+      acc[image.event_id].push(image);
+      return acc;
+    }, {});
+
+    const foodItems = (foodResult?.data || []).map(normalizeNearMeFood);
+    const eventItems = eventList
+      .filter((event) => matchesEventSearch(event, search))
+      .map((event) =>
+        normalizeNearMeEvent(
+          event,
+          imagesByEventId,
+          numericUserLat,
+          numericUserLong
+        )
+      )
+      .filter((event) => {
+        if (!numericDistance || event.distance === null) return true;
+        return event.distance <= numericDistance;
+      });
+
+    const nearMeList = [...foodItems, ...eventItems]
+      .sort((a, b) => {
+        const aDistance = a.distance ?? Number.POSITIVE_INFINITY;
+        const bDistance = b.distance ?? Number.POSITIVE_INFINITY;
+        return aDistance - bDistance;
+      })
+      .slice(0, numericLimit);
+
+    return res.data(
+      {
+        nearMeList,
+        foodtruckList: foodItems,
+        marketplaceEventList: eventItems,
+        total: nearMeList.length,
+        page: numericPage,
+        totalPages: 1,
+      },
+      'Near Me items'
     );
   } catch (e) {
     console.log(e);
