@@ -3,7 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 
 const mSchema = mongoose.Schema(
   {
-    bid_id: {
+    application_id: {
       type: String,
       default: uuidv4,
       unique: true,
@@ -25,20 +25,25 @@ const mSchema = mongoose.Schema(
       required: true,
       index: true,
     },
-    price_per_guest: {
-      type: Number,
-      default: null,
-      min: 0,
-    },
-    average_price_per_meal: {
-      type: Number,
-      default: null,
-      min: 0,
-    },
-    full_bid_amount: {
-      type: Number,
+    business_name: {
+      type: String,
       required: true,
-      min: 0,
+    },
+    contact_name: {
+      type: String,
+      required: true,
+    },
+    phone: {
+      type: String,
+      required: true,
+    },
+    email: {
+      type: String,
+      required: true,
+    },
+    food_type_cuisine: {
+      type: String,
+      default: null,
     },
     menu_description: {
       type: String,
@@ -104,62 +109,17 @@ const mSchema = mongoose.Schema(
       type: Date,
       default: null,
     },
-    agreement_provider: {
-      type: String,
-      enum: ['NONE', 'DOCUSIGN'],
-      default: 'NONE',
-    },
-    agreement_status: {
-      type: String,
-      enum: [
-        'NOT_REQUIRED',
-        'ACKNOWLEDGED',
-        'PENDING_SIGNATURE',
-        'SENT',
-        'VIEWED',
-        'SIGNED',
-        'DECLINED',
-        'VOIDED',
-        'ERROR',
-      ],
-      default: 'NOT_REQUIRED',
-    },
-    agreement_envelope_id: {
-      type: String,
-      default: null,
-    },
-    signed_document_url: {
-      type: String,
-      default: null,
-    },
-    agreement_sent_at: {
-      type: Date,
-      default: null,
-    },
-    agreement_signed_at: {
-      type: Date,
-      default: null,
-    },
-    signer_name: {
-      type: String,
-      default: null,
-    },
-    signer_email: {
-      type: String,
-      default: null,
-    },
-    agreement_error_message: {
-      type: String,
-      default: null,
-    },
-    bid_status: {
+    application_status: {
       type: String,
       enum: [
         'DRAFT',
         'SUBMITTED',
         'UNDER_REVIEW',
-        'AWARDED',
-        'NOT_AWARDED',
+        'ACCEPTED',
+        'PAYMENT_DUE',
+        'PAID',
+        'CONFIRMED',
+        'NOT_SELECTED',
         'WITHDRAWN',
       ],
       default: 'DRAFT',
@@ -180,6 +140,14 @@ const mSchema = mongoose.Schema(
       type: Date,
       default: null,
     },
+    paid_at: {
+      type: Date,
+      default: null,
+    },
+    transaction_id: {
+      type: String,
+      default: null,
+    },
   },
   {
     timestamps: {
@@ -189,4 +157,4 @@ const mSchema = mongoose.Schema(
   }
 );
 
-module.exports = new mongoose.model('marketplace-bids', mSchema);
+module.exports = new mongoose.model('marketplace-applications', mSchema);

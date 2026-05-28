@@ -1,6 +1,7 @@
 const fs = require('fs');
 const {
   FoodTruckService,
+  MarketplaceApplicationService,
   MarketplaceAttachmentService,
   MarketplaceAgreementAuditService,
   MarketplaceBidService,
@@ -26,6 +27,7 @@ const buildError = (message, code = 400) => {
 
 const MARKETPLACE_PHONE_NUMBER = '800-410-7053';
 const COORDINATOR_AWARD_FEE_RATE = 0.035;
+const VENDOR_EVENT_PROCESSING_RATE = 0.02;
 
 const roundMoney = (value) => Number((Number(value || 0)).toFixed(2));
 
@@ -118,6 +120,14 @@ const BID_ATTACHMENT_TYPES = {
   },
   BID_IMAGE: {
     folder: 'marketplace/bids/images',
+    allowedMimeTypes: ['image/png', 'image/jpg', 'image/jpeg', 'image/heic'],
+  },
+  APPLICATION_MENU_PDF: {
+    folder: 'marketplace/applications/menu-pdfs',
+    allowedMimeTypes: ['application/pdf'],
+  },
+  APPLICATION_IMAGE: {
+    folder: 'marketplace/applications/images',
     allowedMimeTypes: ['image/png', 'image/jpg', 'image/jpeg', 'image/heic'],
   },
   PERMIT_LICENSE: {
@@ -321,6 +331,19 @@ const getOwnedBid = async (bidId, userId) => {
   return bid;
 };
 
+const getOwnedApplication = async (applicationId, userId) => {
+  const application = await MarketplaceApplicationService.getByData(
+    { application_id: applicationId, vendor_user_id: userId },
+    { singleResult: true }
+  );
+
+  if (!application) {
+    throw buildError('Marketplace application not found', 404);
+  }
+
+  return application;
+};
+
 const getEventForUser = async (eventId, user) => {
   if (user.userType === 'CUSTOMER') {
     return getOwnedEvent(eventId, user._id);
@@ -394,6 +417,29 @@ const attachEventsToBids = async (bids = []) => {
   }));
 };
 
+const attachEventsToApplications = async (applications = []) => {
+  const eventIds = [
+    ...new Set(applications.map((item) => item.event_id).filter(Boolean)),
+  ];
+  if (!eventIds.length) {
+    return applications;
+  }
+
+  const events = await MarketplaceEventService.getByData(
+    { event_id: { $in: eventIds } },
+    { lean: true }
+  );
+  const eventById = events.reduce((acc, event) => {
+    acc[event.event_id] = event;
+    return acc;
+  }, {});
+
+  return applications.map((application) => ({
+    ...application,
+    marketplaceEvent: eventById[application.event_id] || null,
+  }));
+};
+
 const attachFilesToBids = async (bids = []) => {
   const bidIds = [...new Set(bids.map((bid) => bid.bid_id).filter(Boolean))];
   if (!bidIds.length) {
@@ -416,6 +462,30 @@ const attachFilesToBids = async (bids = []) => {
   }));
 };
 
+const attachFilesToApplications = async (applications = []) => {
+  const applicationIds = [
+    ...new Set(applications.map((item) => item.application_id).filter(Boolean)),
+  ];
+  if (!applicationIds.length) {
+    return applications;
+  }
+
+  const attachments = await MarketplaceAttachmentService.getByData(
+    { application_id: { $in: applicationIds }, status: 'ACTIVE' },
+    { sort: { created_at: 1 }, lean: true }
+  );
+  const attachmentsByApplicationId = attachments.reduce((acc, attachment) => {
+    acc[attachment.application_id] = acc[attachment.application_id] || [];
+    acc[attachment.application_id].push(attachment);
+    return acc;
+  }, {});
+
+  return applications.map((application) => ({
+    ...application,
+    attachments: attachmentsByApplicationId[application.application_id] || [],
+  }));
+};
+
 const findActiveMarketplacePayment = async (query) =>
   MarketplacePaymentService.getByData(
     {
@@ -426,7 +496,27 @@ const findActiveMarketplacePayment = async (query) =>
   );
 
 const finalizePaidVendorPayment = async (payment) => {
-  if (payment.payment_type !== 'VENDOR_EVENT_FEE' || !payment.bid_id) {
+  if (payment.payment_type !== 'VENDOR_EVENT_FEE') {
+    return null;
+  }
+
+  if (payment.application_id) {
+    const application = await MarketplaceApplicationService.update(
+      { application_id: payment.application_id },
+      {
+        application_status: 'PAID',
+        payment_id: payment.payment_id,
+        payment_status: 'PAID',
+        paid_at: new Date(),
+        transaction_id: payment.processor_transaction_id || null,
+      },
+      { getNew: true }
+    );
+
+    return { marketplaceApplication: application };
+  }
+
+  if (!payment.bid_id) {
     return null;
   }
 
@@ -706,7 +796,7 @@ exports.getOpenEvents = async (req, res, next) => {
 
     await getVendorMarketplaceFoodTruck(req.user._id);
 
-    const marketplaceEventList = await MarketplaceEventService.getByData(
+    const openEvents = await MarketplaceEventService.getByData(
       { status: 'OPEN' },
       {
         paging: {
@@ -716,6 +806,9 @@ exports.getOpenEvents = async (req, res, next) => {
         sort: { event_close_date: 1, created_at: -1 },
         lean: true,
       }
+    );
+    const marketplaceEventList = await MarketplaceEventService.attachImages(
+      openEvents
     );
 
     const total = await MarketplaceEventService.getCount({ status: 'OPEN' });
@@ -915,6 +1008,98 @@ exports.myBids = async (req, res, next) => {
     );
 
     return res.data({ marketplaceBidList }, 'Marketplace bids');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.submitApplication = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only vendors can submit marketplace applications', 403);
+    }
+
+    const foodTruck = await getVendorMarketplaceFoodTruck(req.user._id);
+    const event = await MarketplaceEventService.getByData(
+      { event_id: req.params.eventId, status: 'OPEN' },
+      { singleResult: true }
+    );
+
+    if (!event) {
+      throw buildError('Open marketplace event not found', 404);
+    }
+
+    if (roundMoney(event.vendor_fee || 0) <= 0) {
+      throw buildError('This event uses the bid flow, not applications', 400);
+    }
+
+    if (req.body.nda_required && !req.body.nda_acknowledged) {
+      throw buildError('NDA acknowledgment is required for this application', 400);
+    }
+
+    if (event.alcohol_required && !req.body.liquor_license_confirmed) {
+      throw buildError(
+        'Liquor license confirmation is required for this event',
+        400
+      );
+    }
+
+    const existingApplication = await MarketplaceApplicationService.getByData(
+      {
+        event_id: req.params.eventId,
+        vendor_user_id: req.user._id,
+        application_status: { $nin: ['WITHDRAWN'] },
+      },
+      { singleResult: true }
+    );
+
+    if (existingApplication) {
+      throw buildError('An application has already been submitted for this event', 409);
+    }
+
+    const marketplaceApplication = await MarketplaceApplicationService.create({
+      ...req.body,
+      event_id: req.params.eventId,
+      vendor_user_id: req.user._id,
+      food_truck_id: foodTruck._id,
+      nda_acknowledged_at: req.body.nda_acknowledged ? new Date() : null,
+      application_status: req.body.application_status || 'SUBMITTED',
+      payment_status: 'NOT_REQUIRED',
+      submitted_at:
+        (req.body.application_status || 'SUBMITTED') === 'SUBMITTED'
+          ? new Date()
+          : null,
+    });
+
+    return res.data(
+      { marketplaceApplication },
+      'Marketplace application submitted'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.myApplications = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only vendors can view marketplace applications', 403);
+    }
+
+    await getVendorMarketplaceFoodTruck(req.user._id);
+
+    const applications = await MarketplaceApplicationService.getByData(
+      { vendor_user_id: req.user._id },
+      { sort: { submitted_at: -1, created_at: -1 }, lean: true }
+    );
+    const marketplaceApplicationList = await attachFilesToApplications(
+      await attachEventsToApplications(applications)
+    );
+
+    return res.data(
+      { marketplaceApplicationList },
+      'Marketplace applications'
+    );
   } catch (e) {
     return next(e);
   }
@@ -1183,6 +1368,7 @@ exports.checkoutPayment = async (req, res, next) => {
     marketplacePayment.payment_status = 'PAID';
     marketplacePayment.processor_transaction_id =
       chargeResp.transactionId || chargeResp?.fullResponse?.transId || null;
+    marketplacePayment.paid_at = new Date();
     await marketplacePayment.save();
     await createPaymentAudit(marketplacePayment, req, 'CHECKOUT_PAID');
 
@@ -1292,6 +1478,7 @@ exports.adminMarkPaymentPaid = async (req, res, next) => {
     marketplacePayment.manually_marked_paid = true;
     marketplacePayment.marked_paid_by_admin_user_id = req.user._id;
     marketplacePayment.marked_paid_at = new Date();
+    marketplacePayment.paid_at = new Date();
     marketplacePayment.manual_payment_reference =
       req.body.manual_payment_reference || null;
     marketplacePayment.manual_payment_note = req.body.manual_payment_note || null;
@@ -1567,6 +1754,161 @@ exports.addBidAttachment = async (req, res, next) => {
     if (req.file?.path) {
       fs.unlink(req.file.path, () => {});
     }
+    return next(e);
+  }
+};
+
+exports.addApplicationAttachment = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only vendors can upload application attachments', 403);
+    }
+
+    await getVendorMarketplaceFoodTruck(req.user._id);
+    const application = await getOwnedApplication(
+      req.params.applicationId,
+      req.user._id
+    );
+    const attachmentType = req.body.attachment_type;
+    const config = validateAttachmentFile(req.file, attachmentType);
+
+    const { url, key } = await addObjectWithKey(req.file, config.folder);
+    fs.unlink(req.file.path, () => {});
+
+    const marketplaceAttachment = await MarketplaceAttachmentService.create({
+      event_id: application.event_id,
+      application_id: application.application_id,
+      attachment_type: attachmentType,
+      file_url: url,
+      file_key: key,
+      original_name: req.file.originalname,
+      mime_type: req.file.mimetype,
+      size_bytes: req.file.size,
+      uploaded_by_user_id: req.user._id,
+    });
+
+    if (attachmentType === 'APPLICATION_MENU_PDF') {
+      application.menu_pdf_url = url;
+      application.menu_pdf_key = key;
+    }
+
+    if (attachmentType === 'APPLICATION_IMAGE') {
+      application.image_urls = [...(application.image_urls || []), url];
+      application.image_keys = [...(application.image_keys || []), key];
+    }
+
+    if (attachmentType === 'PERMIT_LICENSE') {
+      application.permit_license_urls = [
+        ...(application.permit_license_urls || []),
+        url,
+      ];
+      application.permit_license_keys = [
+        ...(application.permit_license_keys || []),
+        key,
+      ];
+    }
+
+    if (attachmentType === 'AGREEMENT_DOCUMENT') {
+      application.agreement_document_url = url;
+      application.agreement_document_key = key;
+    }
+
+    await application.save();
+
+    return res.data(
+      { marketplaceAttachment, marketplaceApplication: application },
+      'Marketplace application attachment uploaded'
+    );
+  } catch (e) {
+    if (req.file?.path) {
+      fs.unlink(req.file.path, () => {});
+    }
+    return next(e);
+  }
+};
+
+exports.createApplicationVendorFeePayment = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only vendors can create application payments', 403);
+    }
+
+    const foodTruck = await getVendorMarketplaceFoodTruck(req.user._id);
+    const application = await getOwnedApplication(
+      req.params.applicationId,
+      req.user._id
+    );
+    const event = await MarketplaceEventService.getByData(
+      { event_id: application.event_id },
+      { singleResult: true, lean: true }
+    );
+
+    if (!event || roundMoney(event.vendor_fee || 0) <= 0) {
+      throw buildError('Vendor fee payment is not available for this event', 400);
+    }
+
+    if (!['ACCEPTED', 'PAYMENT_DUE'].includes(application.application_status)) {
+      throw buildError(
+        'Payment is only available after your application is accepted by the event coordinator.',
+        403
+      );
+    }
+
+    if (
+      application.payment_status === 'PAID' ||
+      (application.transaction_id && application.payment_status === 'PAID')
+    ) {
+      throw buildError('This vendor fee has already been paid', 409);
+    }
+
+    const existingPayment = await findActiveMarketplacePayment({
+      application_id: application.application_id,
+      payment_type: 'VENDOR_EVENT_FEE',
+      payer_user_id: req.user._id,
+    });
+
+    if (existingPayment) {
+      return res.data(
+        { marketplacePayment: existingPayment, marketplaceApplication: application },
+        'Marketplace vendor fee payment'
+      );
+    }
+
+    const vendorFee = roundMoney(event.vendor_fee || 0);
+    const rtcEventProcessingFee = roundMoney(
+      vendorFee * VENDOR_EVENT_PROCESSING_RATE
+    );
+    const totalDue = roundMoney(vendorFee + rtcEventProcessingFee);
+
+    const marketplacePayment = await MarketplacePaymentService.create({
+      event_id: event.event_id,
+      application_id: application.application_id,
+      payer_user_id: req.user._id,
+      payer_type: 'VENDOR',
+      food_truck_id: foodTruck._id,
+      payment_type: 'VENDOR_EVENT_FEE',
+      base_amount: vendorFee,
+      fee_rate: VENDOR_EVENT_PROCESSING_RATE,
+      fee_amount: rtcEventProcessingFee,
+      total_amount: totalDue,
+      coordinator_payout_amount: vendorFee,
+      payment_status: 'PENDING',
+    });
+
+    application.payment_id = marketplacePayment.payment_id;
+    application.payment_status = 'PENDING';
+    if (application.application_status === 'ACCEPTED') {
+      application.application_status = 'PAYMENT_DUE';
+    }
+    await application.save();
+
+    await createPaymentAudit(marketplacePayment, req, 'CREATE');
+
+    return res.data(
+      { marketplacePayment, marketplaceApplication: application },
+      'Marketplace vendor fee payment created'
+    );
+  } catch (e) {
     return next(e);
   }
 };

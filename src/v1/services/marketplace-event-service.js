@@ -30,6 +30,31 @@ class MarketplaceEventService extends BaseService {
     };
   }
 
+  async attachImages(events = []) {
+    const eventIds = events.map((event) => event.event_id).filter(Boolean);
+    if (!eventIds.length) {
+      return events;
+    }
+
+    const images = await MarketplaceEventImageModel.find({
+      event_id: { $in: eventIds },
+      status: 'ACTIVE',
+    })
+      .sort({ created_at: 1 })
+      .lean();
+
+    const imagesByEventId = images.reduce((acc, image) => {
+      acc[image.event_id] = acc[image.event_id] || [];
+      acc[image.event_id].push(image);
+      return acc;
+    }, {});
+
+    return events.map((event) => ({
+      ...event,
+      images: imagesByEventId[event.event_id] || [],
+    }));
+  }
+
   async getMyEvents(customer_user_id) {
     const events = await Model.find({ customer_user_id })
       .sort({ created_at: -1 })

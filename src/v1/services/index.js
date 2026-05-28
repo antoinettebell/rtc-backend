@@ -93,6 +93,7 @@ exports.MarketplaceEventImageService = require('./marketplace-event-image-servic
 
 /** Define marketplace bid service */
 exports.MarketplaceBidService = require('./marketplace-bid-service');
+exports.MarketplaceApplicationService = require('./marketplace-application-service');
 exports.MarketplaceAttachmentService = require('./marketplace-attachment-service');
 exports.MarketplaceFileAuditService = require('./marketplace-file-audit-service');
 exports.MarketplacePaymentService = require('./marketplace-payment-service');

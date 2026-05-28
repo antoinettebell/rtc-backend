@@ -65,7 +65,7 @@ const VENDOR_PLAN_TIERS = {
       'All Platinum features',
       'Ability to highlight dishes',
       'Tap to Pay enabled',
-      'Accept Event Bookings add-on available',
+      'Event Marketplace Access included',
       'Customizable reporting',
       '4 media/social/website links',
     ],
@@ -76,7 +76,7 @@ const VENDOR_PLAN_TIERS = {
       employeeWalkUpPos: true,
       walkUpPosPaymentMethods: ['CASH', 'TAP_TO_PAY'],
       tapToPay: true,
-      eventMarketplace: false,
+      eventMarketplace: true,
       maxSocialMediaLinks: 4,
       newDishHighlight: true,
     },
@@ -123,8 +123,19 @@ const hasEventMarketplaceAddOn = (foodTruck) =>
   Array.isArray(foodTruck?.addOns) &&
   foodTruck.addOns.some((addOn) => /event/i.test(addOn?.name || ''));
 
-const canAccessEventMarketplace = (foodTruckOrPlan) =>
-  hasEventMarketplaceAddOn(foodTruckOrPlan);
+const canAccessEventMarketplace = (foodTruckOrPlan) => {
+  const plan = foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan;
+  const tier = getVendorPlanTier(plan);
+  const source = typeof plan?.toObject === 'function' ? plan.toObject() : plan;
+  const planText = `${source?.slug || ''} ${source?.name || ''} ${source?.title || ''}`;
+  return (
+    tier?.capabilities?.eventMarketplace ||
+    tier?.rate === 5.5 ||
+    /elite/i.test(planText) ||
+    Number(source?.rate) === 5.5 ||
+    hasEventMarketplaceAddOn(foodTruckOrPlan)
+  );
+};
 
 const getPayoutSpeed = (foodTruckOrPlan) =>
   getVendorPlanCapabilities(

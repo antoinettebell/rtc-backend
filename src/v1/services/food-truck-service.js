@@ -1042,11 +1042,32 @@ class FoodTruckService extends BaseService {
     return [
       {
         $addFields: {
+          currentLocationString: {
+            $convert: {
+              input: '$currentLocation',
+              to: 'string',
+              onError: '',
+              onNull: '',
+            },
+          },
           locationIdExists: {
             $and: [
               { $ne: ['$currentLocation', null] },
               { $ne: ['$currentLocation', ''] },
               { $gt: [{ $type: '$currentLocation' }, 'missing'] },
+              {
+                $regexMatch: {
+                  input: {
+                    $convert: {
+                      input: '$currentLocation',
+                      to: 'string',
+                      onError: '',
+                      onNull: '',
+                    },
+                  },
+                  regex: /^[a-fA-F0-9]{24}$/,
+                },
+              },
             ],
           },
         },
@@ -1080,14 +1101,28 @@ class FoodTruckService extends BaseService {
           locLat: {
             $cond: [
               '$locationIdExists',
-              { $toDouble: '$matchedLocation.lat' },
+              {
+                $convert: {
+                  input: '$matchedLocation.lat',
+                  to: 'double',
+                  onError: null,
+                  onNull: null,
+                },
+              },
               null,
             ],
           },
           locLong: {
             $cond: [
               '$locationIdExists',
-              { $toDouble: '$matchedLocation.long' },
+              {
+                $convert: {
+                  input: '$matchedLocation.long',
+                  to: 'double',
+                  onError: null,
+                  onNull: null,
+                },
+              },
               null,
             ],
           },
@@ -1213,16 +1248,44 @@ class FoodTruckService extends BaseService {
                   input: '$locations',
                   as: 'loc',
                   in: {
-                    lat: { $toDouble: '$$loc.lat' },
-                    long: { $toDouble: '$$loc.long' },
+                    lat: {
+                      $convert: {
+                        input: '$$loc.lat',
+                        to: 'double',
+                        onError: null,
+                        onNull: null,
+                      },
+                    },
+                    long: {
+                      $convert: {
+                        input: '$$loc.long',
+                        to: 'double',
+                        onError: null,
+                        onNull: null,
+                      },
+                    },
                     location: '$$loc',
                     distance: {
                       $let: {
                         vars: {
                           lat1: userLat,
                           lon1: userLong,
-                          lat2: { $toDouble: '$$loc.lat' },
-                          lon2: { $toDouble: '$$loc.long' },
+                          lat2: {
+                            $convert: {
+                              input: '$$loc.lat',
+                              to: 'double',
+                              onError: null,
+                              onNull: null,
+                            },
+                          },
+                          lon2: {
+                            $convert: {
+                              input: '$$loc.long',
+                              to: 'double',
+                              onError: null,
+                              onNull: null,
+                            },
+                          },
                           degToRad: 0.017453292519943295,
                         },
                         in: {

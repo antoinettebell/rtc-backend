@@ -18,6 +18,11 @@ const mSchema = mongoose.Schema(
       default: null,
       index: true,
     },
+    application_id: {
+      type: String,
+      default: null,
+      index: true,
+    },
     selected_bid_ids: {
       type: [String],
       default: [],
@@ -70,6 +75,11 @@ const mSchema = mongoose.Schema(
       required: true,
       min: 0,
     },
+    coordinator_payout_amount: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
     payment_method: {
       type: String,
       enum: ['APPLE_PAY', 'GOOGLE_PAY', 'ADMIN_MANUAL'],
@@ -83,6 +93,10 @@ const mSchema = mongoose.Schema(
     },
     processor_transaction_id: {
       type: String,
+      default: null,
+    },
+    paid_at: {
+      type: Date,
       default: null,
     },
     manually_marked_paid: {

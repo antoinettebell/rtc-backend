@@ -77,6 +77,7 @@ module.exports = {
   submitBid: {
     body: Joi.object({
       price_per_guest: Joi.number().min(0).allow(null),
+      average_price_per_meal: Joi.number().min(0).allow(null),
       full_bid_amount: Joi.number().min(0).required(),
       menu_description: Joi.string().allow(null, ''),
       notes: Joi.string().allow(null, ''),
@@ -97,6 +98,37 @@ module.exports = {
         .valid(
           'BID_MENU_PDF',
           'BID_IMAGE',
+          'PERMIT_LICENSE',
+          'AGREEMENT_DOCUMENT'
+        )
+        .required(),
+    }),
+  },
+
+  submitApplication: {
+    body: Joi.object({
+      business_name: Joi.string().trim().required(),
+      contact_name: Joi.string().trim().required(),
+      phone: Joi.string().trim().required(),
+      email: Joi.string().trim().email().required(),
+      food_type_cuisine: Joi.string().trim().allow(null, ''),
+      menu_description: Joi.string().allow(null, ''),
+      notes: Joi.string().allow(null, ''),
+      insurance_confirmed: Joi.boolean().default(false),
+      permits_confirmed: Joi.boolean().default(false),
+      liquor_license_confirmed: Joi.boolean().default(false),
+      nda_required: Joi.boolean().default(false),
+      nda_acknowledged: Joi.boolean().default(false),
+      application_status: Joi.string().valid('DRAFT', 'SUBMITTED'),
+    }),
+  },
+
+  uploadApplicationAttachment: {
+    body: Joi.object({
+      attachment_type: Joi.string()
+        .valid(
+          'APPLICATION_MENU_PDF',
+          'APPLICATION_IMAGE',
           'PERMIT_LICENSE',
           'AGREEMENT_DOCUMENT'
         )

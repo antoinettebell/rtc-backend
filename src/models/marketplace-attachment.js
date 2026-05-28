@@ -18,12 +18,19 @@ const mSchema = mongoose.Schema(
       default: null,
       index: true,
     },
+    application_id: {
+      type: String,
+      default: null,
+      index: true,
+    },
     attachment_type: {
       type: String,
       enum: [
         'EVENT_IMAGE',
         'BID_MENU_PDF',
         'BID_IMAGE',
+        'APPLICATION_MENU_PDF',
+        'APPLICATION_IMAGE',
         'PERMIT_LICENSE',
         'AGREEMENT_DOCUMENT',
       ],

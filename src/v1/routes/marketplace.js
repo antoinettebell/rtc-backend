@@ -98,6 +98,13 @@ router.post(
 );
 
 router.post(
+  '/events/:eventId/applications',
+  allowedTo(['VENDOR']),
+  validate(Validation.submitApplication),
+  Controller.submitApplication
+);
+
+router.post(
   '/events/:eventId/award',
   allowedTo(['CUSTOMER']),
   validate(Validation.awardBids),
@@ -131,6 +138,20 @@ router.post(
   Controller.addBidAttachment
 );
 
+router.post(
+  '/applications/:applicationId/attachments',
+  allowedTo(['VENDOR']),
+  validate(Validation.uploadApplicationAttachment),
+  MarketplaceUpload.single(),
+  Controller.addApplicationAttachment
+);
+
+router.post(
+  '/applications/:applicationId/vendor-fee-payment',
+  allowedTo(['VENDOR']),
+  Controller.createApplicationVendorFeePayment
+);
+
 router.delete(
   '/bids/:bidId/attachments/:attachmentId',
   allowedTo(['VENDOR']),
@@ -141,6 +162,12 @@ router.get(
   '/bids/my',
   allowedTo(['VENDOR']),
   Controller.myBids
+);
+
+router.get(
+  '/applications/my',
+  allowedTo(['VENDOR']),
+  Controller.myApplications
 );
 
 router.get(
