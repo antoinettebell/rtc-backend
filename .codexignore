@@ -1,0 +1,80 @@
+﻿# Dependencies
+node_modules/
+
+# Nested/old copied apps or bundles
+rtc-admin-frontend/
+rtc_backend_from_bundle/
+express_server/
+exports/
+secure_exports/
+.rtc_backend_prod.bundle
+
+# Runtime logs and process files
+*.log
+logs/
+.pm2/
+pids/
+dump.rdb
+
+# Build outputs and caches
+dist/
+build/
+coverage/
+.cache/
+.nyc_output/
+
+# Git and editor metadata
+.git/
+.github/
+.vscode/
+.idea/
+
+# Secrets and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.p12
+*.pfx
+*firebase-adminsdk*.json
+*service-account*.json
+credentials*.json
+gcp-credentials*.json
+
+# Local uploads / generated files
+uploads/
+file-dump/
+tmp/
+temp/
+
+# Decryption/debug/export artifacts
+decrypted*.json
+decrypted*.jsonl
+original_doc.json
+sample_decrypted.json
+bc_ready*.csv
+sample_bc.csv
+mongo_*.js
+mongo_*.log
+fetch_and_decrypt*
+fetch_bank_fields.js
+decrypt_single*
+json_to_bc_csv.js
+
+# Large assets / documents
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.mp4
+*.mov
+*.zip
+*.tar
+*.gz
+*.pdf
+*.pptx
+*.docx
+*.xlsx
