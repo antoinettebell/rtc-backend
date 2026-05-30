@@ -1224,6 +1224,8 @@ exports.paymentCheckout = async (req, res, next) => {
         amount,
         taxAmount = 0,
         subTotal = 0,
+        foodTruckId,
+        orderNumber,
       },
       user,
     } = req;
@@ -1285,6 +1287,11 @@ exports.paymentCheckout = async (req, res, next) => {
         '[TapToPay Test] Frontend sandbox token detected. Bypassing live gateway handshake.'
       );
 
+      const sandboxInvoiceNumber =
+        orderNumber && foodTruckId
+          ? `${orderNumber}-${String(foodTruckId).slice(-6)}`
+          : `INV-${Date.now()}`;
+
       return res.data(
         {
           paymentsData: {
@@ -1297,7 +1304,7 @@ exports.paymentCheckout = async (req, res, next) => {
             subTotal,
             paymentMethod,
             mode: 'sandbox',
-            invoiceNumber: null,
+            invoiceNumber: sandboxInvoiceNumber,
             accountNumber: 'XXXX1111',
             accountType: 'VISA',
             date: new Date().toISOString(),
