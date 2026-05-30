@@ -1576,6 +1576,66 @@ exports.refundPayment = async (req, res, next) => {
       return res.error(new Error('Order not found'), 404);
     }
 
+    const refundTransactionId = String(
+      transactionId ||
+        order.transactionId ||
+        order.transaction_id ||
+        order.paymentTransactionId ||
+        ''
+    );
+
+    if (refundTransactionId.startsWith('tap_to_pay_sandbox_')) {
+      const requestedRefundAmount = toMoney(Number(amount) || 0);
+      const refundableAmount = Math.max(
+        0,
+        toMoney((order.total || 0) - (order.tipsAmount || 0))
+      );
+
+      if (requestedRefundAmount <= 0) {
+        return res.error(
+          new Error('Refund amount must be greater than zero'),
+          409
+        );
+      }
+
+      if (requestedRefundAmount > refundableAmount) {
+        return res.error(
+          new Error('Refund amount exceeds refundable order amount'),
+          400
+        );
+      }
+
+      console.log(
+        '🛠️ [TapToPay Test] Sandbox Tap to Pay refund detected. Bypassing live gateway handshake.'
+      );
+
+      const resp = {
+        success: true,
+        status: 'refunded',
+        mode: 'sandbox',
+        refundTransactionId: `refund_sandbox_${Date.now()}`,
+        originalTransactionId: refundTransactionId,
+        amount: requestedRefundAmount,
+        reversedAmount: requestedRefundAmount,
+        refundableAmount,
+        message: 'Sandbox Tap to Pay refund mocked successfully.',
+      };
+
+      order.paymentStatus = 'REFUNDED';
+      order.refundTransactionId = resp.refundTransactionId;
+      order.refundDateTime = new Date();
+      order.refundStatus = 'SUCCESS';
+      order.refundReason = 'Manual refund';
+      order.refundMode = 'REFUND';
+      order.refundErrorMessage = null;
+      await order.save();
+
+      return res.data(
+        { [entityName.toLowerCase()]: resp },
+        `${entityName} refund processed successfully`
+      );
+    }
+
     const resp = await PaymentHelper.processRefund({
       transactionId,
       amount,
