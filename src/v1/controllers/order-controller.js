@@ -1720,7 +1720,20 @@ exports.refundPosOrder = async (req, res, next) => {
       user,
     } = req;
 
+    console.log('[TapToPay Refund Diagnostics] POS refund handler entry', {
+      orderId: id,
+      userId: user?._id || null,
+    });
+
     const order = await Service.getById(id);
+    console.log('[TapToPay Refund Diagnostics] Order lookup completed', {
+      orderId: id,
+      found: Boolean(order),
+      paymentMethod: order?.paymentMethod || null,
+      paymentStatus: order?.paymentStatus || null,
+      orderStatus: order?.orderStatus || null,
+    });
+
     if (!order) {
       return res.error(new Error('Order not found'), 404);
     }
@@ -1767,9 +1780,35 @@ exports.refundPosOrder = async (req, res, next) => {
         return res.error(new Error('Order transaction is missing'), 409);
       }
 
+      const refundTransactionId = String(order.transactionId || '');
+      const isSandboxTapToPayRefund = refundTransactionId.startsWith(
+        'tap_to_pay_sandbox_'
+      );
+
+      console.log(
+        '[TapToPay Refund Diagnostics] Refund transaction resolved',
+        {
+          orderId: order._id,
+          paymentMethod: order.paymentMethod,
+          transactionIdPrefix: refundTransactionId.slice(0, 20),
+          transactionIdLength: refundTransactionId.length,
+          isSandboxTapToPayRefund,
+        }
+      );
+
       const refundAmount = Math.max(
         0,
         toMoney((order.total || 0) - (order.tipsAmount || 0))
+      );
+
+      console.log(
+        '[TapToPay Refund Diagnostics] Refund amount calculation completed',
+        {
+          orderId: order._id,
+          refundAmount,
+          orderTotal: toMoney(order.total || 0),
+          excludedTip: toMoney(order.tipsAmount || 0),
+        }
       );
 
       if (refundAmount <= 0) {
@@ -1779,10 +1818,46 @@ exports.refundPosOrder = async (req, res, next) => {
         );
       }
 
-      refundResponse = await PaymentHelper.processRefund({
-        transactionId: order.transactionId,
-        amount: refundAmount,
-      });
+      console.log(
+        '[TapToPay Refund Diagnostics] Evaluating sandbox Tap to Pay refund bypass',
+        {
+          orderId: order._id,
+          paymentMethod: order.paymentMethod,
+          isSandboxTapToPayRefund,
+        }
+      );
+
+      if (isSandboxTapToPayRefund) {
+        console.log(
+          '🛠️ [TapToPay Test] Sandbox Tap to Pay refund detected. Bypassing live gateway handshake.'
+        );
+
+        refundResponse = {
+          success: true,
+          status: 'refunded',
+          mode: 'sandbox',
+          refundTransactionId: `refund_sandbox_${Date.now()}`,
+          originalTransactionId: refundTransactionId,
+          amount: refundAmount,
+          reversedAmount: refundAmount,
+          refundableAmount: refundAmount,
+          message: 'Sandbox Tap to Pay refund mocked successfully.',
+        };
+      } else {
+        console.log(
+          '[TapToPay Refund Diagnostics] Calling live refund gateway',
+          {
+            orderId: order._id,
+            paymentMethod: order.paymentMethod,
+            refundAmount,
+          }
+        );
+
+        refundResponse = await PaymentHelper.processRefund({
+          transactionId: order.transactionId,
+          amount: refundAmount,
+        });
+      }
 
       if (!refundResponse.skipLog) {
         await PaymentsLogService.create({
@@ -1859,6 +1934,11 @@ exports.refundPosOrder = async (req, res, next) => {
       'Order refund processed successfully'
     );
   } catch (err) {
+    console.error('[TapToPay Refund Diagnostics] POS refund handler error', {
+      orderId: req.params?.id || null,
+      message: err.message,
+      name: err.name,
+    });
     return next(err);
   }
 };
