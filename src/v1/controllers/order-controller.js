@@ -1260,12 +1260,29 @@ exports.paymentCheckout = async (req, res, next) => {
       await assertVendorTapToPayAccess(user);
     }
 
-    if (
+    const isTapToPaySandboxBypass =
       paymentMethod === 'TAP_TO_PAY' &&
-      opaqueToken === 'MOCK_TOKEN_SUCCESS_SANDBOX_ABELL_DEV'
-    ) {
+      opaqueToken === 'MOCK_TOKEN_SUCCESS_SANDBOX_ABELL_DEV';
+
+    if (paymentMethod === 'TAP_TO_PAY') {
+      console.log('[TapToPay Debug] Payment checkout token inspection', {
+        paymentMethod,
+        hasOpaqueData:
+          !!paymentData &&
+          typeof paymentData === 'object' &&
+          !!(paymentData.opaqueToken || paymentData.opaqueData || paymentData.dataValue),
+        opaqueDataDescriptor: opaquePaymentData.dataDescriptor || null,
+        tokenType: typeof opaqueToken,
+        tokenPrefix:
+          typeof opaqueToken === 'string' ? opaqueToken.slice(0, 16) : null,
+        environment: paymentData?.environment || paymentData?.mode || null,
+        sandboxBypassMatched: isTapToPaySandboxBypass,
+      });
+    }
+
+    if (isTapToPaySandboxBypass) {
       console.log(
-        '🛠️ [TapToPay Test] Frontend sandbox token detected. Bypassing live gateway handshake.'
+        '[TapToPay Test] Frontend sandbox token detected. Bypassing live gateway handshake.'
       );
 
       return res.data(
