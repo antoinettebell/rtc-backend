@@ -1259,6 +1259,36 @@ exports.paymentCheckout = async (req, res, next) => {
     if (paymentMethod === 'TAP_TO_PAY') {
       await assertVendorTapToPayAccess(user);
     }
+
+    if (
+      paymentMethod === 'TAP_TO_PAY' &&
+      opaqueToken === 'MOCK_TOKEN_SUCCESS_SANDBOX_ABELL_DEV'
+    ) {
+      console.log(
+        '🛠️ [TapToPay Test] Frontend sandbox token detected. Bypassing live gateway handshake.'
+      );
+
+      return res.data(
+        {
+          paymentsData: {
+            userId,
+            transactionId: `tap_to_pay_sandbox_${Date.now()}`,
+            authCode: 'SANDBOX_APPROVED',
+            status: 'settled',
+            amount,
+            taxAmount,
+            subTotal,
+            paymentMethod,
+            mode: 'sandbox',
+            invoiceNumber: null,
+            accountNumber: 'XXXX1111',
+            accountType: 'VISA',
+            date: new Date().toISOString(),
+          },
+        },
+        'Payment checkout was successful'
+      );
+    }
     //  CHARGE PAYMENT
     const chargeResp = await PaymentHelper.chargePaymentUnified({
       opaqueToken,
