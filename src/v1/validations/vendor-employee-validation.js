@@ -16,11 +16,36 @@ module.exports = {
   list: {
     query: Joi.object({
       includeArchived: Joi.boolean(),
+      archivedOnly: Joi.boolean(),
+      foodTruckId: Joi.string().trim(),
+    }),
+  },
+
+  adminList: {
+    query: Joi.object({
+      vendorUserId: Joi.string().trim().required(),
+      foodTruckId: Joi.string().trim(),
+      includeArchived: Joi.boolean(),
+      archivedOnly: Joi.boolean(),
     }),
   },
 
   add: {
     body: Joi.object({
+      food_truck_id: Joi.string().trim().required(),
+      assigned_location_id: Joi.string().trim().required(),
+      first_name: Joi.string().trim().required(),
+      last_name: Joi.string().trim().required(),
+      zip_code: Joi.string().trim().required(),
+      pin: employeePin,
+      is_active: Joi.boolean(),
+      is_working: Joi.boolean(),
+    }),
+  },
+
+  adminAdd: {
+    body: Joi.object({
+      vendor_user_id: Joi.string().trim().required(),
       food_truck_id: Joi.string().trim().required(),
       assigned_location_id: Joi.string().trim().required(),
       first_name: Joi.string().trim().required(),
@@ -46,6 +71,12 @@ module.exports = {
   resetPin: {
     body: Joi.object({
       pin: employeePin,
+    }),
+  },
+
+  adminResetPin: {
+    body: Joi.object({
+      resetUrl: Joi.string().trim().allow(null, ''),
     }),
   },
 

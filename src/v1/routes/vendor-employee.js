@@ -51,6 +51,46 @@ router.put(
   Controller.reviewRefundCancelRequest
 );
 
+router.get(
+  '/admin',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.adminList),
+  Controller.adminList
+);
+
+router.post(
+  '/admin',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.adminAdd),
+  Controller.adminAdd
+);
+
+router.put(
+  '/admin/:id',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.update),
+  Controller.adminUpdate
+);
+
+router.put(
+  '/admin/:id/reset-pin',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.adminResetPin),
+  Controller.adminResetPin
+);
+
+router.patch(
+  '/admin/:id/archive',
+  allowedTo(['SUPER_ADMIN']),
+  Controller.adminArchive
+);
+
+router.delete(
+  '/admin/:id',
+  allowedTo(['SUPER_ADMIN']),
+  Controller.adminRemove
+);
+
 router.put(
   '/:id',
   allowedTo(['VENDOR']),

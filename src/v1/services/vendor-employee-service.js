@@ -1,7 +1,6 @@
 const {
-  EmployeeRefundCancelRequestModel,
-  EmployeeSessionModel,
   OrderModel,
+  UserModel,
   VendorEmployeeModel: Model,
 } = require('../../models');
 const { BaseService } = require('../../common-services');
@@ -16,6 +15,16 @@ const buildError = (message, code = 409) => {
   const error = new Error(message);
   error.code = code;
   return error;
+};
+
+const completedSalesStatuses = ['COMPLETED', 'DELIVERED'];
+const toSafeEmployee = (employee) => {
+  const safeEmployee =
+    typeof employee?.toObject === 'function' ? employee.toObject() : employee;
+  if (safeEmployee) {
+    delete safeEmployee.pin_hash;
+  }
+  return safeEmployee;
 };
 
 class VendorEmployeeService extends BaseService {
@@ -109,6 +118,46 @@ class VendorEmployeeService extends BaseService {
     });
   }
 
+  buildEmployeeListQuery({
+    vendor_user_id,
+    food_truck_id = null,
+    includeArchived = false,
+    archivedOnly = false,
+  }) {
+    const q = { vendor_user_id };
+
+    if (food_truck_id) {
+      q.food_truck_id = food_truck_id;
+    }
+
+    if (archivedOnly) {
+      q.is_archived = true;
+    } else if (!includeArchived) {
+      q.is_archived = false;
+    }
+
+    return q;
+  }
+
+  async listForVendor({
+    vendor_user_id,
+    food_truck_id = null,
+    includeArchived = false,
+    archivedOnly = false,
+  }) {
+    return this.getByData(
+      this.buildEmployeeListQuery({
+        vendor_user_id,
+        food_truck_id,
+        includeArchived,
+        archivedOnly,
+      }),
+      {
+        sort: { is_archived: 1, created_at: -1 },
+      }
+    );
+  }
+
   async getVendorFoodTruck(vendorUserId, foodTruckId) {
     const foodTruck = await FoodTruckService.getByData(
       {
@@ -148,13 +197,22 @@ class VendorEmployeeService extends BaseService {
     }
   }
 
-  async getScopedEmployee({ vendor_user_id, employee_id }) {
+  async getScopedEmployee({
+    vendor_user_id,
+    employee_id,
+    includeArchived = false,
+  }) {
+    const q = {
+      _id: employee_id,
+      vendor_user_id,
+    };
+
+    if (!includeArchived) {
+      q.is_archived = false;
+    }
+
     const employee = await this.getByData(
-      {
-        _id: employee_id,
-        vendor_user_id,
-        is_archived: false,
-      },
+      q,
       { singleResult: true }
     );
 
@@ -201,19 +259,32 @@ class VendorEmployeeService extends BaseService {
     return employee;
   }
 
-  async resetPinForVendor({ vendor_user_id, employee_id, pin }) {
+  async resetPinForVendor({
+    vendor_user_id,
+    employee_id,
+    pin,
+    includeArchived = false,
+  }) {
     if (!pin) {
       throw buildError('Employee PIN is required.');
     }
 
-    const employee = await this.getScopedEmployee({ vendor_user_id, employee_id });
+    const employee = await this.getScopedEmployee({
+      vendor_user_id,
+      employee_id,
+      includeArchived,
+    });
     employee.pin_hash = pin;
     await employee.save();
-    return employee;
+    return toSafeEmployee(employee);
   }
 
   async archiveForVendor({ vendor_user_id, employee_id }) {
-    const employee = await this.getScopedEmployee({ vendor_user_id, employee_id });
+    const employee = await this.getScopedEmployee({
+      vendor_user_id,
+      employee_id,
+      includeArchived: true,
+    });
     employee.is_active = false;
     employee.is_working = false;
     employee.is_archived = true;
@@ -222,27 +293,43 @@ class VendorEmployeeService extends BaseService {
   }
 
   async deleteForVendor({ vendor_user_id, employee_id }) {
-    const employee = await this.getScopedEmployee({ vendor_user_id, employee_id });
+    const employee = await this.getScopedEmployee({
+      vendor_user_id,
+      employee_id,
+      includeArchived: true,
+    });
     const employeeQuery = {
       employee_internal_id: employee.employee_internal_id,
       vendor_user_id,
     };
 
-    const [sessionExists, orderExists, requestExists] = await Promise.all([
-      EmployeeSessionModel.exists(employeeQuery),
-      OrderModel.exists(employeeQuery),
-      EmployeeRefundCancelRequestModel.exists(employeeQuery),
-    ]);
+    const completedSalesExist = await OrderModel.exists({
+      ...employeeQuery,
+      orderStatus: { $in: completedSalesStatuses },
+    });
 
-    if (sessionExists || orderExists || requestExists) {
+    if (completedSalesExist) {
       throw buildError(
-        'This employee has activity history and cannot be deleted. Archive the employee instead.',
+        'This employee has completed sales and cannot be deleted. Archive the employee instead.',
         409
       );
     }
 
     await Model.deleteOne({ _id: employee._id, vendor_user_id });
     return employee;
+  }
+
+  async getVendorUser(vendorUserId) {
+    const vendor = await UserModel.findOne({
+      _id: vendorUserId,
+      userType: 'VENDOR',
+    }).lean();
+
+    if (!vendor) {
+      throw buildError('Vendor not found.', 404);
+    }
+
+    return vendor;
   }
 
   getAssignedLocation(foodTruck, assignedLocationId) {
