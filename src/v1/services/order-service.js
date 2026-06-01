@@ -1,14 +1,10 @@
 const { OrderModel: Model } = require('../../models');
 const { BaseService } = require('../../common-services');
 const mongoose = require('mongoose');
+const {
+  buildVendorEarningExpression,
+} = require('../../helper/vendor-earnings-helper');
 
-const vendorSubtotalExpression = {
-  $ifNull: ['$totalAfterDiscount', { $ifNull: ['$subTotal', { $ifNull: ['$subtotal', 0] }] }],
-};
-const vendorTipExpression = { $ifNull: ['$tipsAmount', 0] };
-const vendorEarningExpression = {
-  $add: [vendorSubtotalExpression, vendorTipExpression],
-};
 const deliveredOrderStatuses = ['DELIVERED', 'COMPLETED'];
 const cashPaymentMethods = ['COD', 'CASH'];
 const digitalPaymentMethods = ['APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY'];
@@ -425,7 +421,14 @@ class OrderService extends BaseService {
     };
   }
 
-  async getVendorEarningsWithFreeDessert(foodTruckId, startDate, endDate) {
+  async getVendorEarningsWithFreeDessert(
+    foodTruckId,
+    startDate,
+    endDate,
+    fallbackVendorTierRate = 0
+  ) {
+    const vendorEarningExpression =
+      buildVendorEarningExpression(fallbackVendorTierRate);
     const matchQuery = {
       foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
       orderStatus: { $in: deliveredOrderStatuses },
@@ -475,13 +478,17 @@ class OrderService extends BaseService {
       freeDessertOrders: 0
     };
 
-    // Calculate admin payment (total revenue + free dessert amounts)
-    result.adminPayment = result.totalRevenue + result.totalFreeDessertAmount;
+    result.adminPayment = result.totalRevenue;
 
     return result;
   }
 
-    async getVendorEarningsWithFreeDessertTest(foodTruckId) {
+  async getVendorEarningsWithFreeDessertTest(
+    foodTruckId,
+    fallbackVendorTierRate = 0
+  ) {
+    const vendorEarningExpression =
+      buildVendorEarningExpression(fallbackVendorTierRate);
     const baseMatch = {
       foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
       orderStatus: { $in: deliveredOrderStatuses },
@@ -538,7 +545,7 @@ class OrderService extends BaseService {
         freeDessertOrders: 0
       };
 
-      result.adminPayment = result.totalRevenue + result.totalFreeDessertAmount;
+      result.adminPayment = result.totalRevenue;
       return result;  
     };
 
@@ -562,18 +569,21 @@ class OrderService extends BaseService {
     };
   }
 
-async getVendorEarningList(
-  limit = 10,
-  page = 1,
-  user,
-  search,
-  foodTruckId,
-  earning_list,
-  is_list = 'normal',
-  startDate = null,
-  endDate = null
-) {
-  const today = new Date();
+  async getVendorEarningList(
+    limit = 10,
+    page = 1,
+    user,
+    search,
+    foodTruckId,
+    earning_list,
+    is_list = 'normal',
+    startDate = null,
+    endDate = null,
+    fallbackVendorTierRate = 0
+  ) {
+    const vendorEarningExpression =
+      buildVendorEarningExpression(fallbackVendorTierRate);
+    const today = new Date();
 
   // Define date ranges
   const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
@@ -659,6 +669,7 @@ if (startDate && endDate) {
     {
       $facet: {
         data: [
+          { $addFields: { vendorEarning: vendorEarningExpression } },
           { $sort: { createdAt: -1 } },
           { $skip: skip },
           { $limit: Number(limit) },
@@ -770,7 +781,14 @@ if (startDate && endDate) {
   };
 }
 
-  async getHomeCountInRange(foodTruckId, startDate, endDate) {
+  async getHomeCountInRange(
+    foodTruckId,
+    startDate,
+    endDate,
+    fallbackVendorTierRate = 0
+  ) {
+    const vendorEarningExpression =
+      buildVendorEarningExpression(fallbackVendorTierRate);
     const result = await Model.aggregate([
       {
         $match: {
@@ -828,7 +846,7 @@ if (startDate && endDate) {
     };
   }
 
-  async getVendorDashboardCountDetails(foodTruckId) {
+  async getVendorDashboardCountDetails(foodTruckId, fallbackVendorTierRate = 0) {
     const today = new Date();
     const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
     const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
@@ -836,8 +854,18 @@ if (startDate && endDate) {
      const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
 
     const [todayData, monthlyData] = await Promise.all([
-      this.getHomeCountInRange(foodTruckId, startOfDay, endOfDay),
-      this.getHomeCountInRange(foodTruckId, startOfMonth, endOfMonth)
+      this.getHomeCountInRange(
+        foodTruckId,
+        startOfDay,
+        endOfDay,
+        fallbackVendorTierRate
+      ),
+      this.getHomeCountInRange(
+        foodTruckId,
+        startOfMonth,
+        endOfMonth,
+        fallbackVendorTierRate
+      )
     ]);
 
     return {

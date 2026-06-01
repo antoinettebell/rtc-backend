@@ -4,7 +4,8 @@
   "description": "Food truck backend app",
   "main": "index.js",
   "scripts": {
-    "start": "nodemon src/app.js"
+    "start": "nodemon src/app.js",
+    "test:earnings": "node src/helper/vendor-earnings-helper.test.js"
   },
   "author": "Tailor",
   "license": "MIT",

@@ -182,6 +182,11 @@ const isGatewayPaymentMethod = (paymentMethod) =>
 const getFoodTruckPlan = async (foodTruck) =>
   foodTruck?.planId ? PlanService.getById(foodTruck.planId) : null;
 
+const getFoodTruckVendorTierRate = async (foodTruck) => {
+  const plan = await getFoodTruckPlan(foodTruck);
+  return Number(normalizeVendorPlan(plan)?.rate || 0);
+};
+
 const assertVendorPosAccess = async (foodTruck, paymentMethod) => {
   const plan = await getFoodTruckPlan(foodTruck);
   assertWalkUpPosPaymentMethodAllowed(plan, paymentMethod);
@@ -3575,8 +3580,10 @@ exports.getVendorDashboard = async (req, res, next) => {
       return res.error(new Error('Food truck not found or access denied'), 404);
     }
 
+    const fallbackVendorTierRate = await getFoodTruckVendorTierRate(foodTruck);
     const vendorHomeData = await Service.getVendorDashboardCountDetails(
-      foodTruckId
+      foodTruckId,
+      fallbackVendorTierRate
     );
 
     return res.data(
@@ -3625,13 +3632,16 @@ exports.getVendorEarnings = async (req, res, next) => {
       return res.error(new Error('Food truck not found or access denied'), 404);
     }
 
+    const fallbackVendorTierRate = await getFoodTruckVendorTierRate(foodTruck);
     const earnings = await Service.getVendorEarningsWithFreeDessert(
       foodTruckId,
       startDate,
-      endDate
+      endDate,
+      fallbackVendorTierRate
     );
     const earningsFulldata = await Service.getVendorEarningsWithFreeDessertTest(
-      foodTruckId
+      foodTruckId,
+      fallbackVendorTierRate
     );
     const employeeAnalytics =
       await EmployeeSessionService.getVendorEmployeeAnalytics({
@@ -3790,7 +3800,8 @@ exports.getVendorEarningsList = async (req, res, next) => {
       earning_list,
       is_list,
       startDate,
-      endDate
+      endDate,
+      await getFoodTruckVendorTierRate(foodTruck)
     );
     return res.data(
       {
