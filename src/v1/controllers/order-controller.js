@@ -33,6 +33,9 @@ const toMoney = (value, fallback = 0) => {
   return Number.isFinite(amount) ? Math.max(0, amount) : fallback;
 };
 
+const toCents = (value) => Math.round(toMoney(value) * 100);
+const centsToMoney = (value) => Number((Math.max(0, value) / 100).toFixed(2));
+
 const BUILT_IN_DELIVERY_FEE = 6.49;
 const PLATFORM_SERVICE_FEE_RATE = 3.5;
 
@@ -51,10 +54,22 @@ const normalizeDeliveryFee = (fulfillmentType, deliveryFee) => {
 const normalizeDriverTip = (fulfillmentType, tip, tips) =>
   fulfillmentType === 'DELIVERY' ? toMoney(tip ?? tips) : 0;
 
-const calculatePlatformServiceFee = (baseAmount, applyFee) =>
-  applyFee
-    ? toMoney((PLATFORM_SERVICE_FEE_RATE * toMoney(baseAmount)) / 100)
-    : 0;
+const calculatePlatformServiceFee = ({
+  subtotalAfterDiscount,
+  foodTruckTip = 0,
+  applyFee,
+  includeTip = false,
+}) => {
+  if (!applyFee) {
+    return 0;
+  }
+
+  const baseCents =
+    toCents(subtotalAfterDiscount) + (includeTip ? toCents(foodTruckTip) : 0);
+  const feeCents = Math.round((baseCents * PLATFORM_SERVICE_FEE_RATE) / 100);
+
+  return centsToMoney(feeCents);
+};
 
 const buildAvalaraAddress = async (addressData) => {
   const parsed = await TaxHelper.parseDynamicAddress(addressData);
@@ -1065,10 +1080,12 @@ exports.validateOrder = async (req, res, next) => {
     }
 
     const taxableFoodAmount = Math.max(0, subTotal - disAmount);
-    let paymentProcessingFee = calculatePlatformServiceFee(
-      taxableFoodAmount + normalizedDeliveryFee,
-      applyGatewayFee
-    );
+    let paymentProcessingFee = calculatePlatformServiceFee({
+      subtotalAfterDiscount: taxableFoodAmount,
+      foodTruckTip: normalizedFoodTruckTip,
+      applyFee: applyGatewayFee,
+      includeTip: vendorPosOrder && paymentMethod === 'TAP_TO_PAY',
+    });
     const avalaraTax = await calculateAvalaraOrderTax({
       foodTruck,
       locationId,
@@ -2744,10 +2761,12 @@ exports.add = async (req, res, next) => {
     }
 
     const taxableFoodAmount = Math.max(0, subTotal - disAmount);
-    let paymentProcessingFee = calculatePlatformServiceFee(
-      taxableFoodAmount + normalizedDeliveryFee,
-      isGatewayPaymentMethod(normalizedPaymentMethod)
-    );
+    let paymentProcessingFee = calculatePlatformServiceFee({
+      subtotalAfterDiscount: taxableFoodAmount,
+      foodTruckTip: normalizedFoodTruckTip,
+      applyFee: isGatewayPaymentMethod(normalizedPaymentMethod),
+      includeTip: vendorPosOrder && normalizedPaymentMethod === 'TAP_TO_PAY',
+    });
     const avalaraEstimate = await calculateAvalaraOrderTax({
       foodTruck,
       locationId,
