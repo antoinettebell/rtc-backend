@@ -17,6 +17,22 @@ const isCashPayment = (paymentMethod) =>
 const isTapPayment = (paymentMethod) =>
   String(paymentMethod || '').toUpperCase() === 'TAP_TO_PAY';
 
+const getCurrentDayRange = () => {
+  const now = new Date();
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+
+  return { start, end };
+};
+
+const getOrderSubtotal = (order) =>
+  toNumber(order.subTotal || order.subtotal || order.sub_total);
+
+const getOrderTax = (order) =>
+  toNumber(order.taxAmount || order.tax || order.tax_amount);
+
 class EmployeeSessionService extends BaseService {
   constructor() {
     super(Model);
@@ -37,6 +53,8 @@ class EmployeeSessionService extends BaseService {
         $set: {
           ended_at: now,
           last_active_at: now,
+          break_ended_at: now,
+          shift_status: 'ENDED',
           is_active: false,
         },
       }
@@ -54,6 +72,12 @@ class EmployeeSessionService extends BaseService {
       location_id: employee.assigned_location_id || assignedLocation?._id,
       started_at: now,
       last_active_at: now,
+      paused_at: null,
+      resumed_at: null,
+      break_started_at: null,
+      break_ended_at: null,
+      total_break_minutes: 0,
+      shift_status: 'STARTED',
       is_active: true,
     });
   }
@@ -96,6 +120,8 @@ class EmployeeSessionService extends BaseService {
         $set: {
           ended_at: now,
           last_active_at: now,
+          break_ended_at: now,
+          shift_status: 'ENDED',
           is_active: false,
         },
       },
@@ -135,12 +161,87 @@ class EmployeeSessionService extends BaseService {
     return session;
   }
 
-  async getEmployeeDashboard({ user, foodTruck, assignedLocation }) {
+  async pauseSession({ employeeSessionId, employeeInternalId }) {
+    const session = await this.assertActiveEmployeeSession(
+      employeeSessionId,
+      employeeInternalId
+    );
+
+    if (session.shift_status === 'ON_BREAK') {
+      return session;
+    }
+
     const now = new Date();
-    const startOfToday = new Date(now);
-    startOfToday.setHours(0, 0, 0, 0);
-    const endOfToday = new Date(startOfToday);
-    endOfToday.setDate(endOfToday.getDate() + 1);
+    return Model.findOneAndUpdate(
+      { _id: session._id },
+      {
+        $set: {
+          paused_at: now,
+          break_started_at: now,
+          last_active_at: now,
+          shift_status: 'ON_BREAK',
+        },
+      },
+      { new: true }
+    );
+  }
+
+  async resumeSession({ employeeSessionId, employeeInternalId }) {
+    const session = await this.assertActiveEmployeeSession(
+      employeeSessionId,
+      employeeInternalId
+    );
+
+    const now = new Date();
+    const breakStart = session.break_started_at
+      ? new Date(session.break_started_at)
+      : null;
+    const breakMinutes =
+      breakStart && !Number.isNaN(breakStart.getTime())
+        ? Math.max(0, Math.floor((now - breakStart) / 60000))
+        : 0;
+
+    return Model.findOneAndUpdate(
+      { _id: session._id },
+      {
+        $set: {
+          resumed_at: now,
+          break_ended_at: now,
+          break_started_at: null,
+          last_active_at: now,
+          shift_status: 'STARTED',
+        },
+        $inc: { total_break_minutes: breakMinutes },
+      },
+      { new: true }
+    );
+  }
+
+  async getEmployeeCurrentDayOrders(user, statuses = null) {
+    const { start, end } = getCurrentDayRange();
+    const query = {
+      created_by_type: 'EMPLOYEE',
+      employee_internal_id: user.employee_internal_id,
+      food_truck_id: user.food_truck_id,
+      location_id: user.assigned_location_id,
+      deletedAt: null,
+      $or: [
+        { created_at: { $gte: start, $lt: end } },
+        {
+          created_at: null,
+          createdAt: { $gte: start, $lt: end },
+        },
+      ],
+      ...(Array.isArray(statuses) && statuses.length
+        ? { orderStatus: { $in: statuses } }
+        : {}),
+    };
+
+    return OrderModel.find(query).sort({ created_at: -1, createdAt: -1 }).lean();
+  }
+
+  async getEmployeeDashboard({ user, foodTruck, assignedLocation }) {
+    const { start: startOfToday, end: endOfToday } = getCurrentDayRange();
 
     const activeSession = await this.getActiveSession(
       user.employee_session_id,
@@ -181,6 +282,13 @@ class EmployeeSessionService extends BaseService {
 
     const grossSalesToday = salesOrders.reduce(
       (sum, order) => sum + toNumber(order.totalOrderCost || order.total),
+      0
+    );
+    const cashSalesOrders = salesOrders.filter((order) =>
+      isCashPayment(order.payment_method || order.paymentMethod)
+    );
+    const cashDrawerTotal = cashSalesOrders.reduce(
+      (sum, order) => sum + getOrderSubtotal(order) + getOrderTax(order),
       0
     );
 
@@ -225,6 +333,12 @@ class EmployeeSessionService extends BaseService {
         started_at: activeSession?.started_at || null,
         ended_at: activeSession?.ended_at || null,
         last_active_at: activeSession?.last_active_at || null,
+        paused_at: activeSession?.paused_at || null,
+        resumed_at: activeSession?.resumed_at || null,
+        break_started_at: activeSession?.break_started_at || null,
+        break_ended_at: activeSession?.break_ended_at || null,
+        total_break_minutes: activeSession?.total_break_minutes || 0,
+        shift_status: activeSession?.shift_status || null,
         is_active: !!activeSession?.is_active,
       },
       metrics: {
@@ -234,6 +348,8 @@ class EmployeeSessionService extends BaseService {
         cash_orders_today: todayOrders.filter((order) =>
           isCashPayment(order.payment_method || order.paymentMethod)
         ).length,
+        cash_drawer_total: cashDrawerTotal,
+        cash_drawer_order_count: cashSalesOrders.length,
         tap_orders_today: todayOrders.filter((order) =>
           isTapPayment(order.payment_method || order.paymentMethod)
         ).length,

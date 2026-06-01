@@ -3,7 +3,6 @@ const {
   FoodTruckService,
   FileService,
   VendorEmployeeService,
-  EmployeeSessionService,
 } = require('../services');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
@@ -554,19 +553,13 @@ exports.loginEmployee = async (req, res, next) => {
         employeeLoginId,
         pin,
       });
-    const employeeSession = await EmployeeSessionService.startSessionForEmployee({
-      employee,
-      foodTruck,
-      assignedLocation,
-    });
-
     const authToken = jwt.sign(
       {
         _id: employee._id,
         userType: 'EMPLOYEE',
         role: 'EMPLOYEE',
         employee_internal_id: employee.employee_internal_id,
-        employee_session_id: employeeSession.employee_session_id,
+        employee_session_id: null,
         vendor_user_id: employee.vendor_user_id,
         food_truck_id: employee.food_truck_id,
         assigned_location_id: employee.assigned_location_id,
@@ -580,7 +573,7 @@ exports.loginEmployee = async (req, res, next) => {
         employee: {
           _id: employee._id,
           employee_internal_id: employee.employee_internal_id,
-          employee_session_id: employeeSession.employee_session_id,
+          employee_session_id: null,
           vendor_user_id: employee.vendor_user_id,
           food_truck_id: employee.food_truck_id,
           assigned_location_id: employee.assigned_location_id,

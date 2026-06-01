@@ -32,8 +32,21 @@ class OrderService extends BaseService {
       q['foodTruck.userId'] = new mongoose.Types.ObjectId(user._id);
     }
     if (user?.userType === 'EMPLOYEE') {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const endOfToday = new Date(startOfToday);
+      endOfToday.setDate(endOfToday.getDate() + 1);
       q.foodTruckId = new mongoose.Types.ObjectId(user.food_truck_id);
       q.locationId = user.assigned_location_id;
+      q.created_by_type = 'EMPLOYEE';
+      q.employee_internal_id = user.employee_internal_id;
+      q.$or = [
+        { created_at: { $gte: startOfToday, $lt: endOfToday } },
+        {
+          created_at: null,
+          createdAt: { $gte: startOfToday, $lt: endOfToday },
+        },
+      ];
     }
     if (id) {
       q['_id'] = new mongoose.Types.ObjectId(id);

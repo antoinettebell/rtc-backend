@@ -30,6 +30,10 @@ router.post('/session/end', allowedTo(['EMPLOYEE']), Controller.endSession);
 
 router.post('/session/duty', allowedTo(['EMPLOYEE']), Controller.toggleDuty);
 
+router.post('/session/action', allowedTo(['EMPLOYEE']), Controller.shiftAction);
+
+router.get('/orders', allowedTo(['EMPLOYEE']), Controller.employeeOrders);
+
 router.get(
   '/refund-cancel-requests',
   allowedTo(['VENDOR', 'EMPLOYEE']),

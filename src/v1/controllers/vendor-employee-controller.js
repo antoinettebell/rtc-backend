@@ -487,35 +487,43 @@ exports.endSession = async (req, res, next) => {
   }
 };
 
+const assertEmployeeCanUseShift = async (user) => {
+  const employee = await Service.getScopedEmployee({
+    vendor_user_id: user.vendor_user_id,
+    employee_id: user._id,
+  });
+
+  if (!employee.is_active || employee.is_archived) {
+    const error = new Error('Employee is not active');
+    error.code = 403;
+    throw error;
+  }
+
+  const foodTruck = await Service.getVendorFoodTruck(
+    user.vendor_user_id,
+    employee.food_truck_id
+  );
+  await assertEmployeeManagementAllowed(foodTruck);
+
+  const assignedLocation = Service.getAssignedLocation(
+    foodTruck,
+    employee.assigned_location_id
+  );
+  if (!assignedLocation) {
+    const error = new Error('Employee assigned location is unavailable');
+    error.code = 404;
+    throw error;
+  }
+
+  return { employee, foodTruck, assignedLocation };
+};
+
 exports.toggleDuty = async (req, res, next) => {
   try {
     const { user, body } = req;
     const isWorking = !!body.is_working;
-    const employee = await Service.getScopedEmployee({
-      vendor_user_id: user.vendor_user_id,
-      employee_id: user._id,
-    });
-
-    if (!employee.is_active || employee.is_archived) {
-      return res.error(new Error('Employee is not active'), 403);
-    }
-
-    const foodTruck = await Service.getVendorFoodTruck(
-      user.vendor_user_id,
-      employee.food_truck_id
-    );
-    await assertEmployeeManagementAllowed(foodTruck);
-
-    const assignedLocation = Service.getAssignedLocation(
-      foodTruck,
-      employee.assigned_location_id
-    );
-    if (!assignedLocation) {
-      return res.error(
-        new Error('Employee assigned location is unavailable'),
-        404
-      );
-    }
+    const { employee, foodTruck, assignedLocation } =
+      await assertEmployeeCanUseShift(user);
 
     employee.is_working = isWorking;
     await employee.save();
@@ -541,20 +549,13 @@ exports.toggleDuty = async (req, res, next) => {
       );
     }
 
-    const employeeSession =
-      await EmployeeSessionService.startSessionForEmployee({
-        employee,
-        foodTruck,
-        assignedLocation,
-      });
-
     const authToken = jwt.sign(
       {
         _id: employee._id,
         userType: 'EMPLOYEE',
         role: 'EMPLOYEE',
         employee_internal_id: employee.employee_internal_id,
-        employee_session_id: employeeSession.employee_session_id,
+        employee_session_id: user.employee_session_id || null,
         vendor_user_id: employee.vendor_user_id,
         food_truck_id: employee.food_truck_id,
         assigned_location_id: employee.assigned_location_id,
@@ -565,16 +566,106 @@ exports.toggleDuty = async (req, res, next) => {
 
     return res.data(
       {
+          employee: {
+            ...employee.toObject(),
+            pin_hash: undefined,
+            employee_session_id: user.employee_session_id || null,
+          },
+        employeeSession: null,
+        assignedLocation,
+        authToken,
+      },
+      'Employee is on duty'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.shiftAction = async (req, res, next) => {
+  try {
+    const { user, body } = req;
+    const action = String(body.action || '').toUpperCase();
+    const { employee, foodTruck, assignedLocation } =
+      await assertEmployeeCanUseShift(user);
+    let employeeSession = null;
+    let authToken = null;
+
+    if (action === 'START') {
+      if (!employee.is_working) {
+        return res.error(
+          new Error('Employee must be On Duty before starting a shift'),
+          403
+        );
+      }
+
+      employeeSession = await EmployeeSessionService.startSessionForEmployee({
+        employee,
+        foodTruck,
+        assignedLocation,
+      });
+      authToken = jwt.sign(
+        {
+          _id: employee._id,
+          userType: 'EMPLOYEE',
+          role: 'EMPLOYEE',
+          employee_internal_id: employee.employee_internal_id,
+          employee_session_id: employeeSession.employee_session_id,
+          vendor_user_id: employee.vendor_user_id,
+          food_truck_id: employee.food_truck_id,
+          assigned_location_id: employee.assigned_location_id,
+        },
+        JWT.secret,
+        { expiresIn: '168h' }
+      );
+    } else if (action === 'PAUSE') {
+      if (!employee.is_working) {
+        return res.error(
+          new Error('Employee must be On Duty before pausing a shift'),
+          403
+        );
+      }
+
+      employeeSession = await EmployeeSessionService.pauseSession({
+        employeeSessionId: user.employee_session_id,
+        employeeInternalId: user.employee_internal_id,
+      });
+    } else if (action === 'RESUME') {
+      if (!employee.is_working) {
+        return res.error(
+          new Error('Employee must be On Duty before resuming a shift'),
+          403
+        );
+      }
+
+      employeeSession = await EmployeeSessionService.resumeSession({
+        employeeSessionId: user.employee_session_id,
+        employeeInternalId: user.employee_internal_id,
+      });
+    } else if (action === 'END') {
+      employee.is_working = false;
+      await employee.save();
+      employeeSession = await EmployeeSessionService.endSession({
+        employeeSessionId: user.employee_session_id,
+        employeeInternalId: user.employee_internal_id,
+      });
+    } else {
+      return res.error(new Error('Invalid shift action'), 409);
+    }
+
+    return res.data(
+      {
         employee: {
           ...employee.toObject(),
           pin_hash: undefined,
-          employee_session_id: employeeSession.employee_session_id,
+          employee_session_id:
+            action === 'END' ? null : employeeSession?.employee_session_id,
         },
         employeeSession,
         assignedLocation,
         authToken,
       },
-      'Employee is working'
+      'Employee shift updated'
     );
   } catch (e) {
     return next(e);
@@ -607,6 +698,26 @@ exports.dashboard = async (req, res, next) => {
     });
 
     return res.data({ dashboard }, 'Employee dashboard');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.employeeOrders = async (req, res, next) => {
+  try {
+    const { user, query } = req;
+    const statuses = query.status
+      ? String(query.status)
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : null;
+    const orders = await EmployeeSessionService.getEmployeeCurrentDayOrders(
+      user,
+      statuses
+    );
+
+    return res.data({ orderList: orders, total: orders.length }, 'Employee orders');
   } catch (e) {
     return next(e);
   }

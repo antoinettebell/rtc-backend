@@ -221,6 +221,7 @@ exports.list = async (req, res, next) => {
     }
     if (user && user.userType === 'EMPLOYEE') {
       q.userId = user.vendor_user_id;
+      q.available = true;
     } else if (user && user.userType !== 'SUPER_ADMIN') {
       q.userId = user._id;
     }
