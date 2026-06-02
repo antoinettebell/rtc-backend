@@ -833,7 +833,11 @@ exports.getOpenEvents = async (req, res, next) => {
 exports.getPublicOpenEvent = async (req, res, next) => {
   try {
     const event = await MarketplaceEventService.update(
-      { event_id: req.params.eventId, status: 'OPEN' },
+      {
+        event_id: req.params.eventId,
+        status: 'OPEN',
+        event_visibility: 'PUBLIC',
+      },
       { $inc: { event_impression_count: 1 } },
       { directApply: true, getNew: true, lean: true }
     );

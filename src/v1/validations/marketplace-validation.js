@@ -6,6 +6,7 @@ const marketplaceEventBody = {
   ticket_sales_enabled: Joi.boolean().default(false),
   ticket_url: Joi.string().uri().allow(null, ''),
   event_type: Joi.string().trim().required(),
+  event_visibility: Joi.string().valid('PUBLIC', 'PRIVATE').default('PRIVATE'),
   event_style: Joi.string().allow(null, ''),
   service_type: Joi.string().allow(null, ''),
   primary_service_style: Joi.string().allow(null, ''),

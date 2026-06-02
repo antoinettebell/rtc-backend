@@ -77,6 +77,15 @@ module.exports = {
       search: Joi.string().allow(''),
       distanceInMeters: Joi.number(),
       type: Joi.string().valid('ALL', 'FOOD', 'EVENT', 'all', 'food', 'event'),
+      cuisineIds: Joi.string().allow(''),
+      cuisines: Joi.string().allow(''),
+      eventTypes: Joi.string().allow(''),
+      eventVisibility: Joi.string().valid(
+        'PUBLIC',
+        'PRIVATE',
+        'public',
+        'private'
+      ),
       limit: Joi.number(),
       page: Joi.number(),
     }),

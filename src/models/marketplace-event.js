@@ -44,6 +44,12 @@ const mSchema = mongoose.Schema(
       type: String,
       required: true,
     },
+    event_visibility: {
+      type: String,
+      enum: ['PUBLIC', 'PRIVATE'],
+      default: 'PRIVATE',
+      index: true,
+    },
     event_style: {
       type: String,
       default: null,

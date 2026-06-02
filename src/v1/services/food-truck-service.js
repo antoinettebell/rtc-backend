@@ -177,6 +177,7 @@ class FoodTruckService extends BaseService {
             $project: {
               reviews: 0,
               minLocationData: 0,
+              fallbackLocationData: 0,
               locationsComputed: 0,
               matchedLocation: 0,
               locationIdExists: 0,
@@ -1394,23 +1395,11 @@ class FoodTruckService extends BaseService {
       },
       {
         $addFields: {
-          minLocationData: {
+          fallbackLocationData: {
             $cond: [
               '$locationIdExists',
               null,
-              {
-                $reduce: {
-                  input: '$locationsComputed',
-                  initialValue: { distance: Number.MAX_VALUE },
-                  in: {
-                    $cond: [
-                      { $lt: ['$$this.distance', '$$value.distance'] },
-                      '$$this',
-                      '$$value',
-                    ],
-                  },
-                },
-              },
+              { $arrayElemAt: ['$locationsComputed', -1] },
             ],
           },
         },
@@ -1418,10 +1407,10 @@ class FoodTruckService extends BaseService {
       {
         $addFields: {
           distance: {
-            $ifNull: ['$distance', '$minLocationData.distance'],
+            $ifNull: ['$distance', '$fallbackLocationData.distance'],
           },
           matchedLocation: {
-            $ifNull: ['$matchedLocation', '$minLocationData.location'],
+            $ifNull: ['$matchedLocation', '$fallbackLocationData.location'],
           },
         },
       },

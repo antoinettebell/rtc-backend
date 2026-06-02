@@ -25,6 +25,38 @@ const toNumberOrNull = (value) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const parseCsvParam = (value) =>
+  String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+const normalizeFilterValue = (value) => String(value || '').trim().toLowerCase();
+
+const matchesFoodCuisineFilters = (item, cuisineIds = [], cuisines = []) => {
+  if (!cuisineIds.length && !cuisines.length) return true;
+
+  const selectedIds = cuisineIds.map(normalizeFilterValue);
+  const selectedNames = cuisines.map(normalizeFilterValue);
+  const truckCuisines = item.raw?.cuisine || [];
+
+  return truckCuisines.some((cuisine) => {
+    const id = normalizeFilterValue(cuisine?._id);
+    const name = normalizeFilterValue(cuisine?.name);
+
+    return (
+      (id && selectedIds.includes(id)) ||
+      (name && selectedNames.includes(name))
+    );
+  });
+};
+
+const matchesEventTypeFilters = (event, eventTypes = []) => {
+  if (!eventTypes.length) return true;
+  const selectedTypes = eventTypes.map(normalizeFilterValue);
+  return selectedTypes.includes(normalizeFilterValue(event.event_type));
+};
+
 const getMarketplaceEventAddress = (event) =>
   event.formatted_address ||
   event.geocoded_address ||
@@ -972,6 +1004,9 @@ exports.nearMe = async (req, res, next) => {
         userLat,
         userLong,
         distanceInMeters,
+        cuisineIds,
+        cuisines,
+        eventTypes,
         type = 'ALL',
       },
       user,
@@ -985,6 +1020,9 @@ exports.nearMe = async (req, res, next) => {
     const numericUserLat = toNumberOrNull(userLat);
     const numericUserLong = toNumberOrNull(userLong);
     const numericDistance = toNumberOrNull(distanceInMeters);
+    const selectedCuisineIds = parseCsvParam(cuisineIds);
+    const selectedCuisines = parseCsvParam(cuisines);
+    const selectedEventTypes = parseCsvParam(eventTypes);
 
     const [foodResult, eventList] = await Promise.all([
       includeFood
@@ -1004,7 +1042,7 @@ exports.nearMe = async (req, res, next) => {
         : { data: [], total: 0 },
       includeEvents
         ? MarketplaceEventService.getByData(
-            { status: 'OPEN' },
+            { status: 'OPEN', event_visibility: 'PUBLIC' },
             {
               sort: { event_date: 1, event_time: 1, created_at: -1 },
               lean: true,
@@ -1026,9 +1064,14 @@ exports.nearMe = async (req, res, next) => {
       return acc;
     }, {});
 
-    const foodItems = (foodResult?.data || []).map(normalizeNearMeFood);
+    const foodItems = (foodResult?.data || [])
+      .map(normalizeNearMeFood)
+      .filter((item) =>
+        matchesFoodCuisineFilters(item, selectedCuisineIds, selectedCuisines)
+      );
     const eventItems = eventList
       .filter((event) => matchesEventSearch(event, search))
+      .filter((event) => matchesEventTypeFilters(event, selectedEventTypes))
       .map((event) =>
         normalizeNearMeEvent(
           event,
