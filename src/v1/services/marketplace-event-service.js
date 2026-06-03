@@ -2,6 +2,7 @@ const {
   MarketplaceEventModel: Model,
   MarketplaceEventImageModel,
   MarketplaceBidModel,
+  MarketplaceApplicationModel,
   MarketplaceAttachmentModel,
 } = require('../../models');
 const { BaseService } = require('../../common-services');
@@ -64,6 +65,10 @@ class MarketplaceEventService extends BaseService {
       { $match: { event_id: { $in: eventIds } } },
       { $group: { _id: '$event_id', total: { $sum: 1 } } },
     ]);
+    const applicationCounts = await MarketplaceApplicationModel.aggregate([
+      { $match: { event_id: { $in: eventIds } } },
+      { $group: { _id: '$event_id', total: { $sum: 1 } } },
+    ]);
     const awardedBids = await MarketplaceBidModel.find({
       event_id: { $in: eventIds },
       bid_status: 'AWARDED',
@@ -85,6 +90,10 @@ class MarketplaceEventService extends BaseService {
       acc[item._id] = item.total;
       return acc;
     }, {});
+    const applicationCountByEventId = applicationCounts.reduce((acc, item) => {
+      acc[item._id] = item.total;
+      return acc;
+    }, {});
     const attachmentsByBidId = attachments.reduce((acc, attachment) => {
       acc[attachment.bid_id] = acc[attachment.bid_id] || [];
       acc[attachment.bid_id].push(attachment);
@@ -102,6 +111,10 @@ class MarketplaceEventService extends BaseService {
     return events.map((event) => ({
       ...event,
       bid_count: countByEventId[event.event_id] || 0,
+      application_count: applicationCountByEventId[event.event_id] || 0,
+      submission_count:
+        (countByEventId[event.event_id] || 0) +
+        (applicationCountByEventId[event.event_id] || 0),
       awarded_bids: awardedBidsByEventId[event.event_id] || [],
     }));
   }

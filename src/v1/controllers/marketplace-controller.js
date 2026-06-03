@@ -18,6 +18,7 @@ const {
 const { addObjectWithKey, removeObject } = require('../../helper/aws');
 const PaymentHelper = require('../../helper/payment-helper');
 const DocuSignHelper = require('../../helper/docusign-helper');
+const CustomNotification = require('../../helper/custom-notification');
 
 const buildError = (message, code = 400) => {
   const error = new Error(message);
@@ -30,6 +31,63 @@ const COORDINATOR_AWARD_FEE_RATE = 0.035;
 const VENDOR_EVENT_PROCESSING_RATE = 0.02;
 
 const roundMoney = (value) => Number((Number(value || 0)).toFixed(2));
+const ACTIVE_EVENT_STATUSES = ['OPEN', 'REOPENED'];
+const DRAFT_TTL_DAYS = 7;
+
+const asArray = (value) => {
+  if (Array.isArray(value)) {
+    return value.filter((item) => item != null && String(item).trim() !== '');
+  }
+  if (value == null || value === '') {
+    return [];
+  }
+  return [String(value)];
+};
+
+const hasText = (value) => String(value || '').trim().length > 0;
+
+const normalizeTime = (value) => {
+  if (!hasText(value)) {
+    return null;
+  }
+  const raw = String(value).trim();
+  const amPmMatch = raw.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (amPmMatch) {
+    let hour = Number(amPmMatch[1]);
+    const minute = amPmMatch[2];
+    const meridian = amPmMatch[3].toUpperCase();
+    if (hour < 1 || hour > 12) {
+      throw buildError('Time must use HH:mm AM/PM format', 400);
+    }
+    if (meridian === 'PM' && hour !== 12) hour += 12;
+    if (meridian === 'AM' && hour === 12) hour = 0;
+    return `${String(hour).padStart(2, '0')}:${minute}`;
+  }
+  const militaryMatch = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (militaryMatch) {
+    const hour = Number(militaryMatch[1]);
+    const minute = Number(militaryMatch[2]);
+    if (hour > 23 || minute > 59) {
+      throw buildError('Time must use a valid HH:mm value', 400);
+    }
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+  }
+  throw buildError('Time must use HH:mm AM/PM format', 400);
+};
+
+const combineDateAndTime = (dateValue, timeValue) => {
+  if (!dateValue) {
+    return null;
+  }
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  const normalizedTime = normalizeTime(timeValue) || '23:59';
+  const [hours, minutes] = normalizedTime.split(':').map(Number);
+  date.setHours(hours, minutes, 0, 0);
+  return date;
+};
 
 const normalizeMarketplaceEventLocation = (body) => {
   const latitude =
@@ -54,11 +112,227 @@ const normalizeMarketplaceEventLocation = (body) => {
 };
 
 const normalizeMarketplaceVendorCount = (body) => {
-  if (body.primary_service_style === 'Food Truck') {
+  const serviceTypes = asArray(body.service_types?.length ? body.service_types : body.service_type);
+  if (body.primary_service_style === 'Food Truck' || serviceTypes.includes('Food Truck')) {
     return Math.max(1, Math.ceil(Number(body.number_of_guests || 0) / 75));
   }
 
   return Math.max(1, Number(body.number_of_vendors_needed || 1));
+};
+
+const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = {}) => {
+  const status = body.status || existingEvent?.status || 'OPEN';
+  const isDraft = status === 'DRAFT';
+  const serviceTypes = asArray(body.service_types?.length ? body.service_types : body.service_type);
+  let serviceStyles = asArray(body.service_styles);
+  let primaryServiceStyle = body.primary_service_style || existingEvent?.primary_service_style || '';
+
+  if (serviceTypes.includes('Food Truck')) {
+    primaryServiceStyle = 'Food Truck';
+    if (!serviceStyles.includes('Food Truck')) {
+      serviceStyles = [...serviceStyles, 'Food Truck'];
+    }
+  }
+
+  const permitsRequired = asArray(body.permits_required);
+  let alcoholRequired = Boolean(body.alcohol_required);
+  if (permitsRequired.includes('Alcohol')) {
+    alcoholRequired = true;
+  }
+
+  let equipmentNeeded = asArray(body.equipment_needed);
+  if (equipmentNeeded.includes('None') && equipmentNeeded.length > 1) {
+    equipmentNeeded = ['None'];
+  }
+
+  const paymentResponsibility = body.payment_responsibility || 'NONE';
+  let vendorFee = roundMoney(body.vendor_fee || 0);
+  let budgetedAmount = roundMoney(body.budgeted_amount || 0);
+  if (paymentResponsibility === 'COORDINATOR') {
+    vendorFee = 0;
+  } else if (paymentResponsibility === 'VENDOR') {
+    budgetedAmount = 0;
+  }
+
+  const normalizedEventTime = normalizeTime(body.event_time);
+  const normalizedCloseTime = normalizeTime(body.event_close_time);
+  const eventCloseDate = combineDateAndTime(body.event_close_date, normalizedCloseTime);
+
+  const normalized = normalizeMarketplaceEventLocation({
+    ...body,
+    status,
+    service_type: serviceTypes[0] || body.service_type || null,
+    service_types: serviceTypes,
+    service_styles: serviceStyles,
+    primary_service_style: primaryServiceStyle || null,
+    alcohol_required: alcoholRequired,
+    equipment_needed: equipmentNeeded,
+    vendor_fee: vendorFee,
+    budgeted_amount: budgetedAmount,
+    payment_responsibility: paymentResponsibility,
+    event_time: normalizedEventTime,
+    event_close_time: normalizedCloseTime,
+    event_close_date: eventCloseDate,
+    draft_expires_at:
+      isDraft && !existingEvent?.draft_expires_at
+        ? new Date(Date.now() + DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000)
+        : existingEvent?.draft_expires_at || null,
+  });
+
+  if (isDraft) {
+    return normalized;
+  }
+
+  const requiredFields = [
+    ['event_name', 'Event name is required.'],
+    ['event_type', 'Event type is required.'],
+    ['primary_service_style', 'Primary service style is required.'],
+    ['event_date', 'Event date is required.'],
+    ['event_address', 'Event address is required.'],
+    ['event_city', 'Event city is required.'],
+    ['event_state', 'Event state is required.'],
+    ['number_of_guests', 'Number of guests is required.'],
+    ['event_close_date', 'Close date and time are required.'],
+  ];
+  requiredFields.forEach(([field, message]) => {
+    if (normalized[field] == null || normalized[field] === '') {
+      throw buildError(message, 400);
+    }
+  });
+
+  if (normalized.event_type === 'Other' && !hasText(normalized.event_type_other)) {
+    throw buildError('Other event type details are required.', 400);
+  }
+  if (serviceTypes.includes('Food Truck') && primaryServiceStyle !== 'Food Truck') {
+    throw buildError('Food Truck service type must use Food Truck as the primary service style.', 400);
+  }
+  if (serviceTypes.includes('Food Truck') && ['Plated', 'Formal'].includes(primaryServiceStyle)) {
+    throw buildError('Food Truck cannot use Plated/Formal Service as its primary style.', 400);
+  }
+  if (alcoholRequired && !permitsRequired.includes('Alcohol')) {
+    throw buildError('Alcohol Permit is required when Alcohol Service is selected.', 400);
+  }
+  if (paymentResponsibility === 'COORDINATOR' && budgetedAmount <= 0) {
+    throw buildError('Budget amount is required when the event coordinator pays vendors.', 400);
+  }
+  if (paymentResponsibility === 'VENDOR' && vendorFee <= 0) {
+    throw buildError('Vendor fee is required when vendors pay to attend.', 400);
+  }
+  if (paymentResponsibility === 'BOTH' && (budgetedAmount <= 0 || vendorFee <= 0)) {
+    throw buildError('Budget amount and vendor fee are required when both parties pay.', 400);
+  }
+  if (['COORDINATOR', 'BOTH'].includes(paymentResponsibility)) {
+    const minimumBudget = Number(normalized.number_of_guests || 0) * 25;
+    if (budgetedAmount < minimumBudget) {
+      throw buildError(`Budget amount must be at least $${minimumBudget.toFixed(2)} for this guest count.`, 400);
+    }
+  }
+
+  normalized.number_of_guests = Number(normalized.number_of_guests);
+  normalized.number_of_vendors_needed = normalizeMarketplaceVendorCount(normalized);
+  normalized.draft_expires_at = null;
+  normalized.archived_at = null;
+  return normalized;
+};
+
+const sendEventClosedNotification = async (event) => {
+  if (!event?.customer_user_id || event.close_notification_sent_at) {
+    return;
+  }
+  try {
+    await CustomNotification.sendNotificationToUsers({
+      [String(event.customer_user_id)]: {
+        title: 'Event submissions closed',
+        body: `${event.event_name || 'Your event'} is closed to new submissions.`,
+        data: {
+          notificationType: 'MARKETPLACE_EVENT_CLOSED',
+          eventId: event.event_id,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Marketplace close notification failed', {
+      eventId: event.event_id,
+      message: error.message,
+    });
+  }
+};
+
+const closeExpiredMarketplaceEvents = async () => {
+  const now = new Date();
+  const expiredEvents = await MarketplaceEventService.getByData(
+    {
+      status: { $in: ACTIVE_EVENT_STATUSES },
+      event_close_date: { $lte: now },
+    },
+    { lean: true }
+  );
+  if (!expiredEvents.length) {
+    return [];
+  }
+  await MarketplaceEventService.getModel().updateMany(
+    { event_id: { $in: expiredEvents.map((event) => event.event_id) } },
+    { $set: { status: 'CLOSED', closed_at: now } }
+  );
+  for (const event of expiredEvents) {
+    await sendEventClosedNotification(event);
+  }
+  await MarketplaceEventService.getModel().updateMany(
+    {
+      event_id: { $in: expiredEvents.map((event) => event.event_id) },
+      close_notification_sent_at: null,
+    },
+    { $set: { close_notification_sent_at: now } }
+  );
+  return expiredEvents.map((event) => event.event_id);
+};
+
+const archiveExpiredDrafts = async (customerUserId = null) => {
+  const query = {
+    status: 'DRAFT',
+    draft_expires_at: { $lte: new Date() },
+    archived_at: null,
+  };
+  if (customerUserId) {
+    query.customer_user_id = customerUserId;
+  }
+  await MarketplaceEventService.getModel().updateMany(query, {
+    $set: { status: 'CANCELLED', archived_at: new Date() },
+  });
+};
+
+const assertEventOpenForSubmission = async (event) => {
+  if (!event || !ACTIVE_EVENT_STATUSES.includes(event.status)) {
+    throw buildError('This event is closed to new submissions.', 410);
+  }
+  if (event.event_close_date && new Date(event.event_close_date) <= new Date()) {
+    await closeExpiredMarketplaceEvents();
+    throw buildError('This event is closed to new submissions.', 410);
+  }
+};
+
+const assertVendorCanSubmitRound = async (event, vendorUserId) => {
+  const [previousBid, previousApplication] = await Promise.all([
+    MarketplaceBidService.getByData(
+      {
+        event_id: event.event_id,
+        vendor_user_id: vendorUserId,
+        bid_status: { $nin: ['WITHDRAWN'] },
+      },
+      { singleResult: true, lean: true }
+    ),
+    MarketplaceApplicationService.getByData(
+      {
+        event_id: event.event_id,
+        vendor_user_id: vendorUserId,
+        application_status: { $nin: ['WITHDRAWN'] },
+      },
+      { singleResult: true, lean: true }
+    ),
+  ]);
+  if (previousBid || previousApplication) {
+    throw buildError('You already submitted for this event and cannot submit again after reopen.', 409);
+  }
 };
 
 const normalizeOpaquePaymentData = (paymentData) => {
@@ -182,6 +456,251 @@ const createFileAudit = (attachment, req, action, reason = null) =>
     reason,
   });
 
+const toPlainObject = (value) => {
+  if (!value) {
+    return value;
+  }
+
+  if (typeof value.toObject === 'function') {
+    return value.toObject();
+  }
+
+  return { ...value };
+};
+
+const getPaymentScenario = (event = {}) => {
+  const coordinatorPays = roundMoney(event.budgeted_amount || 0) > 0;
+  const vendorPays = roundMoney(event.vendor_fee || 0) > 0;
+
+  if (coordinatorPays && vendorPays) {
+    return 'BOTH';
+  }
+  if (vendorPays) {
+    return 'VENDOR_PAYS';
+  }
+  if (coordinatorPays) {
+    return 'COORDINATOR_PAYS';
+  }
+
+  return 'NO_PAYMENT';
+};
+
+const isAgreementSatisfied = (event = {}) =>
+  !event.agreement_status ||
+  ['NOT_REQUIRED', 'ACKNOWLEDGED', 'SIGNED'].includes(event.agreement_status);
+
+const isCoordinatorPaymentSatisfied = (event = {}, bid = null, application = null) => {
+  const coordinatorPays = roundMoney(event.budgeted_amount || 0) > 0;
+  if (!coordinatorPays) {
+    return true;
+  }
+
+  const matched =
+    bid?.bid_status === 'AWARDED' ||
+    ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'].includes(
+      application?.application_status
+    );
+
+  if (!matched) {
+    return false;
+  }
+
+  const awardPaymentSatisfied = ['PAID', 'NOT_REQUIRED'].includes(
+    event.award_payment_status || 'NOT_REQUIRED'
+  );
+
+  return awardPaymentSatisfied && isAgreementSatisfied(event);
+};
+
+const isVendorPaymentSatisfied = (event = {}, application = null) => {
+  const vendorPays = roundMoney(event.vendor_fee || 0) > 0;
+  if (!vendorPays) {
+    return true;
+  }
+
+  return (
+    application?.payment_status === 'PAID' ||
+    application?.application_status === 'PAID' ||
+    application?.application_status === 'CONFIRMED' ||
+    (application?.transaction_id && application?.payment_status === 'PAID')
+  );
+};
+
+const getMarketplaceUnlockState = ({ event, bid = null, application = null }) => {
+  const scenario = getPaymentScenario(event);
+  const coordinatorPaymentSatisfied = isCoordinatorPaymentSatisfied(
+    event,
+    bid,
+    application
+  );
+  const vendorPaymentSatisfied = isVendorPaymentSatisfied(event, application);
+  const matchSatisfied =
+    bid?.bid_status === 'AWARDED' ||
+    ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'].includes(
+      application?.application_status
+    );
+  const detailsUnlocked =
+    scenario === 'NO_PAYMENT'
+      ? matchSatisfied
+      : coordinatorPaymentSatisfied && vendorPaymentSatisfied;
+
+  return {
+    scenario,
+    details_unlocked: !!detailsUnlocked,
+    obligations: {
+      match_satisfied: !!matchSatisfied,
+      coordinator_payment_satisfied: !!coordinatorPaymentSatisfied,
+      vendor_payment_satisfied: !!vendorPaymentSatisfied,
+      agreement_satisfied: isAgreementSatisfied(event),
+    },
+  };
+};
+
+const redactLockedMarketplaceEvent = (event, unlockState, { fullAccess = false } = {}) => {
+  const plainEvent = toPlainObject(event);
+  if (!plainEvent) {
+    return plainEvent;
+  }
+
+  const marketplace_unlock = unlockState || {
+    scenario: getPaymentScenario(plainEvent),
+    details_unlocked: false,
+    obligations: {
+      match_satisfied: false,
+      coordinator_payment_satisfied: false,
+      vendor_payment_satisfied: false,
+      agreement_satisfied: isAgreementSatisfied(plainEvent),
+    },
+  };
+
+  if (fullAccess || marketplace_unlock.details_unlocked) {
+    return {
+      ...plainEvent,
+      marketplace_unlock,
+    };
+  }
+
+  const redacted = {
+    ...plainEvent,
+    marketplace_unlock,
+    exact_address_locked: true,
+    contracts_locked: true,
+    logistics_locked: true,
+  };
+
+  [
+    'event_address',
+    'formatted_address',
+    'geocoded_address',
+    'latitude',
+    'longitude',
+    'place_id',
+    'geocoding_provider',
+    'geocoded_at',
+    'agreement_envelope_id',
+    'agreement_sent_at',
+    'agreement_signed_at',
+    'signed_document_url',
+    'signer_name',
+    'signer_email',
+    'agreement_error_message',
+    'logistics_packet_url',
+    'logistics_packet_key',
+    'event_brief_url',
+    'event_brief_key',
+    'private_documents',
+    'coordinator_documents',
+  ].forEach((field) => {
+    delete redacted[field];
+  });
+
+  return redacted;
+};
+
+const redactLockedMarketplaceRecord = (
+  record,
+  unlockState,
+  { fullAccess = false } = {}
+) => {
+  const plainRecord = toPlainObject(record);
+  if (!plainRecord || fullAccess || unlockState?.details_unlocked) {
+    return plainRecord;
+  }
+
+  const redacted = {
+    ...plainRecord,
+    marketplace_unlock: unlockState,
+    private_details_locked: true,
+  };
+
+  [
+    'phone',
+    'email',
+    'contact_name',
+    'agreement_document_url',
+    'agreement_document_key',
+    'signed_document_url',
+    'agreement_envelope_id',
+    'agreement_sent_at',
+    'agreement_signed_at',
+    'signer_name',
+    'signer_email',
+    'agreement_error_message',
+    'permit_license_urls',
+    'permit_license_keys',
+    'private_documents',
+    'coordinator_documents',
+  ].forEach((field) => {
+    delete redacted[field];
+  });
+
+  if (redacted.vendor_user_id && typeof redacted.vendor_user_id === 'object') {
+    redacted.vendor_user_id = {
+      _id: redacted.vendor_user_id._id,
+    };
+  }
+
+  return redacted;
+};
+
+const isSensitiveMarketplaceAttachment = (attachment = {}) =>
+  [
+    'PERMIT_LICENSE',
+    'AGREEMENT_DOCUMENT',
+    'EVENT_BRIEF',
+    'LOGISTICS_PACKET',
+    'PRIVATE_DOCUMENT',
+    'COMPLIANCE_DOCUMENT',
+  ].includes(attachment.attachment_type);
+
+const filterLockedAttachments = (attachments = [], unlockState, { fullAccess = false } = {}) => {
+  if (fullAccess || unlockState?.details_unlocked) {
+    return attachments;
+  }
+
+  return attachments.filter(
+    (attachment) => !isSensitiveMarketplaceAttachment(attachment)
+  );
+};
+
+const assertVendorAttachmentUnlocked = async (attachment, bid) => {
+  if (!isSensitiveMarketplaceAttachment(attachment)) {
+    return;
+  }
+
+  const event = await MarketplaceEventService.getByData(
+    { event_id: attachment.event_id },
+    { singleResult: true, lean: true }
+  );
+  const unlockState = getMarketplaceUnlockState({ event, bid });
+  if (!unlockState.details_unlocked) {
+    throw buildError(
+      'Marketplace file unlock requires the required payment or match condition',
+      403
+    );
+  }
+};
+
 const getAccessibleAttachment = async (attachmentId, user) => {
   const attachment = await MarketplaceAttachmentService.getByData(
     { attachment_id: attachmentId },
@@ -205,7 +724,8 @@ const getAccessibleAttachment = async (attachmentId, user) => {
     if (!attachment.bid_id) {
       throw buildError('Marketplace repository file not found', 404);
     }
-    await getOwnedBid(attachment.bid_id, user._id);
+    const bid = await getOwnedBid(attachment.bid_id, user._id);
+    await assertVendorAttachmentUnlocked(attachment, bid);
     return attachment;
   }
 
@@ -293,10 +813,11 @@ const assertCustomerEventCoordinator = async (userId) => {
   if (
     !customer ||
     !customer.isEventCoordinator ||
+    !customer.eventCoordinatorTaxIdEncrypted &&
     !customer.eventCoordinatorEin
   ) {
     throw buildError(
-      'Event coordination profile with company EIN is required to access My Events.',
+      'Event coordination profile with tax ID is required to access My Events.',
       403
     );
   }
@@ -360,7 +881,7 @@ const getEventForUser = async (eventId, user) => {
       throw buildError('Marketplace event not found', 404);
     }
 
-    if (event.status === 'OPEN') {
+    if (ACTIVE_EVENT_STATUSES.includes(event.status)) {
       return event;
     }
 
@@ -396,7 +917,7 @@ const getEventForUser = async (eventId, user) => {
   throw buildError('You do not have access to this marketplace event', 403);
 };
 
-const attachEventsToBids = async (bids = []) => {
+const attachEventsToBids = async (bids = [], options = {}) => {
   const eventIds = [...new Set(bids.map((bid) => bid.event_id).filter(Boolean))];
   if (!eventIds.length) {
     return bids;
@@ -411,13 +932,26 @@ const attachEventsToBids = async (bids = []) => {
     return acc;
   }, {});
 
-  return bids.map((bid) => ({
-    ...bid,
-    marketplaceEvent: eventById[bid.event_id] || null,
-  }));
+  return bids.map((bid) => {
+    const event = eventById[bid.event_id] || null;
+    const unlockState = event
+      ? getMarketplaceUnlockState({ event, bid })
+      : null;
+    const visibleBid =
+      options.redactRecord === false
+        ? toPlainObject(bid)
+        : redactLockedMarketplaceRecord(bid, unlockState, options);
+    return {
+      ...visibleBid,
+      marketplace_unlock: unlockState,
+      marketplaceEvent: event
+        ? redactLockedMarketplaceEvent(event, unlockState, options)
+        : null,
+    };
+  });
 };
 
-const attachEventsToApplications = async (applications = []) => {
+const attachEventsToApplications = async (applications = [], options = {}) => {
   const eventIds = [
     ...new Set(applications.map((item) => item.event_id).filter(Boolean)),
   ];
@@ -434,13 +968,26 @@ const attachEventsToApplications = async (applications = []) => {
     return acc;
   }, {});
 
-  return applications.map((application) => ({
-    ...application,
-    marketplaceEvent: eventById[application.event_id] || null,
-  }));
+  return applications.map((application) => {
+    const event = eventById[application.event_id] || null;
+    const unlockState = event
+      ? getMarketplaceUnlockState({ event, application })
+      : null;
+    const visibleApplication =
+      options.redactRecord === false
+        ? toPlainObject(application)
+        : redactLockedMarketplaceRecord(application, unlockState, options);
+    return {
+      ...visibleApplication,
+      marketplace_unlock: unlockState,
+      marketplaceEvent: event
+        ? redactLockedMarketplaceEvent(event, unlockState, options)
+        : null,
+    };
+  });
 };
 
-const attachFilesToBids = async (bids = []) => {
+const attachFilesToBids = async (bids = [], options = {}) => {
   const bidIds = [...new Set(bids.map((bid) => bid.bid_id).filter(Boolean))];
   if (!bidIds.length) {
     return bids;
@@ -458,11 +1005,15 @@ const attachFilesToBids = async (bids = []) => {
 
   return bids.map((bid) => ({
     ...bid,
-    attachments: attachmentsByBidId[bid.bid_id] || [],
+    attachments: filterLockedAttachments(
+      attachmentsByBidId[bid.bid_id] || [],
+      bid.marketplace_unlock,
+      options
+    ),
   }));
 };
 
-const attachFilesToApplications = async (applications = []) => {
+const attachFilesToApplications = async (applications = [], options = {}) => {
   const applicationIds = [
     ...new Set(applications.map((item) => item.application_id).filter(Boolean)),
   ];
@@ -482,7 +1033,11 @@ const attachFilesToApplications = async (applications = []) => {
 
   return applications.map((application) => ({
     ...application,
-    attachments: attachmentsByApplicationId[application.application_id] || [],
+    attachments: filterLockedAttachments(
+      attachmentsByApplicationId[application.application_id] || [],
+      application.marketplace_unlock,
+      options
+    ),
   }));
 };
 
@@ -726,14 +1281,83 @@ exports.createEvent = async (req, res, next) => {
     }
     await assertCustomerEventCoordinator(req.user._id);
 
+    const normalizedEvent = normalizeMarketplaceEventPayload(req.body);
     const marketplaceEvent = await MarketplaceEventService.create({
-      ...normalizeMarketplaceEventLocation(req.body),
-      number_of_vendors_needed: normalizeMarketplaceVendorCount(req.body),
+      ...normalizedEvent,
       customer_user_id: req.user._id,
-      status: req.body.status || 'DRAFT',
     });
 
     return res.data({ marketplaceEvent }, 'Marketplace event created');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.updateEvent = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'CUSTOMER') {
+      throw buildError('Only customers can update marketplace events', 403);
+    }
+    const event = await getOwnedEvent(req.params.eventId, req.user._id);
+    if (['AWARDED', 'CANCELLED'].includes(event.status)) {
+      throw buildError('Awarded or cancelled events cannot be edited.', 400);
+    }
+    const normalizedEvent = normalizeMarketplaceEventPayload(
+      {
+        ...toPlainObject(event),
+        ...req.body,
+        status: req.body.status || event.status,
+      },
+      { existingEvent: event }
+    );
+    const marketplaceEvent = await MarketplaceEventService.update(
+      { event_id: req.params.eventId, customer_user_id: req.user._id },
+      { $set: normalizedEvent },
+      { getNew: true }
+    );
+
+    return res.data({ marketplaceEvent }, 'Marketplace event updated');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.reopenEvent = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'CUSTOMER') {
+      throw buildError('Only customers can reopen marketplace events', 403);
+    }
+    const event = await getOwnedEvent(req.params.eventId, req.user._id);
+    if ((event.reopen_count || 0) >= 2) {
+      throw buildError('This event has already been reopened two times.', 400);
+    }
+    if (event.status === 'AWARDED') {
+      throw buildError('Awarded events cannot be reopened.', 400);
+    }
+    const normalizedEvent = normalizeMarketplaceEventPayload(
+      {
+        ...toPlainObject(event),
+        ...req.body,
+        status: 'REOPENED',
+      },
+      { existingEvent: event }
+    );
+    const marketplaceEvent = await MarketplaceEventService.update(
+      { event_id: req.params.eventId, customer_user_id: req.user._id },
+      {
+        $set: {
+          ...normalizedEvent,
+          status: 'REOPENED',
+          closed_at: null,
+          close_notification_sent_at: null,
+          current_submission_round: (event.current_submission_round || 1) + 1,
+        },
+        $inc: { reopen_count: 1 },
+      },
+      { getNew: true }
+    );
+
+    return res.data({ marketplaceEvent }, 'Marketplace event reopened');
   } catch (e) {
     return next(e);
   }
@@ -745,6 +1369,10 @@ exports.myEvents = async (req, res, next) => {
       throw buildError('Only customers can view their marketplace events', 403);
     }
     await assertCustomerEventCoordinator(req.user._id);
+    await Promise.all([
+      closeExpiredMarketplaceEvents(),
+      archiveExpiredDrafts(req.user._id),
+    ]);
 
     const marketplaceEventList = await MarketplaceEventService.getMyEvents(
       req.user._id
@@ -758,6 +1386,7 @@ exports.myEvents = async (req, res, next) => {
 
 exports.getEvent = async (req, res, next) => {
   try {
+    await closeExpiredMarketplaceEvents();
     const event = await getEventForUser(req.params.eventId, req.user);
     if (
       event.agreement_provider === 'DOCUSIGN' &&
@@ -781,8 +1410,44 @@ exports.getEvent = async (req, res, next) => {
     const marketplaceEvent = await MarketplaceEventService.getWithImages(
       event.event_id
     );
+    let unlockState = null;
+    let marketplaceBid = null;
+    let marketplaceApplication = null;
 
-    return res.data({ marketplaceEvent }, 'Marketplace event');
+    if (req.user.userType === 'VENDOR') {
+      marketplaceBid = await MarketplaceBidService.getByData(
+        {
+          event_id: event.event_id,
+          vendor_user_id: req.user._id,
+          bid_status: { $nin: ['WITHDRAWN'] },
+        },
+        { singleResult: true, lean: true }
+      );
+      marketplaceApplication = await MarketplaceApplicationService.getByData(
+        {
+          event_id: event.event_id,
+          vendor_user_id: req.user._id,
+          application_status: { $nin: ['WITHDRAWN'] },
+        },
+        { singleResult: true, lean: true }
+      );
+      unlockState = getMarketplaceUnlockState({
+        event: marketplaceEvent,
+        bid: marketplaceBid,
+        application: marketplaceApplication,
+      });
+    }
+
+    const fullAccess = ['CUSTOMER', 'SUPER_ADMIN'].includes(req.user.userType);
+
+    return res.data(
+      {
+        marketplaceEvent: redactLockedMarketplaceEvent(marketplaceEvent, unlockState, {
+          fullAccess,
+        }),
+      },
+      'Marketplace event'
+    );
   } catch (e) {
     return next(e);
   }
@@ -795,9 +1460,13 @@ exports.getOpenEvents = async (req, res, next) => {
     }
 
     await getVendorMarketplaceFoodTruck(req.user._id);
+    await closeExpiredMarketplaceEvents();
 
     const openEvents = await MarketplaceEventService.getByData(
-      { status: 'OPEN' },
+      {
+        status: { $in: ACTIVE_EVENT_STATUSES },
+        event_close_date: { $gt: new Date() },
+      },
       {
         paging: {
           limit: Number(req.query.limit || 20),
@@ -810,12 +1479,22 @@ exports.getOpenEvents = async (req, res, next) => {
     const marketplaceEventList = await MarketplaceEventService.attachImages(
       openEvents
     );
+    const visibleMarketplaceEventList = marketplaceEventList.map((event) =>
+      redactLockedMarketplaceEvent(
+        event,
+        getMarketplaceUnlockState({ event }),
+        { fullAccess: false }
+      )
+    );
 
-    const total = await MarketplaceEventService.getCount({ status: 'OPEN' });
+    const total = await MarketplaceEventService.getCount({
+      status: { $in: ACTIVE_EVENT_STATUSES },
+      event_close_date: { $gt: new Date() },
+    });
 
     return res.data(
       {
-        marketplaceEventList,
+        marketplaceEventList: visibleMarketplaceEventList,
         total,
         page: Number(req.query.page || 1),
         totalPages:
@@ -881,22 +1560,60 @@ exports.trackPublicEventTicketClick = async (req, res, next) => {
 
 exports.getEventBids = async (req, res, next) => {
   try {
-    await getOwnedEvent(req.params.eventId, req.user._id);
+    const event = await getOwnedEvent(req.params.eventId, req.user._id);
 
-    const bids = await MarketplaceBidService.getByData(
-      { event_id: req.params.eventId, bid_status: { $ne: 'DRAFT' } },
-      {
-        sort: { submitted_at: -1, created_at: -1 },
-        populate: [
-          { path: 'vendor_user_id', select: 'firstName lastName email' },
-          { path: 'food_truck_id', select: 'name logo cuisine' },
-        ],
-        lean: true,
-      }
+    const [bids, applications] = await Promise.all([
+      MarketplaceBidService.getByData(
+        { event_id: req.params.eventId, bid_status: { $ne: 'DRAFT' } },
+        {
+          sort: { submitted_at: -1, created_at: -1 },
+          populate: [
+            { path: 'vendor_user_id', select: 'firstName lastName email' },
+            { path: 'food_truck_id', select: 'name logo cuisine' },
+          ],
+          lean: true,
+        }
+      ),
+      MarketplaceApplicationService.getByData(
+        { event_id: req.params.eventId, application_status: { $ne: 'DRAFT' } },
+        {
+          sort: { submitted_at: -1, created_at: -1 },
+          populate: [
+            { path: 'vendor_user_id', select: 'firstName lastName email' },
+            { path: 'food_truck_id', select: 'name logo cuisine' },
+          ],
+          lean: true,
+        }
+      ),
+    ]);
+    const bidsWithUnlock = bids.map((bid) => {
+      const unlockState = getMarketplaceUnlockState({ event, bid });
+      return {
+        ...redactLockedMarketplaceRecord(bid, unlockState, {
+          fullAccess: false,
+        }),
+        marketplace_unlock: unlockState,
+      };
+    });
+    const marketplaceBidList = await attachFilesToBids(bidsWithUnlock, {
+      fullAccess: false,
+    });
+    const marketplaceApplicationList = await attachFilesToApplications(
+      applications.map((application) => ({
+        ...application,
+        marketplace_unlock: getMarketplaceUnlockState({ event, application }),
+      })),
+      { fullAccess: false }
     );
-    const marketplaceBidList = await attachFilesToBids(bids);
 
-    return res.data({ marketplaceBidList }, 'Marketplace event bids');
+    return res.data(
+      {
+        marketplaceBidList,
+        marketplaceApplicationList,
+        final_submission_count: marketplaceBidList.length + marketplaceApplicationList.length,
+      },
+      'Marketplace event submissions'
+    );
   } catch (e) {
     return next(e);
   }
@@ -909,14 +1626,17 @@ exports.submitBid = async (req, res, next) => {
     }
 
     const foodTruck = await getVendorMarketplaceFoodTruck(req.user._id);
+    await closeExpiredMarketplaceEvents();
     const event = await MarketplaceEventService.getByData(
-      { event_id: req.params.eventId, status: 'OPEN' },
+      { event_id: req.params.eventId, status: { $in: ACTIVE_EVENT_STATUSES } },
       { singleResult: true }
     );
 
     if (!event) {
-      throw buildError('Open marketplace event not found', 404);
+      throw buildError('This event is closed to new submissions.', 410);
     }
+    await assertEventOpenForSubmission(event);
+    await assertVendorCanSubmitRound(event, req.user._id);
 
     if (req.body.nda_required && !req.body.nda_acknowledged) {
       throw buildError('NDA acknowledgment is required for this bid', 400);
@@ -950,6 +1670,7 @@ exports.submitBid = async (req, res, next) => {
       event_id: req.params.eventId,
       vendor_user_id: req.user._id,
       food_truck_id: foodTruck._id,
+      submission_round: event.current_submission_round || 1,
       nda_acknowledged_at: ndaAcknowledgedAt,
       agreement_status: req.body.nda_acknowledged
         ? 'ACKNOWLEDGED'
@@ -1008,7 +1729,11 @@ exports.myBids = async (req, res, next) => {
       { sort: { submitted_at: -1, created_at: -1 }, lean: true }
     );
     const marketplaceBidList = await attachFilesToBids(
-      await attachEventsToBids(bids)
+      await attachEventsToBids(bids, {
+        fullAccess: false,
+        redactRecord: false,
+      }),
+      { fullAccess: false, redactRecord: false }
     );
 
     return res.data({ marketplaceBidList }, 'Marketplace bids');
@@ -1024,14 +1749,17 @@ exports.submitApplication = async (req, res, next) => {
     }
 
     const foodTruck = await getVendorMarketplaceFoodTruck(req.user._id);
+    await closeExpiredMarketplaceEvents();
     const event = await MarketplaceEventService.getByData(
-      { event_id: req.params.eventId, status: 'OPEN' },
+      { event_id: req.params.eventId, status: { $in: ACTIVE_EVENT_STATUSES } },
       { singleResult: true }
     );
 
     if (!event) {
-      throw buildError('Open marketplace event not found', 404);
+      throw buildError('This event is closed to new submissions.', 410);
     }
+    await assertEventOpenForSubmission(event);
+    await assertVendorCanSubmitRound(event, req.user._id);
 
     if (roundMoney(event.vendor_fee || 0) <= 0) {
       throw buildError('This event uses the bid flow, not applications', 400);
@@ -1066,6 +1794,7 @@ exports.submitApplication = async (req, res, next) => {
       event_id: req.params.eventId,
       vendor_user_id: req.user._id,
       food_truck_id: foodTruck._id,
+      submission_round: event.current_submission_round || 1,
       nda_acknowledged_at: req.body.nda_acknowledged ? new Date() : null,
       application_status: req.body.application_status || 'SUBMITTED',
       payment_status: 'NOT_REQUIRED',
@@ -1097,7 +1826,11 @@ exports.myApplications = async (req, res, next) => {
       { sort: { submitted_at: -1, created_at: -1 }, lean: true }
     );
     const marketplaceApplicationList = await attachFilesToApplications(
-      await attachEventsToApplications(applications)
+      await attachEventsToApplications(applications, {
+        fullAccess: false,
+        redactRecord: false,
+      }),
+      { fullAccess: false, redactRecord: false }
     );
 
     return res.data(
@@ -1122,7 +1855,11 @@ exports.awardedBids = async (req, res, next) => {
       { sort: { updated_at: -1 }, lean: true }
     );
     const marketplaceBidList = await attachFilesToBids(
-      await attachEventsToBids(bids)
+      await attachEventsToBids(bids, {
+        fullAccess: false,
+        redactRecord: false,
+      }),
+      { fullAccess: false, redactRecord: false }
     );
 
     return res.data({ marketplaceBidList }, 'Awarded marketplace bids');
@@ -2007,6 +2744,7 @@ exports.repositoryFiles = async (req, res, next) => {
     const page = Number(req.query.page || 1);
     const limit = Number(req.query.limit || 25);
     const query = {};
+    let vendorBidById = {};
 
     if (req.query.status) {
       query.status = req.query.status;
@@ -2056,6 +2794,10 @@ exports.repositoryFiles = async (req, res, next) => {
         { vendor_user_id: req.user._id },
         { lean: true }
       );
+      vendorBidById = bids.reduce((acc, bid) => {
+        acc[bid.bid_id] = bid;
+        return acc;
+      }, {});
       const bidIds = bids.map((bid) => bid.bid_id);
       if (!bidIds.length) {
         return res.data(
@@ -2076,8 +2818,34 @@ exports.repositoryFiles = async (req, res, next) => {
       }),
       MarketplaceAttachmentService.getCount(query),
     ]);
+    let visibleAttachments = attachments;
+    if (req.user.userType === 'VENDOR') {
+      const eventIds = [
+        ...new Set(attachments.map((item) => item.event_id).filter(Boolean)),
+      ];
+      const events = eventIds.length
+        ? await MarketplaceEventService.getByData(
+            { event_id: { $in: eventIds } },
+            { lean: true }
+          )
+        : [];
+      const eventById = events.reduce((acc, event) => {
+        acc[event.event_id] = event;
+        return acc;
+      }, {});
+      visibleAttachments = attachments.filter((attachment) => {
+        if (!isSensitiveMarketplaceAttachment(attachment)) {
+          return true;
+        }
+        const unlockState = getMarketplaceUnlockState({
+          event: eventById[attachment.event_id],
+          bid: vendorBidById[attachment.bid_id],
+        });
+        return unlockState.details_unlocked;
+      });
+    }
     const marketplaceRepositoryFileList =
-      await decorateRepositoryFiles(attachments);
+      await decorateRepositoryFiles(visibleAttachments);
 
     return res.data(
       {

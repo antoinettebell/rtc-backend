@@ -179,6 +179,28 @@ const isCashPaymentMethod = (paymentMethod) =>
 const isGatewayPaymentMethod = (paymentMethod) =>
   !isCashPaymentMethod(paymentMethod);
 
+const sanitizePaymentLogPayload = (payload) => {
+  if (!payload || typeof payload !== 'object') {
+    return payload;
+  }
+  const sanitized = { ...payload };
+  [
+    'opaqueToken',
+    'opaqueData',
+    'paymentData',
+    'payment_data',
+    'dataValue',
+    'rawToken',
+    'token',
+    'fullResponse',
+  ].forEach((field) => {
+    if (sanitized[field] !== undefined) {
+      sanitized[field] = '[REDACTED]';
+    }
+  });
+  return sanitized;
+};
+
 const getFoodTruckPlan = async (foodTruck) =>
   foodTruck?.planId ? PlanService.getById(foodTruck.planId) : null;
 
@@ -680,6 +702,59 @@ const validateSelectionsAndGetCost = ({
     return sum + (option?.hasCost ? Number(option.cost) || 0 : 0);
   }, 0);
 };
+
+const validateComboSideSelections = ({ menuItem, selectedComboSides, itemName }) => {
+  const options = Array.isArray(menuItem?.comboSideOptions)
+    ? menuItem.comboSideOptions.filter((option) => option)
+    : [];
+  const requiredCount = Math.min(
+    Math.max(Number(menuItem?.comboSidesPerOrder) || 1, 1),
+    options.length,
+    5
+  );
+  const selected = Array.isArray(selectedComboSides) ? selectedComboSides : [];
+
+  if (!options.length) {
+    return [];
+  }
+
+  if (selected.length !== requiredCount) {
+    throw new Error(
+      `Please select exactly ${requiredCount} side${
+        requiredCount === 1 ? '' : 's'
+      } for the "${itemName}"`
+    );
+  }
+
+  const invalidOption = selected.find(
+    (selectedOption) => !options.includes(selectedOption)
+  );
+
+  if (invalidOption) {
+    throw new Error(
+      `Invalid side "${invalidOption}" selected for the "${itemName}"`
+    );
+  }
+
+  return selected;
+};
+
+const getDiscountSourceItem = (menuItem) => {
+  const bogoItems = Array.isArray(menuItem?.bogoItems)
+    ? menuItem.bogoItems
+    : [];
+  const sameItemReward = bogoItems.find((item) => item?.isSameItem);
+  const differentItemReward = bogoItems.find((item) => !item?.isSameItem);
+
+  if (
+    sameItemReward ||
+    (!bogoItems.length && Number(menuItem?.discountRules?.discount) > 0)
+  ) {
+    return menuItem;
+  }
+
+  return differentItemReward || menuItem;
+};
 /**
  * To add new entry to given collection
  * Support POST request
@@ -807,6 +882,7 @@ exports.validateOrder = async (req, res, next) => {
           const discountType = menuIds[item.menuItemId].discountType;
           const subItemarray = menuIds[item.menuItemId].subItem;
           const itemType = menuIds[item.menuItemId].itemType;
+          const allowCustomize = !!menuIds[item.menuItemId].allowCustomize;
           const hasFlavors = menuIds[item.menuItemId].hasFlavors;
           const flavorsPerOrder = menuIds[item.menuItemId].flavorsPerOrder || 1;
           const selectedFlavors = Array.isArray(item.selectedFlavors)
@@ -828,6 +904,29 @@ exports.validateOrder = async (req, res, next) => {
           )
             ? item.selectedDiscountToppings
             : [];
+          const discountSourceItem = getDiscountSourceItem(
+            menuIds[item.menuItemId]
+          );
+          const selectedDiscountCustomization =
+            discountSourceItem?.allowCustomize
+              ? item.selectedDiscountCustomization || null
+              : null;
+          const selectedDiscountComboSides =
+            discountSourceItem?.itemType === 'COMBO'
+              ? validateComboSideSelections({
+                  menuItem: discountSourceItem,
+                  selectedComboSides: item.selectedDiscountComboSides,
+                  itemName: discountSourceItem?.name || name,
+                })
+              : [];
+          const selectedComboSides =
+            itemType === 'COMBO'
+              ? validateComboSideSelections({
+                  menuItem: menuIds[item.menuItemId],
+                  selectedComboSides: item.selectedComboSides,
+                  itemName: name,
+                })
+              : [];
           let selectedOptionsCost = 0;
           let selectedDiscountOptionsCost = 0;
 
@@ -839,12 +938,15 @@ exports.validateOrder = async (req, res, next) => {
               requiredCount: flavorsPerOrder,
               itemName: name,
             });
+          }
+
+          if (discountSourceItem?.hasFlavors) {
             selectedDiscountOptionsCost += validateSelectionsAndGetCost({
-              menuItem: menuIds[item.menuItemId],
+              menuItem: discountSourceItem,
               selectedOptions: selectedDiscountFlavors,
               type: 'flavor',
-              requiredCount: flavorsPerOrder,
-              itemName: name,
+              requiredCount: discountSourceItem.flavorsPerOrder || 1,
+              itemName: discountSourceItem?.name || name,
             });
           }
 
@@ -856,12 +958,15 @@ exports.validateOrder = async (req, res, next) => {
               requiredCount: toppingsPerOrder,
               itemName: name,
             });
+          }
+
+          if (discountSourceItem?.hasToppings) {
             selectedDiscountOptionsCost += validateSelectionsAndGetCost({
-              menuItem: menuIds[item.menuItemId],
+              menuItem: discountSourceItem,
               selectedOptions: selectedDiscountToppings,
               type: 'topping',
-              requiredCount: toppingsPerOrder,
-              itemName: name,
+              requiredCount: discountSourceItem.toppingsPerOrder || 1,
+              itemName: discountSourceItem?.name || name,
             });
           }
 
@@ -937,6 +1042,12 @@ exports.validateOrder = async (req, res, next) => {
                 qty: rewardItems,
                 isSameItem: true,
                 discountVal: discountVal,
+                allowCustomize,
+                hasFlavors,
+                hasToppings,
+                itemType,
+                comboSideOptions: menuIds[item.menuItemId].comboSideOptions,
+                comboSidesPerOrder: menuIds[item.menuItemId].comboSidesPerOrder,
               },
             ];
           } else {
@@ -996,13 +1107,18 @@ exports.validateOrder = async (req, res, next) => {
 
           menuItems.push({
             menuItemId: item.menuItemId,
-            customization: item.customization || null,
+            customization: allowCustomize ? item.customization || null : null,
             selectedFlavors: hasFlavors ? selectedFlavors : [],
             selectedToppings: hasToppings ? selectedToppings : [],
-            selectedDiscountFlavors: hasFlavors ? selectedDiscountFlavors : [],
-            selectedDiscountToppings: hasToppings
+            selectedDiscountFlavors: discountSourceItem?.hasFlavors
+              ? selectedDiscountFlavors
+              : [],
+            selectedDiscountToppings: discountSourceItem?.hasToppings
               ? selectedDiscountToppings
               : [],
+            selectedDiscountCustomization,
+            selectedDiscountComboSides,
+            selectedComboSides,
             optionsTotal: selectedOptionsCost,
             price: unitPrice,
             name: name,
@@ -1223,7 +1339,6 @@ exports.validateOrder = async (req, res, next) => {
         vendorPosOrder ? 'PREPARING' : 'PLACED'
       ),
     };
-    console.log('orderPlaceData', orderPlaceData);
     // const data = await Service.create(orderPlaceData);
 
     return res.data(
@@ -1288,22 +1403,6 @@ exports.paymentCheckout = async (req, res, next) => {
       paymentMethod === 'TAP_TO_PAY' &&
       opaqueToken === 'MOCK_TOKEN_SUCCESS_SANDBOX_ABELL_DEV';
 
-    if (paymentMethod === 'TAP_TO_PAY') {
-      console.log('[TapToPay Debug] Payment checkout token inspection', {
-        paymentMethod,
-        hasOpaqueData:
-          !!paymentData &&
-          typeof paymentData === 'object' &&
-          !!(paymentData.opaqueToken || paymentData.opaqueData || paymentData.dataValue),
-        opaqueDataDescriptor: opaquePaymentData.dataDescriptor || null,
-        tokenType: typeof opaqueToken,
-        tokenPrefix:
-          typeof opaqueToken === 'string' ? opaqueToken.slice(0, 16) : null,
-        environment: paymentData?.environment || paymentData?.mode || null,
-        sandboxBypassMatched: isTapToPaySandboxBypass,
-      });
-    }
-
     if (isTapToPaySandboxBypass) {
       console.log(
         '[TapToPay Test] Frontend sandbox token detected. Bypassing live gateway handshake.'
@@ -1349,29 +1448,19 @@ exports.paymentCheckout = async (req, res, next) => {
       userId,
     });
 
-    console.log('Payment checkout result', {
-      success: chargeResp.success,
-      level: chargeResp.level,
-      paymentMethod,
-      amount,
-      transactionId: chargeResp.transactionId || null,
-      errorCode: chargeResp.success ? null : chargeResp.code,
-      errorMessage: chargeResp.success ? null : chargeResp.message,
-    });
-
     //  LOG PAYMENT ATTEMPT
     await PaymentsLogService.create({
       userId,
       type: 'CHECKOUT',
       requestPayload: {
-        opaqueToken,
+        opaqueToken: opaqueToken ? '[REDACTED]' : null,
         amount,
         taxAmount,
         subTotal,
         paymentMethod,
       },
       paymentMethod: paymentMethod,
-      responsePayload: chargeResp,
+      responsePayload: sanitizePaymentLogPayload(chargeResp),
       mode: chargeResp.env,
       level: chargeResp?.level || null,
       amount: Number(amount),
@@ -1672,8 +1761,8 @@ exports.refundPayment = async (req, res, next) => {
         mode: resp.env,
         level: resp?.level || null,
         amount: Number(amount),
-        requestPayload: req.body,
-        responsePayload: resp,
+        requestPayload: sanitizePaymentLogPayload(req.body),
+        responsePayload: sanitizePaymentLogPayload(resp),
         transactionId: transactionId,
         uniqueId:
           resp?.refundTransactionId || resp?.fullResponse?.transId || null,
@@ -1896,7 +1985,7 @@ exports.refundPosOrder = async (req, res, next) => {
             reason: refundReason,
             excludedTip: toMoney(order.tipsAmount || 0),
           },
-          responsePayload: refundResponse,
+          responsePayload: sanitizePaymentLogPayload(refundResponse),
           transactionId: order.transactionId,
           uniqueId: refundResponse?.refundTransactionId || null,
           authCode: refundResponse?.authCode || null,
@@ -2503,6 +2592,7 @@ exports.add = async (req, res, next) => {
           const discountType = menuIds[item.menuItemId].discountType;
           const subItemarray = menuIds[item.menuItemId].subItem;
           const itemType = menuIds[item.menuItemId].itemType;
+          const allowCustomize = !!menuIds[item.menuItemId].allowCustomize;
           const hasFlavors = menuIds[item.menuItemId].hasFlavors;
           const flavorsPerOrder = menuIds[item.menuItemId].flavorsPerOrder || 1;
           const selectedFlavors = Array.isArray(item.selectedFlavors)
@@ -2524,6 +2614,29 @@ exports.add = async (req, res, next) => {
           )
             ? item.selectedDiscountToppings
             : [];
+          const discountSourceItem = getDiscountSourceItem(
+            menuIds[item.menuItemId]
+          );
+          const selectedDiscountCustomization =
+            discountSourceItem?.allowCustomize
+              ? item.selectedDiscountCustomization || null
+              : null;
+          const selectedDiscountComboSides =
+            discountSourceItem?.itemType === 'COMBO'
+              ? validateComboSideSelections({
+                  menuItem: discountSourceItem,
+                  selectedComboSides: item.selectedDiscountComboSides,
+                  itemName: discountSourceItem?.name || name,
+                })
+              : [];
+          const selectedComboSides =
+            itemType === 'COMBO'
+              ? validateComboSideSelections({
+                  menuItem: menuIds[item.menuItemId],
+                  selectedComboSides: item.selectedComboSides,
+                  itemName: name,
+                })
+              : [];
           let selectedOptionsCost = 0;
           let selectedDiscountOptionsCost = 0;
 
@@ -2535,12 +2648,15 @@ exports.add = async (req, res, next) => {
               requiredCount: flavorsPerOrder,
               itemName: name,
             });
+          }
+
+          if (discountSourceItem?.hasFlavors) {
             selectedDiscountOptionsCost += validateSelectionsAndGetCost({
-              menuItem: menuIds[item.menuItemId],
+              menuItem: discountSourceItem,
               selectedOptions: selectedDiscountFlavors,
               type: 'flavor',
-              requiredCount: flavorsPerOrder,
-              itemName: name,
+              requiredCount: discountSourceItem.flavorsPerOrder || 1,
+              itemName: discountSourceItem?.name || name,
             });
           }
 
@@ -2552,12 +2668,15 @@ exports.add = async (req, res, next) => {
               requiredCount: toppingsPerOrder,
               itemName: name,
             });
+          }
+
+          if (discountSourceItem?.hasToppings) {
             selectedDiscountOptionsCost += validateSelectionsAndGetCost({
-              menuItem: menuIds[item.menuItemId],
+              menuItem: discountSourceItem,
               selectedOptions: selectedDiscountToppings,
               type: 'topping',
-              requiredCount: toppingsPerOrder,
-              itemName: name,
+              requiredCount: discountSourceItem.toppingsPerOrder || 1,
+              itemName: discountSourceItem?.name || name,
             });
           }
 
@@ -2631,6 +2750,12 @@ exports.add = async (req, res, next) => {
                 qty: rewardItems,
                 isSameItem: true,
                 discountVal: discountVal,
+                allowCustomize,
+                hasFlavors,
+                hasToppings,
+                itemType,
+                comboSideOptions: menuIds[item.menuItemId].comboSideOptions,
+                comboSidesPerOrder: menuIds[item.menuItemId].comboSidesPerOrder,
               },
             ];
           } else {
@@ -2675,13 +2800,18 @@ exports.add = async (req, res, next) => {
 
           menuItems.push({
             menuItemId: item.menuItemId,
-            customization: item.customization || null,
+            customization: allowCustomize ? item.customization || null : null,
             selectedFlavors: hasFlavors ? selectedFlavors : [],
             selectedToppings: hasToppings ? selectedToppings : [],
-            selectedDiscountFlavors: hasFlavors ? selectedDiscountFlavors : [],
-            selectedDiscountToppings: hasToppings
+            selectedDiscountFlavors: discountSourceItem?.hasFlavors
+              ? selectedDiscountFlavors
+              : [],
+            selectedDiscountToppings: discountSourceItem?.hasToppings
               ? selectedDiscountToppings
               : [],
+            selectedDiscountCustomization,
+            selectedDiscountComboSides,
+            selectedComboSides,
             optionsTotal: selectedOptionsCost,
             price: unitPrice,
             name: name,
@@ -3197,7 +3327,7 @@ exports.update = async (req, res, next) => {
                 amount: item.total,
                 reason: orderStatus,
               },
-              responsePayload: refundResp,
+              responsePayload: sanitizePaymentLogPayload(refundResp),
               transactionId: item.transactionId,
               uniqueId: refundResp?.refundTransactionId || null,
               authCode: refundResp?.authCode || null,

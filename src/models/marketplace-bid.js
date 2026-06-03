@@ -25,6 +25,12 @@ const mSchema = mongoose.Schema(
       required: true,
       index: true,
     },
+    submission_round: {
+      type: Number,
+      default: 1,
+      min: 1,
+      index: true,
+    },
     price_per_guest: {
       type: Number,
       default: null,

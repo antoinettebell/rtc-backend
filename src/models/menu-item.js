@@ -168,6 +168,18 @@ const mSchema = mongoose.Schema(
       min: 1,
       max: 15,
     },
+    comboSideOptions: [
+      {
+        type: String,
+        default: null,
+      },
+    ],
+    comboSidesPerOrder: {
+      type: Number,
+      default: 1,
+      min: 1,
+      max: 5,
+    },
     newDish: {
       type: Boolean,
       default: false,

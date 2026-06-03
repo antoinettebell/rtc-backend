@@ -10,6 +10,10 @@ const {
 } = require('../services');
 const EncryptionService = require('../../helper/encryption');
 const { normalizeVendorPlan } = require('../../helper/vendor-plan-helper');
+const {
+  buildTaxIdUpdate,
+  sanitizeCoordinatorProfile,
+} = require('../../helper/event-coordinator-profile');
 const bcrypt = require('bcrypt');
 const entityName = 'User';
 const MailHelper = require('../../helper/mail-helper');
@@ -101,7 +105,7 @@ exports.list = async (req, res, next) => {
         }
       }
       return res.data(
-        { [`${entityName.toLocaleLowerCase()}`]: item },
+        { [`${entityName.toLocaleLowerCase()}`]: sanitizeCoordinatorProfile(item) },
         `${entityName} item`
       );
     }
@@ -158,7 +162,7 @@ exports.list = async (req, res, next) => {
     ).map((item) => {
       delete item.password;
       delete item.changePassToken;
-      return item;
+      return sanitizeCoordinatorProfile(item);
     });
 
     const total = await Service.getCount({
@@ -250,6 +254,15 @@ exports.update = async (req, res, next) => {
         eventCoordinatorCompanyName,
         eventCoordinatorCompanyAddress,
         eventCoordinatorEin,
+        eventCoordinatorTaxIdType,
+        eventCoordinatorTaxId,
+        eventCoordinatorAddressLine1,
+        eventCoordinatorAddressLine2,
+        eventCoordinatorAddressCity,
+        eventCoordinatorAddressState,
+        eventCoordinatorAddressZip,
+        eventCoordinatorFormattedAddress,
+        eventCoordinatorPlaceId,
         // mailing,
       },
       params: { id: _id },
@@ -301,7 +314,35 @@ exports.update = async (req, res, next) => {
         existRecord.eventCoordinatorCompanyName = eventCoordinatorCompanyName;
         existRecord.eventCoordinatorCompanyAddress =
           eventCoordinatorCompanyAddress || null;
-        existRecord.eventCoordinatorEin = eventCoordinatorEin;
+        if (eventCoordinatorTaxId || eventCoordinatorEin) {
+          Object.assign(
+            existRecord,
+            buildTaxIdUpdate({
+              type: eventCoordinatorTaxIdType || 'EIN',
+              value: eventCoordinatorTaxId || eventCoordinatorEin,
+            })
+          );
+        }
+        existRecord.eventCoordinatorAddressLine1 =
+          eventCoordinatorAddressLine1 || eventCoordinatorCompanyAddress || null;
+        existRecord.eventCoordinatorAddressLine2 =
+          eventCoordinatorAddressLine2 || '';
+        existRecord.eventCoordinatorAddressCity =
+          eventCoordinatorAddressCity || null;
+        existRecord.eventCoordinatorAddressState =
+          eventCoordinatorAddressState || null;
+        existRecord.eventCoordinatorAddressZip =
+          eventCoordinatorAddressZip || null;
+        existRecord.eventCoordinatorFormattedAddress =
+          eventCoordinatorFormattedAddress || eventCoordinatorCompanyAddress || null;
+        existRecord.eventCoordinatorPlaceId = eventCoordinatorPlaceId || null;
+      } else {
+        existRecord.eventCoordinatorCompanyName = null;
+        existRecord.eventCoordinatorCompanyAddress = null;
+        existRecord.eventCoordinatorTaxIdType = null;
+        existRecord.eventCoordinatorTaxIdEncrypted = null;
+        existRecord.eventCoordinatorTaxIdMasked = null;
+        existRecord.eventCoordinatorEin = null;
       }
     }
 
@@ -312,7 +353,10 @@ exports.update = async (req, res, next) => {
     await existRecord.save();
 
     return res.data(
-      { [`${entityName.toLocaleLowerCase()}`]: existRecord },
+      {
+        [`${entityName.toLocaleLowerCase()}`]:
+          sanitizeCoordinatorProfile(existRecord),
+      },
       `${entityName} updated`
     );
   } catch (e) {

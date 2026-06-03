@@ -12,6 +12,20 @@ router.post(
   Controller.createEvent
 );
 
+router.put(
+  '/events/:eventId',
+  allowedTo(['CUSTOMER']),
+  validate(Validation.updateEvent),
+  Controller.updateEvent
+);
+
+router.post(
+  '/events/:eventId/reopen',
+  allowedTo(['CUSTOMER']),
+  validate(Validation.reopenEvent),
+  Controller.reopenEvent
+);
+
 router.get(
   '/events/my',
   allowedTo(['CUSTOMER']),

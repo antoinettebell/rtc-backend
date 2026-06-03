@@ -231,6 +231,22 @@ const mSchema = mongoose.Schema(
             default: null,
           },
         ],
+        selectedDiscountCustomization: {
+          type: String,
+          default: null,
+        },
+        selectedDiscountComboSides: [
+          {
+            type: String,
+            default: null,
+          },
+        ],
+        selectedComboSides: [
+          {
+            type: String,
+            default: null,
+          },
+        ],
         optionsTotal: {
           type: Number,
           default: 0,

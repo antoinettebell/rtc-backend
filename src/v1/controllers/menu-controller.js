@@ -23,6 +23,9 @@ const toTitleCase = (value) =>
 const normalizeOptionNames = (items = []) =>
   (Array.isArray(items) ? items : []).map((item) => toTitleCase(item));
 
+const normalizeComboSideOptions = (items = []) =>
+  normalizeOptionNames(items).filter((item) => item);
+
 const normalizePaidOptions = (options = [], names = []) =>
   (Array.isArray(options) && options.length
     ? options
@@ -532,6 +535,8 @@ exports.add = async (req, res, next) => {
         toppings,
         toppingOptions,
         toppingsPerOrder,
+        comboSideOptions,
+        comboSidesPerOrder,
       },
       user,
     } = req;
@@ -612,6 +617,26 @@ exports.add = async (req, res, next) => {
     const normalizedToppingOptions = hasToppings
       ? normalizePaidOptions(toppingOptions, normalizedToppings)
       : [];
+    const normalizedComboSideOptions =
+      itemType === 'COMBO' ? normalizeComboSideOptions(comboSideOptions || []) : [];
+    if (
+      itemType === 'COMBO' &&
+      normalizedComboSideOptions.length > 0 &&
+      Number(comboSidesPerOrder) > normalizedComboSideOptions.length
+    ) {
+      return res.error(
+        new Error('# of Sides per Order cannot exceed # of Side Options.'),
+        409
+      );
+    }
+    const normalizedComboSidesPerOrder =
+      itemType === 'COMBO' && normalizedComboSideOptions.length > 0
+        ? Math.min(
+            Math.max(Number(comboSidesPerOrder) || 1, 1),
+            normalizedComboSideOptions.length,
+            5
+          )
+        : 1;
 
     let data = await Service.create({
       name,
@@ -649,6 +674,8 @@ exports.add = async (req, res, next) => {
       toppings: normalizedToppings,
       toppingOptions: normalizedToppingOptions,
       toppingsPerOrder: hasToppings ? toppingsPerOrder || 1 : 1,
+      comboSideOptions: normalizedComboSideOptions,
+      comboSidesPerOrder: normalizedComboSidesPerOrder,
     });
 
     if (data) {
@@ -711,6 +738,8 @@ exports.update = async (req, res, next) => {
         toppings,
         toppingOptions,
         toppingsPerOrder,
+        comboSideOptions,
+        comboSidesPerOrder,
       },
       params: { id },
       user,
@@ -811,6 +840,26 @@ exports.update = async (req, res, next) => {
     const normalizedToppingOptions = hasToppings
       ? normalizePaidOptions(toppingOptions, normalizedToppings)
       : [];
+    const normalizedComboSideOptions =
+      itemType === 'COMBO' ? normalizeComboSideOptions(comboSideOptions || []) : [];
+    if (
+      itemType === 'COMBO' &&
+      normalizedComboSideOptions.length > 0 &&
+      Number(comboSidesPerOrder) > normalizedComboSideOptions.length
+    ) {
+      return res.error(
+        new Error('# of Sides per Order cannot exceed # of Side Options.'),
+        409
+      );
+    }
+    const normalizedComboSidesPerOrder =
+      itemType === 'COMBO' && normalizedComboSideOptions.length > 0
+        ? Math.min(
+            Math.max(Number(comboSidesPerOrder) || 1, 1),
+            normalizedComboSideOptions.length,
+            5
+          )
+        : 1;
 
     // ---------- Update Fields ----------
     Object.assign(item, {
@@ -848,6 +897,8 @@ exports.update = async (req, res, next) => {
       toppings: normalizedToppings,
       toppingOptions: normalizedToppingOptions,
       toppingsPerOrder: hasToppings ? toppingsPerOrder || 1 : 1,
+      comboSideOptions: normalizedComboSideOptions,
+      comboSidesPerOrder: normalizedComboSidesPerOrder,
     });
 
     await item.save();

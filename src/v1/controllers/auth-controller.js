@@ -10,6 +10,10 @@ const { server, JWT } = require('../../config');
 const MailHelper = require('../../helper/mail-helper');
 const { FORGOT_PASSWORD_TEMPLATE } = require('../../helper/templates');
 const { normalizeVendorPlan } = require('../../helper/vendor-plan-helper');
+const {
+  buildTaxIdUpdate,
+  sanitizeCoordinatorProfile,
+} = require('../../helper/event-coordinator-profile');
 const disposableDomains = require('disposable-email-domains');
 const { addObject } = require('../../helper/aws');
 const fs = require('fs');
@@ -38,6 +42,15 @@ exports.add = async (req, res, next) => {
         eventCoordinatorCompanyName,
         eventCoordinatorCompanyAddress,
         eventCoordinatorEin,
+        eventCoordinatorTaxIdType,
+        eventCoordinatorTaxId,
+        eventCoordinatorAddressLine1,
+        eventCoordinatorAddressLine2,
+        eventCoordinatorAddressCity,
+        eventCoordinatorAddressState,
+        eventCoordinatorAddressZip,
+        eventCoordinatorFormattedAddress,
+        eventCoordinatorPlaceId,
       },
       file,
     } = req;
@@ -102,6 +115,36 @@ exports.add = async (req, res, next) => {
       }
     }
 
+    const coordinatorTaxUpdate = isEventCoordinator
+      ? buildTaxIdUpdate({
+          type: eventCoordinatorTaxIdType || 'EIN',
+          value: eventCoordinatorTaxId || eventCoordinatorEin,
+        })
+      : {};
+    const coordinatorProfileFields = isEventCoordinator
+      ? {
+          eventCoordinatorCompanyName,
+          eventCoordinatorCompanyAddress: eventCoordinatorCompanyAddress || null,
+          eventCoordinatorAddressLine1:
+            eventCoordinatorAddressLine1 || eventCoordinatorCompanyAddress || null,
+          eventCoordinatorAddressLine2: eventCoordinatorAddressLine2 || '',
+          eventCoordinatorAddressCity: eventCoordinatorAddressCity || null,
+          eventCoordinatorAddressState: eventCoordinatorAddressState || null,
+          eventCoordinatorAddressZip: eventCoordinatorAddressZip || null,
+          eventCoordinatorFormattedAddress:
+            eventCoordinatorFormattedAddress || eventCoordinatorCompanyAddress || null,
+          eventCoordinatorPlaceId: eventCoordinatorPlaceId || null,
+          ...coordinatorTaxUpdate,
+        }
+      : {
+          eventCoordinatorCompanyName: null,
+          eventCoordinatorCompanyAddress: null,
+          eventCoordinatorEin: null,
+          eventCoordinatorTaxIdType: null,
+          eventCoordinatorTaxIdEncrypted: null,
+          eventCoordinatorTaxIdMasked: null,
+        };
+
     if (user) {
       user.firstName = firstName;
       user.lastName = lastName;
@@ -111,13 +154,7 @@ exports.add = async (req, res, next) => {
       user.countryCode = countryCode;
       user.subscribedForOffGrid = subscribedForOffGrid;
       user.isEventCoordinator = isEventCoordinator;
-      user.eventCoordinatorCompanyName = isEventCoordinator
-        ? eventCoordinatorCompanyName
-        : null;
-      user.eventCoordinatorCompanyAddress = isEventCoordinator
-        ? eventCoordinatorCompanyAddress || null
-        : null;
-      user.eventCoordinatorEin = isEventCoordinator ? eventCoordinatorEin : null;
+      Object.assign(user, coordinatorProfileFields);
       user.profilePic = profilePic || null;
       user.deletedAt = null;
 
@@ -133,13 +170,7 @@ exports.add = async (req, res, next) => {
         profilePic: profilePic || null,
         subscribedForOffGrid: subscribedForOffGrid,
         isEventCoordinator,
-        eventCoordinatorCompanyName: isEventCoordinator
-          ? eventCoordinatorCompanyName
-          : null,
-        eventCoordinatorCompanyAddress: isEventCoordinator
-          ? eventCoordinatorCompanyAddress || null
-          : null,
-        eventCoordinatorEin: isEventCoordinator ? eventCoordinatorEin : null,
+        ...coordinatorProfileFields,
         userType: 'CUSTOMER',
         requestStatus: 'APPROVED',
         verified: false,
@@ -152,7 +183,7 @@ exports.add = async (req, res, next) => {
       email
     );
 
-    user = user.toObject();
+    user = sanitizeCoordinatorProfile(user);
     delete user.password;
     delete user.__v;
 
@@ -409,7 +440,7 @@ exports.login = async (req, res, next) => {
 
       const authToken = await user.generateAuthToken();
 
-      user = user.toObject();
+      user = sanitizeCoordinatorProfile(user);
 
       delete user.password;
       delete user.changePassToken;

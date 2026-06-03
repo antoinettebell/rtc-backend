@@ -88,6 +88,9 @@ module.exports = {
             selectedToppings: Joi.array().items(Joi.string().trim()),
             selectedDiscountFlavors: Joi.array().items(Joi.string().trim()),
             selectedDiscountToppings: Joi.array().items(Joi.string().trim()),
+            selectedDiscountCustomization: Joi.string(),
+            selectedDiscountComboSides: Joi.array().items(Joi.string().trim()),
+            selectedComboSides: Joi.array().items(Joi.string().trim()),
             qty: Joi.number().min(1).required(),
             comboItems: Joi.array().items(
               Joi.object({
@@ -190,6 +193,9 @@ module.exports = {
             selectedToppings: Joi.array().items(Joi.string().trim()),
             selectedDiscountFlavors: Joi.array().items(Joi.string().trim()),
             selectedDiscountToppings: Joi.array().items(Joi.string().trim()),
+            selectedDiscountCustomization: Joi.string(),
+            selectedDiscountComboSides: Joi.array().items(Joi.string().trim()),
+            selectedComboSides: Joi.array().items(Joi.string().trim()),
             qty: Joi.number().min(1).required(),
             comboItems: Joi.array().items(
               Joi.object({

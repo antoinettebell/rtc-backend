@@ -1,14 +1,17 @@
 const { Joi } = require('express-validation');
 
 const marketplaceEventBody = {
-  event_name: Joi.string().trim().required(),
+  event_name: Joi.string().trim().allow(null, ''),
   event_description: Joi.string().allow(null, ''),
   ticket_sales_enabled: Joi.boolean().default(false),
   ticket_url: Joi.string().uri().allow(null, ''),
-  event_type: Joi.string().trim().required(),
+  event_type: Joi.string().trim().allow(null, ''),
+  event_type_other: Joi.string().trim().allow(null, ''),
   event_visibility: Joi.string().valid('PUBLIC', 'PRIVATE').default('PRIVATE'),
   event_style: Joi.string().allow(null, ''),
   service_type: Joi.string().allow(null, ''),
+  service_types: Joi.array().items(Joi.string()).default([]),
+  service_styles: Joi.array().items(Joi.string()).default([]),
   primary_service_style: Joi.string().allow(null, ''),
   plated_number_of_courses: Joi.number().integer().min(0).allow(null, ''),
   plated_single_entree: Joi.boolean().default(false),
@@ -28,11 +31,11 @@ const marketplaceEventBody = {
       )
     )
     .default([]),
-  event_date: Joi.date().required(),
+  event_date: Joi.date().allow(null, ''),
   event_time: Joi.string().allow(null, ''),
-  event_address: Joi.string().trim().required(),
-  event_city: Joi.string().trim().required(),
-  event_state: Joi.string().trim().required(),
+  event_address: Joi.string().trim().allow(null, ''),
+  event_city: Joi.string().trim().allow(null, ''),
+  event_state: Joi.string().trim().allow(null, ''),
   event_zip: Joi.string().allow(null, ''),
   latitude: Joi.number().min(-90).max(90).allow(null, ''),
   longitude: Joi.number().min(-180).max(180).allow(null, ''),
@@ -41,8 +44,8 @@ const marketplaceEventBody = {
   place_id: Joi.string().allow(null, ''),
   geocoding_provider: Joi.string().valid('GOOGLE_PLACES').allow(null, ''),
   geocoded_at: Joi.date().allow(null, ''),
-  number_of_guests: Joi.number().integer().min(1).required(),
-  number_of_vendors_needed: Joi.number().integer().min(1).required(),
+  number_of_guests: Joi.number().integer().min(1).allow(null, ''),
+  number_of_vendors_needed: Joi.number().integer().min(1).allow(null, ''),
   power_required: Joi.array().items(Joi.string()).default([]),
   permits_required: Joi.array().items(Joi.string()).default([]),
   insurance_required: Joi.boolean().default(false),
@@ -52,7 +55,11 @@ const marketplaceEventBody = {
   equipment_needed: Joi.array().items(Joi.string()).default([]),
   vendor_fee: Joi.number().min(0).default(0),
   budgeted_amount: Joi.number().min(0).default(0),
-  event_close_date: Joi.date().required(),
+  payment_responsibility: Joi.string()
+    .valid('COORDINATOR', 'VENDOR', 'BOTH', 'NONE')
+    .default('NONE'),
+  event_close_date: Joi.date().allow(null, ''),
+  event_close_time: Joi.string().allow(null, ''),
   status: Joi.string().valid(
     'DRAFT',
     'OPEN',
@@ -65,6 +72,14 @@ const marketplaceEventBody = {
 
 module.exports = {
   createEvent: {
+    body: Joi.object(marketplaceEventBody),
+  },
+
+  updateEvent: {
+    body: Joi.object(marketplaceEventBody),
+  },
+
+  reopenEvent: {
     body: Joi.object(marketplaceEventBody),
   },
 

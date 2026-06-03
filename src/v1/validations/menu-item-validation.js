@@ -108,6 +108,16 @@ module.exports = {
         then: Joi.required(),
         otherwise: Joi.optional(),
       }),
+      comboSideOptions: Joi.array().items(Joi.string().trim()).max(15).when('itemType', {
+        is: 'COMBO',
+        then: Joi.optional(),
+        otherwise: Joi.optional(),
+      }),
+      comboSidesPerOrder: Joi.number().min(1).max(5).when('itemType', {
+        is: 'COMBO',
+        then: Joi.optional(),
+        otherwise: Joi.optional(),
+      }),
       newDish: Joi.boolean(),
       popularDish: Joi.boolean(),
       diet: Joi.array().items(Joi.string()),
@@ -218,6 +228,16 @@ module.exports = {
       toppingsPerOrder: Joi.number().min(1).max(15).when('hasToppings', {
         is: true,
         then: Joi.required(),
+        otherwise: Joi.optional(),
+      }),
+      comboSideOptions: Joi.array().items(Joi.string().trim()).max(15).when('itemType', {
+        is: 'COMBO',
+        then: Joi.optional(),
+        otherwise: Joi.optional(),
+      }),
+      comboSidesPerOrder: Joi.number().min(1).max(5).when('itemType', {
+        is: 'COMBO',
+        then: Joi.optional(),
         otherwise: Joi.optional(),
       }),
       newDish: Joi.boolean(),

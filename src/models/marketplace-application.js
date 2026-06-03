@@ -25,6 +25,12 @@ const mSchema = mongoose.Schema(
       required: true,
       index: true,
     },
+    submission_round: {
+      type: Number,
+      default: 1,
+      min: 1,
+      index: true,
+    },
     business_name: {
       type: String,
       required: true,

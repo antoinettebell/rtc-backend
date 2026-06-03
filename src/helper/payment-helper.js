@@ -218,7 +218,7 @@ function buildError(response) {
   let code = "";
   let text = "Unknown error occurred";
 
-  try {console.log(response.getMessages());
+  try {
     const msg = response.getMessages().getMessage()[0];
     code = msg.getCode();
     text = msg.getText();
@@ -272,7 +272,6 @@ exports.refundPaymentUnified = async ({ transactionId, amount }) => {
 
       if (!msg || msg.getResultCode() !== "Ok") {
       const err = msg?.getMessage?.()[0];
-      console.log('err: ', err);
       return {
         success: false,
         env: isProduction ? "production" : "sandbox",
@@ -506,13 +505,10 @@ exports.voidTransaction = async (transactionId) => {
 
     // Handle API level errors
     const msg = response.getMessages();
-    console.log('msg: ', msg);
     const txn = response.getTransactionResponse();
-    console.log('void txn: ', txn);
 
     if (!msg || msg.getResultCode() !== "Ok") {
       const err = msg?.getMessage?.()[0];
-      console.log('err: ', err);
       return {
         success: false,
         env: isProduction ? "production" : "sandbox",
@@ -528,7 +524,6 @@ exports.voidTransaction = async (transactionId) => {
     // Handle transaction level errors
     if (!txn || txn.getResponseCode() !== "1") {
       const errorObj = txn?.getErrors?.()?.getError?.()?.[0] || msg?.getMessage?.()?.[0] || {};
-      console.log('errorObj: ', errorObj);
       return {
         success: false,
         env: isProduction ? "production" : "sandbox",
@@ -643,5 +638,4 @@ exports.processRefund = async ({
     };
   }
 };
-
 

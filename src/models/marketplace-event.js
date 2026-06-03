@@ -44,6 +44,10 @@ const mSchema = mongoose.Schema(
       type: String,
       required: true,
     },
+    event_type_other: {
+      type: String,
+      default: null,
+    },
     event_visibility: {
       type: String,
       enum: ['PUBLIC', 'PRIVATE'],
@@ -57,6 +61,14 @@ const mSchema = mongoose.Schema(
     service_type: {
       type: String,
       default: null,
+    },
+    service_types: {
+      type: [String],
+      default: [],
+    },
+    service_styles: {
+      type: [String],
+      default: [],
     },
     primary_service_style: {
       type: String,
@@ -97,6 +109,10 @@ const mSchema = mongoose.Schema(
       index: true,
     },
     event_time: {
+      type: String,
+      default: null,
+    },
+    event_close_time: {
       type: String,
       default: null,
     },
@@ -194,10 +210,48 @@ const mSchema = mongoose.Schema(
       default: 0,
       min: 0,
     },
+    payment_responsibility: {
+      type: String,
+      enum: ['COORDINATOR', 'VENDOR', 'BOTH', 'NONE'],
+      default: 'NONE',
+      index: true,
+    },
     event_close_date: {
       type: Date,
-      required: true,
+      required: function requiredCloseDate() {
+        return this.status !== 'DRAFT';
+      },
       index: true,
+    },
+    closed_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    close_notification_sent_at: {
+      type: Date,
+      default: null,
+    },
+    draft_expires_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    archived_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    reopen_count: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 2,
+    },
+    current_submission_round: {
+      type: Number,
+      default: 1,
+      min: 1,
     },
     status: {
       type: String,

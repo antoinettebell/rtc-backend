@@ -91,6 +91,47 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    eventCoordinatorTaxIdType: {
+      type: String,
+      enum: ['EIN', 'SSN', null],
+      default: null,
+    },
+    eventCoordinatorTaxIdEncrypted: {
+      type: String,
+      default: null,
+    },
+    eventCoordinatorTaxIdMasked: {
+      type: String,
+      default: null,
+    },
+    eventCoordinatorAddressLine1: {
+      type: String,
+      default: null,
+    },
+    eventCoordinatorAddressLine2: {
+      type: String,
+      default: null,
+    },
+    eventCoordinatorAddressCity: {
+      type: String,
+      default: null,
+    },
+    eventCoordinatorAddressState: {
+      type: String,
+      default: null,
+    },
+    eventCoordinatorAddressZip: {
+      type: String,
+      default: null,
+    },
+    eventCoordinatorFormattedAddress: {
+      type: String,
+      default: null,
+    },
+    eventCoordinatorPlaceId: {
+      type: String,
+      default: null,
+    },
       addressLine1: {
         type: String,
         default: 'NA',
