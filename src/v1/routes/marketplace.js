@@ -99,6 +99,33 @@ router.get(
 );
 
 router.get(
+  '/events/:eventId/questions',
+  allowedTo(['CUSTOMER', 'VENDOR', 'SUPER_ADMIN']),
+  Controller.getEventQuestions
+);
+
+router.post(
+  '/events/:eventId/questions',
+  allowedTo(['VENDOR']),
+  validate(Validation.askEventQuestion),
+  Controller.askEventQuestion
+);
+
+router.post(
+  '/events/:eventId/questions/:questionId/answer',
+  allowedTo(['CUSTOMER', 'SUPER_ADMIN']),
+  validate(Validation.answerEventQuestion),
+  Controller.answerEventQuestion
+);
+
+router.patch(
+  '/events/:eventId/questions/:questionId/status',
+  allowedTo(['CUSTOMER', 'SUPER_ADMIN']),
+  validate(Validation.updateEventQuestionStatus),
+  Controller.updateEventQuestionStatus
+);
+
+router.get(
   '/events/:eventId/bids',
   allowedTo(['CUSTOMER']),
   Controller.getEventBids

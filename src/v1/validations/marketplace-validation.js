@@ -166,6 +166,28 @@ module.exports = {
     }),
   },
 
+  askEventQuestion: {
+    body: Joi.object({
+      question_text: Joi.string().trim().min(3).max(1000).required(),
+    }),
+  },
+
+  answerEventQuestion: {
+    body: Joi.object({
+      answer_text: Joi.string().trim().min(1).max(1500).required(),
+      proxy_action_reason: Joi.string().trim().max(500).allow(null, ''),
+    }),
+  },
+
+  updateEventQuestionStatus: {
+    body: Joi.object({
+      status: Joi.string()
+        .valid('PENDING', 'PUBLISHED', 'BLOCKED', 'ARCHIVED')
+        .required(),
+      proxy_action_reason: Joi.string().trim().max(500).allow(null, ''),
+    }),
+  },
+
   repositoryFiles: {
     query: Joi.object({
       limit: Joi.number().integer().min(1),

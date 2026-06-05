@@ -6,6 +6,7 @@ const {
   MarketplaceAgreementAuditService,
   MarketplaceBidService,
   MarketplaceEventImageService,
+  MarketplaceEventQuestionService,
   MarketplaceEventService,
   MarketplaceFileAuditService,
   MarketplacePaymentAuditService,
@@ -19,6 +20,9 @@ const { addObjectWithKey, removeObject } = require('../../helper/aws');
 const PaymentHelper = require('../../helper/payment-helper');
 const DocuSignHelper = require('../../helper/docusign-helper');
 const CustomNotification = require('../../helper/custom-notification');
+const {
+  moderateMarketplaceText,
+} = require('../../helper/marketplace-content-moderation');
 
 const buildError = (message, code = 400) => {
   const error = new Error(message);
@@ -45,6 +49,20 @@ const asArray = (value) => {
 };
 
 const hasText = (value) => String(value || '').trim().length > 0;
+
+const getVendorDisplayId = (foodTruckId) => {
+  const rawId =
+    typeof foodTruckId === 'object'
+      ? foodTruckId?._id || foodTruckId?.id || ''
+      : foodTruckId || '';
+  const suffix = String(rawId).replace(/[^a-zA-Z0-9]/g, '').slice(-6).toUpperCase();
+  return `Vendor RTC - ${suffix || 'MASKED'}`;
+};
+
+const QA_ARCHIVED_EVENT_STATUSES = ['AWARDED', 'CLOSED', 'CANCELLED', 'ARCHIVED'];
+
+const isQuestionBoardArchived = (event = {}) =>
+  QA_ARCHIVED_EVENT_STATUSES.includes(event.status);
 
 const normalizeTime = (value) => {
   if (!hasText(value)) {
@@ -636,7 +654,10 @@ const redactLockedMarketplaceRecord = (
   [
     'phone',
     'email',
+    'business_name',
     'contact_name',
+    'food_type_cuisine',
+    'notes',
     'agreement_document_url',
     'agreement_document_key',
     'signed_document_url',
@@ -657,6 +678,17 @@ const redactLockedMarketplaceRecord = (
   if (redacted.vendor_user_id && typeof redacted.vendor_user_id === 'object') {
     redacted.vendor_user_id = {
       _id: redacted.vendor_user_id._id,
+    };
+  }
+
+  if (redacted.food_truck_id) {
+    redacted.vendor_display_id = getVendorDisplayId(redacted.food_truck_id);
+    redacted.food_truck_id = {
+      _id:
+        typeof redacted.food_truck_id === 'object'
+          ? redacted.food_truck_id._id
+          : redacted.food_truck_id,
+      display_id: redacted.vendor_display_id,
     };
   }
 
@@ -917,6 +949,129 @@ const getEventForUser = async (eventId, user) => {
   throw buildError('You do not have access to this marketplace event', 403);
 };
 
+const getQuestionEventForUser = async (eventId, user) => {
+  if (user.userType === 'CUSTOMER') {
+    return getOwnedEvent(eventId, user._id);
+  }
+
+  return getEventForUser(eventId, user);
+};
+
+const getQuestionForEvent = async (eventId, questionId) => {
+  const question = await MarketplaceEventQuestionService.getByData(
+    { event_id: eventId, question_id: questionId },
+    { singleResult: true }
+  );
+
+  if (!question) {
+    throw buildError('Marketplace event question not found', 404);
+  }
+
+  return question;
+};
+
+const sanitizeMarketplaceQuestion = (question, { includeBlocked = false } = {}) => {
+  const plainQuestion = toPlainObject(question);
+  const isBlocked = plainQuestion.status === 'BLOCKED';
+
+  return {
+    question_id: plainQuestion.question_id,
+    event_id: plainQuestion.event_id,
+    vendor_display_id: plainQuestion.vendor_display_id,
+    question_text:
+      isBlocked && !includeBlocked
+        ? null
+        : plainQuestion.question_text_public,
+    answer_text:
+      plainQuestion.answer_moderation_status === 'BLOCKED'
+        ? null
+        : plainQuestion.answer_text_public,
+    status: plainQuestion.status,
+    moderation_status: plainQuestion.question_moderation_status,
+    moderation_reasons:
+      includeBlocked && isBlocked ? plainQuestion.question_moderation_reasons : [],
+    created_at: plainQuestion.created_at,
+    answered_at: plainQuestion.answered_at,
+  };
+};
+
+const notifyCoordinatorOfMarketplaceQuestion = async (event) => {
+  if (!event?.customer_user_id) {
+    return;
+  }
+
+  try {
+    await CustomNotification.sendNotificationToUsers({
+      [String(event.customer_user_id)]: {
+        title: 'New marketplace question',
+        body: `${event.event_name || 'Your event'} has a new vendor question.`,
+        data: {
+          notificationType: 'MARKETPLACE_EVENT_QUESTION',
+          eventId: event.event_id,
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Marketplace question notification failed', {
+      eventId: event.event_id,
+      message: error.message,
+    });
+  }
+};
+
+const getQuestionAudienceVendorIds = async (eventId, askingVendorUserId) => {
+  const [bids, applications] = await Promise.all([
+    MarketplaceBidService.getByData(
+      { event_id: eventId, bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] } },
+      { lean: true }
+    ),
+    MarketplaceApplicationService.getByData(
+      { event_id: eventId, application_status: { $nin: ['DRAFT', 'WITHDRAWN'] } },
+      { lean: true }
+    ),
+  ]);
+
+  return [
+    ...new Set(
+      [askingVendorUserId, ...bids.map((bid) => bid.vendor_user_id), ...applications.map((item) => item.vendor_user_id)]
+        .filter(Boolean)
+        .map(String)
+    ),
+  ];
+};
+
+const notifyVendorsOfMarketplaceAnswer = async (event, question) => {
+  const vendorIds = await getQuestionAudienceVendorIds(
+    event.event_id,
+    question.vendor_user_id
+  );
+  if (!vendorIds.length) {
+    return;
+  }
+
+  try {
+    const payload = vendorIds.reduce((acc, userId) => {
+      acc[userId] = {
+        title: 'Marketplace question answered',
+        body: `${event.event_name || 'An event'} has a new public answer.`,
+        data: {
+          notificationType: 'MARKETPLACE_EVENT_ANSWER',
+          eventId: event.event_id,
+          questionId: question.question_id,
+        },
+      };
+      return acc;
+    }, {});
+    await CustomNotification.sendNotificationToUsers(payload);
+  } catch (error) {
+    console.error('Marketplace answer notification failed', {
+      eventId: event.event_id,
+      questionId: question.question_id,
+      message: error.message,
+    });
+  }
+};
+
 const attachEventsToBids = async (bids = [], options = {}) => {
   const eventIds = [...new Set(bids.map((bid) => bid.event_id).filter(Boolean))];
   if (!eventIds.length) {
@@ -1117,6 +1272,13 @@ const completeSignedAward = async (payment) => {
       award_payment_status: 'PAID',
     },
     { getNew: true }
+  );
+  await MarketplaceEventQuestionService.updateMany(
+    {
+      event_id: payment.event_id,
+      status: { $in: ['PENDING', 'PUBLISHED'] },
+    },
+    { status: 'ARCHIVED', archived_at: new Date() }
   );
 
   return { awarded_bid_ids: selectedBidIds, marketplaceEvent };
@@ -1558,6 +1720,185 @@ exports.trackPublicEventTicketClick = async (req, res, next) => {
   }
 };
 
+exports.getEventQuestions = async (req, res, next) => {
+  try {
+    const event = await getQuestionEventForUser(req.params.eventId, req.user);
+    const qaArchived = isQuestionBoardArchived(event);
+    let query = {
+      event_id: req.params.eventId,
+      status: { $in: ['PENDING', 'PUBLISHED'] },
+    };
+
+    if (req.user.userType === 'VENDOR') {
+      query = { event_id: req.params.eventId, status: 'PUBLISHED' };
+    } else if (req.user.userType === 'SUPER_ADMIN') {
+      query = {
+        event_id: req.params.eventId,
+        status: { $in: ['PENDING', 'PUBLISHED', 'BLOCKED', 'ARCHIVED'] },
+      };
+    }
+
+    const questions = await MarketplaceEventQuestionService.getByData(query, {
+      sort: { created_at: 1 },
+      lean: true,
+    });
+
+    return res.data(
+      {
+        marketplaceQuestionList: questions.map((question) =>
+          sanitizeMarketplaceQuestion(question, {
+            includeBlocked: req.user.userType === 'SUPER_ADMIN',
+          })
+        ),
+        qa_archived: qaArchived,
+      },
+      'Marketplace event questions'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.askEventQuestion = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only vendors can ask marketplace event questions', 403);
+    }
+
+    const foodTruck = await getVendorMarketplaceFoodTruck(req.user._id);
+    const event = await getEventForUser(req.params.eventId, req.user);
+
+    if (isQuestionBoardArchived(event) || !ACTIVE_EVENT_STATUSES.includes(event.status)) {
+      throw buildError('This event message board is archived.', 410);
+    }
+
+    const questionText = String(req.body.question_text || '').trim();
+    const moderation = moderateMarketplaceText(questionText);
+    const isBlocked = moderation.status === 'BLOCKED';
+    const marketplaceQuestion = await MarketplaceEventQuestionService.create({
+      event_id: event.event_id,
+      vendor_user_id: req.user._id,
+      food_truck_id: foodTruck._id,
+      vendor_display_id: getVendorDisplayId(foodTruck._id),
+      question_text_raw: questionText,
+      question_text_public: isBlocked ? null : questionText,
+      status: isBlocked ? 'BLOCKED' : 'PENDING',
+      question_moderation_status: moderation.status,
+      question_moderation_reasons: moderation.reasons,
+    });
+
+    if (!isBlocked) {
+      await notifyCoordinatorOfMarketplaceQuestion(event);
+    }
+
+    return res.data(
+      {
+        marketplaceQuestion: sanitizeMarketplaceQuestion(marketplaceQuestion),
+        blocked: isBlocked,
+      },
+      isBlocked
+        ? 'Question blocked by marketplace moderation'
+        : 'Marketplace question submitted'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.answerEventQuestion = async (req, res, next) => {
+  try {
+    const event = await getQuestionEventForUser(req.params.eventId, req.user);
+
+    if (req.user.userType === 'VENDOR') {
+      throw buildError('Only coordinators can answer event questions', 403);
+    }
+
+    if (isQuestionBoardArchived(event) && req.user.userType !== 'SUPER_ADMIN') {
+      throw buildError('This event message board is archived.', 410);
+    }
+
+    const question = await getQuestionForEvent(
+      req.params.eventId,
+      req.params.questionId
+    );
+    if (['BLOCKED', 'ARCHIVED'].includes(question.status)) {
+      throw buildError('This question cannot be answered.', 400);
+    }
+
+    const answerText = String(req.body.answer_text || '').trim();
+    const moderation = moderateMarketplaceText(answerText);
+    const isBlocked = moderation.status === 'BLOCKED';
+
+    question.answer_text_raw = answerText;
+    question.answer_text_public = isBlocked ? null : answerText;
+    question.answer_moderation_status = moderation.status;
+    question.answer_moderation_reasons = moderation.reasons;
+    question.answered_by_user_id = req.user._id;
+    question.answered_by_role = req.user.userType;
+    question.answered_at = new Date();
+    question.acted_by_admin_user_id =
+      req.user.userType === 'SUPER_ADMIN' ? req.user._id : null;
+    question.acted_on_behalf_of_user_id =
+      req.user.userType === 'SUPER_ADMIN' ? event.customer_user_id : null;
+    question.proxy_action_reason = req.body.proxy_action_reason || null;
+    question.status = isBlocked ? 'PENDING' : 'PUBLISHED';
+    await question.save();
+
+    if (!isBlocked) {
+      await notifyVendorsOfMarketplaceAnswer(event, question);
+    }
+
+    return res.data(
+      {
+        marketplaceQuestion: sanitizeMarketplaceQuestion(question, {
+          includeBlocked: req.user.userType === 'SUPER_ADMIN',
+        }),
+        blocked: isBlocked,
+      },
+      isBlocked
+        ? 'Answer blocked by marketplace moderation'
+        : 'Marketplace answer published'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.updateEventQuestionStatus = async (req, res, next) => {
+  try {
+    const event = await getQuestionEventForUser(req.params.eventId, req.user);
+    if (req.user.userType === 'VENDOR') {
+      throw buildError('Only coordinators can update event questions', 403);
+    }
+
+    const question = await getQuestionForEvent(
+      req.params.eventId,
+      req.params.questionId
+    );
+    question.status = req.body.status;
+    question.acted_by_admin_user_id =
+      req.user.userType === 'SUPER_ADMIN' ? req.user._id : null;
+    question.acted_on_behalf_of_user_id =
+      req.user.userType === 'SUPER_ADMIN' ? event.customer_user_id : null;
+    question.proxy_action_reason = req.body.proxy_action_reason || null;
+    if (req.body.status === 'ARCHIVED') {
+      question.archived_at = new Date();
+    }
+    await question.save();
+
+    return res.data(
+      {
+        marketplaceQuestion: sanitizeMarketplaceQuestion(question, {
+          includeBlocked: req.user.userType === 'SUPER_ADMIN',
+        }),
+      },
+      'Marketplace question status updated'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
 exports.getEventBids = async (req, res, next) => {
   try {
     const event = await getOwnedEvent(req.params.eventId, req.user._id);
@@ -1599,10 +1940,15 @@ exports.getEventBids = async (req, res, next) => {
       fullAccess: false,
     });
     const marketplaceApplicationList = await attachFilesToApplications(
-      applications.map((application) => ({
-        ...application,
-        marketplace_unlock: getMarketplaceUnlockState({ event, application }),
-      })),
+      applications.map((application) => {
+        const unlockState = getMarketplaceUnlockState({ event, application });
+        return {
+          ...redactLockedMarketplaceRecord(application, unlockState, {
+            fullAccess: false,
+          }),
+          marketplace_unlock: unlockState,
+        };
+      }),
       { fullAccess: false }
     );
 
@@ -1967,6 +2313,13 @@ exports.awardBids = async (req, res, next) => {
 
     event.status = 'AWARDED';
     await event.save();
+    await MarketplaceEventQuestionService.updateMany(
+      {
+        event_id: event.event_id,
+        status: { $in: ['PENDING', 'PUBLISHED'] },
+      },
+      { status: 'ARCHIVED', archived_at: new Date() }
+    );
 
     return res.data(
       { awarded_bid_ids: selectedBidIds, marketplaceEvent: event },
@@ -1991,6 +2344,16 @@ exports.updateEventStatus = async (req, res, next) => {
 
     if (!marketplaceEvent) {
       throw buildError('Marketplace event not found', 404);
+    }
+
+    if (isQuestionBoardArchived(marketplaceEvent)) {
+      await MarketplaceEventQuestionService.updateMany(
+        {
+          event_id: marketplaceEvent.event_id,
+          status: { $in: ['PENDING', 'PUBLISHED'] },
+        },
+        { status: 'ARCHIVED', archived_at: new Date() }
+      );
     }
 
     return res.data({ marketplaceEvent }, 'Marketplace event status updated');
