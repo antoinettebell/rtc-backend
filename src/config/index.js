@@ -30,6 +30,16 @@ module.exports = {
     email: process.env.SENDGRID_EMAIL,
     secret: process.env.SENDGRID_SECRET,
   },
+  twilio: {
+    enabled:
+      process.env.TWILIO_SMS_ENABLED === undefined
+        ? true
+        : String(process.env.TWILIO_SMS_ENABLED).toLowerCase() === 'true',
+    smsEnv: process.env.TWILIO_SMS_ENV || 'trial',
+    accountSid: process.env.TWILIO_ACCOUNT_SID,
+    authToken: process.env.TWILIO_AUTH_TOKEN,
+    messagingServiceSid: process.env.TWILIO_MESSAGING_SERVICE_SID,
+  },
   aws: {
     s3Access: process.env.S3_ACCESS_KEY,
     s3Secret: process.env.S3_SECRET_KEY,

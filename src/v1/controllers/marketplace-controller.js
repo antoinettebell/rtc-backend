@@ -19,7 +19,7 @@ const {
 const { addObjectWithKey, removeObject } = require('../../helper/aws');
 const PaymentHelper = require('../../helper/payment-helper');
 const DocuSignHelper = require('../../helper/docusign-helper');
-const CustomNotification = require('../../helper/custom-notification');
+const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
 const {
   moderateMarketplaceText,
 } = require('../../helper/marketplace-content-moderation');
@@ -258,15 +258,15 @@ const sendEventClosedNotification = async (event) => {
     return;
   }
   try {
-    await CustomNotification.sendNotificationToUsers({
-      [String(event.customer_user_id)]: {
-        title: 'Event submissions closed',
-        body: `${event.event_name || 'Your event'} is closed to new submissions.`,
-        data: {
-          notificationType: 'MARKETPLACE_EVENT_CLOSED',
-          eventId: event.event_id,
-        },
+    await MarketplaceCommunications.sendMarketplaceCommunication({
+      userId: event.customer_user_id,
+      title: 'Event submissions closed',
+      body: `${event.event_name || 'Your event'} is closed to new submissions.`,
+      data: {
+        notificationType: 'MARKETPLACE_EVENT_CLOSED',
+        eventId: event.event_id,
       },
+      metadata: { eventId: event.event_id },
     });
   } catch (error) {
     console.error('Marketplace close notification failed', {
@@ -821,6 +821,11 @@ const decorateRepositoryFiles = async (attachments = []) => {
 };
 
 const getVendorMarketplaceFoodTruck = async (userId) => {
+  const vendorUser = await UserService.getById(userId);
+  if (!vendorUser || vendorUser.inactive || vendorUser.verified === false) {
+    throw buildError('Verification Pending or Action Required.', 403);
+  }
+
   const foodTruck = await FoodTruckService.getByData(
     { userId },
     { singleResult: true, populate: ['addOns', 'planId'] }
@@ -828,6 +833,10 @@ const getVendorMarketplaceFoodTruck = async (userId) => {
 
   if (!foodTruck) {
     throw buildError('Food truck not found', 404);
+  }
+
+  if (foodTruck.inactive || foodTruck.verified === false) {
+    throw buildError('Verification Pending or Action Required.', 403);
   }
 
   if (!canAccessEventMarketplace(foodTruck)) {
@@ -1001,15 +1010,15 @@ const notifyCoordinatorOfMarketplaceQuestion = async (event) => {
   }
 
   try {
-    await CustomNotification.sendNotificationToUsers({
-      [String(event.customer_user_id)]: {
-        title: 'New marketplace question',
-        body: `${event.event_name || 'Your event'} has a new vendor question.`,
-        data: {
-          notificationType: 'MARKETPLACE_EVENT_QUESTION',
-          eventId: event.event_id,
-        },
+    await MarketplaceCommunications.sendMarketplaceCommunication({
+      userId: event.customer_user_id,
+      title: 'New marketplace question',
+      body: `${event.event_name || 'Your event'} has a new vendor question.`,
+      data: {
+        notificationType: 'MARKETPLACE_EVENT_QUESTION',
+        eventId: event.event_id,
       },
+      metadata: { eventId: event.event_id },
     });
   } catch (error) {
     console.error('Marketplace question notification failed', {
@@ -1050,8 +1059,9 @@ const notifyVendorsOfMarketplaceAnswer = async (event, question) => {
   }
 
   try {
-    const payload = vendorIds.reduce((acc, userId) => {
-      acc[userId] = {
+    await MarketplaceCommunications.sendMarketplaceCommunications(
+      vendorIds.map((userId) => ({
+        userId,
         title: 'Marketplace question answered',
         body: `${event.event_name || 'An event'} has a new public answer.`,
         data: {
@@ -1059,10 +1069,9 @@ const notifyVendorsOfMarketplaceAnswer = async (event, question) => {
           eventId: event.event_id,
           questionId: question.question_id,
         },
-      };
-      return acc;
-    }, {});
-    await CustomNotification.sendNotificationToUsers(payload);
+        metadata: { eventId: event.event_id, questionId: question.question_id },
+      }))
+    );
   } catch (error) {
     console.error('Marketplace answer notification failed', {
       eventId: event.event_id,
@@ -1070,6 +1079,253 @@ const notifyVendorsOfMarketplaceAnswer = async (event, question) => {
       message: error.message,
     });
   }
+};
+
+const IMPORTANT_EVENT_CHANGE_FIELDS = {
+  event_start_date: 'Date/time',
+  event_date: 'Date/time',
+  event_time: 'Date/time',
+  event_close_date: 'Close date/time',
+  event_close_time: 'Close date/time',
+  address: 'Address/location',
+  formatted_address: 'Address/location',
+  location: 'Address/location',
+  latitude: 'Address/location',
+  longitude: 'Address/location',
+  guest_count: 'Guest count',
+  budgeted_amount: 'Budget/vendor fee setup',
+  vendor_fee: 'Budget/vendor fee setup',
+  payment_responsibility: 'Budget/vendor fee setup',
+  primary_service_style: 'Service type/style',
+  service_type: 'Service type/style',
+  service_types: 'Service type/style',
+  equipment_needs: 'Equipment needs',
+  alcohol_requirements: 'Alcohol requirements',
+};
+
+const URGENT_EVENT_CHANGE_FIELDS = new Set([
+  'event_start_date',
+  'event_date',
+  'event_time',
+  'address',
+  'formatted_address',
+  'location',
+  'latitude',
+  'longitude',
+]);
+
+const normalizeCompareValue = (value) => {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeCompareValue(item));
+  }
+  if (value && typeof value === 'object') {
+    return JSON.stringify(value);
+  }
+  return value ?? null;
+};
+
+const getImportantEventChanges = (beforeEvent, afterEvent) => {
+  const before = toPlainObject(beforeEvent) || {};
+  const after = toPlainObject(afterEvent) || {};
+
+  return Object.keys(IMPORTANT_EVENT_CHANGE_FIELDS)
+    .filter((field) => {
+      const beforeValue = normalizeCompareValue(before[field]);
+      const afterValue = normalizeCompareValue(after[field]);
+      return JSON.stringify(beforeValue) !== JSON.stringify(afterValue);
+    })
+    .map((field) => ({
+      field,
+      label: IMPORTANT_EVENT_CHANGE_FIELDS[field],
+      urgent: URGENT_EVENT_CHANGE_FIELDS.has(field),
+    }));
+};
+
+const getEventParticipantVendorIds = async (eventId) => {
+  const [bids, applications] = await Promise.all([
+    MarketplaceBidService.getByData(
+      { event_id: eventId, bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] } },
+      { lean: true }
+    ),
+    MarketplaceApplicationService.getByData(
+      { event_id: eventId, application_status: { $nin: ['DRAFT', 'WITHDRAWN'] } },
+      { lean: true }
+    ),
+  ]);
+
+  return [
+    ...new Set(
+      [...bids, ...applications]
+        .map((item) => item.vendor_user_id)
+        .filter(Boolean)
+        .map(String)
+    ),
+  ];
+};
+
+const notifyMarketplaceSubmission = async ({ event, vendorUserId, submissionType, requiresPayment = false }) => {
+  const label = submissionType === 'application' ? 'application' : 'bid';
+  const vendorMessages = [
+    {
+      userId: vendorUserId,
+      title: requiresPayment ? 'Action required' : `Marketplace ${label} submitted`,
+      body: requiresPayment
+        ? `${event.event_name || 'An event'} requires payment before your ${label} is submitted.`
+        : `Your marketplace ${label} for ${event.event_name || 'an event'} was submitted successfully.`,
+      data: {
+        notificationType: requiresPayment
+          ? 'MARKETPLACE_ACTION_REQUIRED'
+          : 'MARKETPLACE_SUBMISSION_CONFIRMED',
+        eventId: event.event_id,
+      },
+      channels: requiresPayment ? ['push', 'email', 'sms'] : ['push', 'email'],
+      smsBody: requiresPayment
+        ? `RTC action required: payment is needed before your marketplace ${label} is submitted. Open the app to continue.`
+        : null,
+      metadata: { eventId: event.event_id, submissionType },
+    },
+  ];
+
+  const coordinatorMessages = requiresPayment
+    ? []
+    : [
+        {
+          userId: event.customer_user_id,
+          title: `New marketplace ${label}`,
+          body: `${event.event_name || 'Your event'} has a new vendor ${label}.`,
+          data: {
+            notificationType: 'MARKETPLACE_SUBMISSION_RECEIVED',
+            eventId: event.event_id,
+          },
+          metadata: { eventId: event.event_id, submissionType },
+        },
+      ];
+
+  await MarketplaceCommunications.sendMarketplaceCommunications([
+    ...vendorMessages,
+    ...coordinatorMessages,
+  ]);
+};
+
+const notifyBidAwardOutcomes = async (event, selectedBidIds = []) => {
+  const bids = await MarketplaceBidService.getByData(
+    { event_id: event.event_id, bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] } },
+    { lean: true }
+  );
+  const selected = new Set(selectedBidIds.map(String));
+
+  await MarketplaceCommunications.sendMarketplaceCommunications(
+    bids.map((bid) => {
+      const wasSelected = selected.has(String(bid.bid_id));
+      return {
+        userId: bid.vendor_user_id,
+        title: wasSelected ? 'Marketplace bid accepted' : 'Marketplace bid not selected',
+        body: wasSelected
+          ? `${event.event_name || 'An event'} selected your marketplace bid. Open the app to view the next steps.`
+          : `${event.event_name || 'An event'} has closed selection and your bid was not selected.`,
+        data: {
+          notificationType: wasSelected
+            ? 'MARKETPLACE_BID_ACCEPTED'
+            : 'MARKETPLACE_BID_NOT_SELECTED',
+          eventId: event.event_id,
+          bidId: bid.bid_id,
+        },
+        channels: wasSelected ? ['push', 'email', 'sms'] : ['push', 'email'],
+        smsBody: wasSelected
+          ? 'RTC alert: your marketplace bid was accepted. Open the app for next steps.'
+          : null,
+        metadata: { eventId: event.event_id, bidId: bid.bid_id },
+      };
+    })
+  );
+};
+
+const notifyCoordinatorOfMatchLocked = async (event) => {
+  if (!event?.customer_user_id) {
+    return;
+  }
+
+  await MarketplaceCommunications.sendMarketplaceCommunication({
+    userId: event.customer_user_id,
+    title: 'Marketplace match locked',
+    body: `${event.event_name || 'Your event'} has completed selection. Vendor details and event files are available in the app.`,
+    data: {
+      notificationType: 'MARKETPLACE_MATCH_LOCKED',
+      eventId: event.event_id,
+    },
+    metadata: { eventId: event.event_id },
+  });
+};
+
+const notifyVendorMatchLocked = async ({ event, vendorUserId }) => {
+  await MarketplaceCommunications.sendMarketplaceCommunication({
+    userId: vendorUserId,
+    title: 'Marketplace match locked',
+    body: `${event.event_name || 'An event'} is locked. Details, contracts, and logistics are available in the app when released.`,
+    data: {
+      notificationType: 'MARKETPLACE_MATCH_LOCKED',
+      eventId: event.event_id,
+    },
+    channels: ['push', 'email', 'sms'],
+    smsBody: 'RTC alert: your marketplace match is locked. Open the app for details and next steps.',
+    metadata: { eventId: event.event_id },
+  });
+};
+
+const notifyVendorsOfEventChanges = async (event, changes = []) => {
+  if (!changes.length) {
+    return;
+  }
+
+  const vendorIds = await getEventParticipantVendorIds(event.event_id);
+  if (!vendorIds.length) {
+    return;
+  }
+
+  const labels = [...new Set(changes.map((change) => change.label))].join(', ');
+  const isUrgent = changes.some((change) => change.urgent);
+
+  await MarketplaceCommunications.sendMarketplaceCommunications(
+    vendorIds.map((userId) => ({
+      userId,
+      title: 'Marketplace event updated',
+      body: `${event.event_name || 'An event'} has updated event details: ${labels}.`,
+      data: {
+        notificationType: 'MARKETPLACE_EVENT_UPDATED',
+        eventId: event.event_id,
+      },
+      channels: isUrgent ? ['push', 'email', 'sms'] : ['push', 'email'],
+      smsBody: isUrgent
+        ? 'RTC alert: important marketplace event details changed. Open the app to review.'
+        : null,
+      metadata: { eventId: event.event_id, changedFields: changes.map((item) => item.field) },
+    }))
+  );
+};
+
+const notifyVendorsOfEventCancellation = async (event) => {
+  const vendorIds = await getEventParticipantVendorIds(event.event_id);
+  if (!vendorIds.length) {
+    return;
+  }
+
+  await MarketplaceCommunications.sendMarketplaceCommunications(
+    vendorIds.map((userId) => ({
+      userId,
+      title: 'Marketplace event canceled',
+      body: `${event.event_name || 'An event'} has been canceled.`,
+      data: {
+        notificationType: 'MARKETPLACE_EVENT_CANCELLED',
+        eventId: event.event_id,
+      },
+      channels: ['push', 'email', 'sms'],
+      smsBody: 'RTC alert: a marketplace event you engaged with was canceled. Open the app for details.',
+      metadata: { eventId: event.event_id },
+    }))
+  );
 };
 
 const attachEventsToBids = async (bids = [], options = {}) => {
@@ -1211,6 +1467,10 @@ const finalizePaidVendorPayment = async (payment) => {
   }
 
   if (payment.application_id) {
+    const existingApplication = await MarketplaceApplicationService.getByData(
+      { application_id: payment.application_id },
+      { singleResult: true }
+    );
     const application = await MarketplaceApplicationService.update(
       { application_id: payment.application_id },
       {
@@ -1223,6 +1483,20 @@ const finalizePaidVendorPayment = async (payment) => {
       { getNew: true }
     );
 
+    if (existingApplication?.payment_status !== 'PAID') {
+      const event = await MarketplaceEventService.getByData(
+        { event_id: payment.event_id },
+        { singleResult: true }
+      );
+      if (event) {
+        await notifyCoordinatorOfMatchLocked(event);
+        await notifyVendorMatchLocked({
+          event,
+          vendorUserId: application.vendor_user_id,
+        });
+      }
+    }
+
     return { marketplaceApplication: application };
   }
 
@@ -1230,6 +1504,10 @@ const finalizePaidVendorPayment = async (payment) => {
     return null;
   }
 
+  const existingBid = await MarketplaceBidService.getByData(
+    { bid_id: payment.bid_id },
+    { singleResult: true }
+  );
   const bid = await MarketplaceBidService.update(
     { bid_id: payment.bid_id },
     {
@@ -1240,6 +1518,21 @@ const finalizePaidVendorPayment = async (payment) => {
     },
     { getNew: true }
   );
+
+  if (existingBid?.payment_status !== 'PAID') {
+    const event = await MarketplaceEventService.getByData(
+      { event_id: payment.event_id },
+      { singleResult: true }
+    );
+    if (event) {
+      await notifyMarketplaceSubmission({
+        event,
+        vendorUserId: bid.vendor_user_id,
+        submissionType: 'bid',
+        requiresPayment: false,
+      });
+    }
+  }
 
   return { marketplaceBid: bid };
 };
@@ -1253,6 +1546,12 @@ const completeSignedAward = async (payment) => {
   if (!selectedBidIds.length) {
     return null;
   }
+
+  const existingEvent = await MarketplaceEventService.getByData(
+    { event_id: payment.event_id },
+    { singleResult: true }
+  );
+  const alreadyAwarded = existingEvent?.status === 'AWARDED';
 
   await MarketplaceBidService.getModel().updateMany(
     { event_id: payment.event_id, bid_id: { $in: selectedBidIds } },
@@ -1278,8 +1577,13 @@ const completeSignedAward = async (payment) => {
       event_id: payment.event_id,
       status: { $in: ['PENDING', 'PUBLISHED'] },
     },
-    { status: 'ARCHIVED', archived_at: new Date() }
+      { status: 'ARCHIVED', archived_at: new Date() }
   );
+
+  if (!alreadyAwarded) {
+    await notifyCoordinatorOfMatchLocked(marketplaceEvent);
+    await notifyBidAwardOutcomes(marketplaceEvent, selectedBidIds);
+  }
 
   return { awarded_bid_ids: selectedBidIds, marketplaceEvent };
 };
@@ -1477,6 +1781,14 @@ exports.updateEvent = async (req, res, next) => {
       { $set: normalizedEvent },
       { getNew: true }
     );
+    if (event.status !== 'CANCELLED' && marketplaceEvent.status === 'CANCELLED') {
+      await notifyVendorsOfEventCancellation(marketplaceEvent);
+    } else {
+      await notifyVendorsOfEventChanges(
+        marketplaceEvent,
+        getImportantEventChanges(event, marketplaceEvent)
+      );
+    }
 
     return res.data({ marketplaceEvent }, 'Marketplace event updated');
   } catch (e) {
@@ -2046,6 +2358,13 @@ exports.submitBid = async (req, res, next) => {
       await createPaymentAudit(marketplacePayment, req, 'CREATE');
     }
 
+    await notifyMarketplaceSubmission({
+      event,
+      vendorUserId: req.user._id,
+      submissionType: 'bid',
+      requiresPayment,
+    });
+
     return res.data(
       {
         marketplaceBid,
@@ -2148,6 +2467,13 @@ exports.submitApplication = async (req, res, next) => {
         (req.body.application_status || 'SUBMITTED') === 'SUBMITTED'
           ? new Date()
           : null,
+    });
+
+    await notifyMarketplaceSubmission({
+      event,
+      vendorUserId: req.user._id,
+      submissionType: 'application',
+      requiresPayment: false,
     });
 
     return res.data(
@@ -2320,6 +2646,8 @@ exports.awardBids = async (req, res, next) => {
       },
       { status: 'ARCHIVED', archived_at: new Date() }
     );
+    await notifyCoordinatorOfMatchLocked(event);
+    await notifyBidAwardOutcomes(event, selectedBidIds);
 
     return res.data(
       { awarded_bid_ids: selectedBidIds, marketplaceEvent: event },
@@ -2336,6 +2664,10 @@ exports.updateEventStatus = async (req, res, next) => {
       throw buildError('Only admins can update marketplace event status', 403);
     }
 
+    const existingEvent = await MarketplaceEventService.getByData(
+      { event_id: req.params.eventId },
+      { singleResult: true }
+    );
     const marketplaceEvent = await MarketplaceEventService.update(
       { event_id: req.params.eventId },
       { status: req.body.status },
@@ -2354,6 +2686,10 @@ exports.updateEventStatus = async (req, res, next) => {
         },
         { status: 'ARCHIVED', archived_at: new Date() }
       );
+    }
+
+    if (existingEvent?.status !== 'CANCELLED' && marketplaceEvent.status === 'CANCELLED') {
+      await notifyVendorsOfEventCancellation(marketplaceEvent);
     }
 
     return res.data({ marketplaceEvent }, 'Marketplace event status updated');
