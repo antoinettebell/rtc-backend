@@ -75,9 +75,20 @@ const mSchema = mongoose.Schema(
       default: null,
     },
     plated_number_of_courses: {
-      type: Number,
+      type: String,
       default: null,
-      min: 0,
+    },
+    plated_options: {
+      type: [String],
+      default: [],
+    },
+    plated_entree_selection: {
+      type: String,
+      default: null,
+    },
+    plated_included_items: {
+      type: [String],
+      default: [],
     },
     plated_single_entree: {
       type: Boolean,
@@ -99,13 +110,35 @@ const mSchema = mongoose.Schema(
       type: [String],
       default: [],
     },
+    buffet_setup: {
+      type: String,
+      default: null,
+    },
+    buffet_included_items: {
+      type: [String],
+      default: [],
+    },
     food_truck_options: {
       type: [String],
       default: [],
     },
+    station_setup_type: {
+      type: String,
+      default: null,
+    },
+    station_included_items: {
+      type: [String],
+      default: [],
+    },
+    service_notes: {
+      type: String,
+      default: null,
+    },
     event_date: {
       type: Date,
-      required: true,
+      required: function requiredEventDate() {
+        return this.status !== 'DRAFT';
+      },
       index: true,
     },
     event_time: {
@@ -118,15 +151,21 @@ const mSchema = mongoose.Schema(
     },
     event_address: {
       type: String,
-      required: true,
+      required: function requiredEventAddress() {
+        return this.status !== 'DRAFT';
+      },
     },
     event_city: {
       type: String,
-      required: true,
+      required: function requiredEventCity() {
+        return this.status !== 'DRAFT';
+      },
     },
     event_state: {
       type: String,
-      required: true,
+      required: function requiredEventState() {
+        return this.status !== 'DRAFT';
+      },
     },
     event_zip: {
       type: String,
@@ -164,12 +203,16 @@ const mSchema = mongoose.Schema(
     },
     number_of_guests: {
       type: Number,
-      required: true,
+      required: function requiredNumberOfGuests() {
+        return this.status !== 'DRAFT';
+      },
       min: 1,
     },
     number_of_vendors_needed: {
       type: Number,
-      required: true,
+      required: function requiredNumberOfVendorsNeeded() {
+        return this.status !== 'DRAFT' && this.service_types?.includes('Food Truck');
+      },
       min: 1,
     },
     power_required: {

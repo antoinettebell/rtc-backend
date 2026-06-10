@@ -13,7 +13,19 @@ const marketplaceEventBody = {
   service_types: Joi.array().items(Joi.string()).default([]),
   service_styles: Joi.array().items(Joi.string()).default([]),
   primary_service_style: Joi.string().allow(null, ''),
-  plated_number_of_courses: Joi.number().integer().min(0).allow(null, ''),
+  plated_number_of_courses: Joi.string()
+    .valid(
+      '1 Course',
+      '2 Courses',
+      '3 Courses',
+      '4 Courses',
+      '5 Courses',
+      'Vendor Recommended'
+    )
+    .allow(null, ''),
+  plated_options: Joi.array().items(Joi.string()).default([]),
+  plated_entree_selection: Joi.string().allow(null, ''),
+  plated_included_items: Joi.array().items(Joi.string()).default([]),
   plated_single_entree: Joi.boolean().default(false),
   plated_choice_entrees: Joi.boolean().default(false),
   plated_tableside_choice: Joi.boolean().default(false),
@@ -21,16 +33,20 @@ const marketplaceEventBody = {
   buffet_options: Joi.array()
     .items(Joi.string().valid('Full Menu', 'Self-Service', 'Staff-Service', 'Stations'))
     .default([]),
+  buffet_setup: Joi.string().allow(null, ''),
+  buffet_included_items: Joi.array().items(Joi.string()).default([]),
   food_truck_options: Joi.array()
     .items(
       Joi.string().valid(
         'Full Menu',
-        'Full Menu Order Anything',
-        'Desserts Only',
-        'Desserts Only - Event Pays'
+        'Limited event menu',
+        'Vendor recommended'
       )
     )
     .default([]),
+  station_setup_type: Joi.string().allow(null, ''),
+  station_included_items: Joi.array().items(Joi.string()).default([]),
+  service_notes: Joi.string().allow(null, ''),
   event_date: Joi.date().allow(null, ''),
   event_time: Joi.string().allow(null, ''),
   event_address: Joi.string().trim().allow(null, ''),

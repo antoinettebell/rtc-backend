@@ -132,10 +132,10 @@ const normalizeMarketplaceEventLocation = (body) => {
 const normalizeMarketplaceVendorCount = (body) => {
   const serviceTypes = asArray(body.service_types?.length ? body.service_types : body.service_type);
   if (body.primary_service_style === 'Food Truck' || serviceTypes.includes('Food Truck')) {
-    return Math.max(1, Math.ceil(Number(body.number_of_guests || 0) / 75));
+    return Math.max(1, Math.ceil(Number(body.number_of_guests || 0) / 100));
   }
 
-  return Math.max(1, Number(body.number_of_vendors_needed || 1));
+  return null;
 };
 
 const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = {}) => {
@@ -145,7 +145,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   let serviceStyles = asArray(body.service_styles);
   let primaryServiceStyle = body.primary_service_style || existingEvent?.primary_service_style || '';
 
-  if (serviceTypes.includes('Food Truck')) {
+  if (serviceTypes.includes('Food Truck') && !primaryServiceStyle) {
     primaryServiceStyle = 'Food Truck';
     if (!serviceStyles.includes('Food Truck')) {
       serviceStyles = [...serviceStyles, 'Food Truck'];
@@ -154,8 +154,15 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
 
   const permitsRequired = asArray(body.permits_required);
   let alcoholRequired = Boolean(body.alcohol_required);
-  if (permitsRequired.includes('Alcohol')) {
+  const alcoholServiceSelected =
+    serviceTypes.includes('Beverage and Alcohol') ||
+    serviceTypes.includes('Beverage/Alcohol Service') ||
+    serviceTypes.includes('Alcohol');
+  if (permitsRequired.includes('Alcohol') || alcoholServiceSelected) {
     alcoholRequired = true;
+    if (!permitsRequired.includes('Alcohol')) {
+      permitsRequired.push('Alcohol');
+    }
   }
 
   let equipmentNeeded = asArray(body.equipment_needed);
@@ -198,6 +205,16 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   });
 
   if (isDraft) {
+    const draftRequiredFields = [
+      ['event_name', 'Event name is required to save a draft.'],
+      ['event_type', 'Event type is required to save a draft.'],
+      ['event_visibility', 'Event visibility is required to save a draft.'],
+    ];
+    draftRequiredFields.forEach(([field, message]) => {
+      if (normalized[field] == null || normalized[field] === '') {
+        throw buildError(message, 400);
+      }
+    });
     return normalized;
   }
 
@@ -220,9 +237,6 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
 
   if (normalized.event_type === 'Other' && !hasText(normalized.event_type_other)) {
     throw buildError('Other event type details are required.', 400);
-  }
-  if (serviceTypes.includes('Food Truck') && primaryServiceStyle !== 'Food Truck') {
-    throw buildError('Food Truck service type must use Food Truck as the primary service style.', 400);
   }
   if (serviceTypes.includes('Food Truck') && ['Plated', 'Formal'].includes(primaryServiceStyle)) {
     throw buildError('Food Truck cannot use Plated/Formal Service as its primary style.', 400);
