@@ -667,9 +667,9 @@ const validateSelectionsAndGetCost = ({
     options.length
   );
 
-  if (selected.length > maxCount) {
+  if (selected.length !== maxCount) {
     throw new Error(
-      `Please select up to ${maxCount} ${label}${
+      `Please select exactly ${maxCount} ${label}${
         maxCount === 1 ? '' : 's'
       } for the "${itemName}"`
     );
@@ -754,6 +754,95 @@ const getDiscountSourceItem = (menuItem) => {
   }
 
   return differentItemReward || menuItem;
+};
+
+const getComboChildMenuItem = (subItem) => {
+  if (subItem?.menuItem && typeof subItem.menuItem === 'object') {
+    return subItem.menuItem;
+  }
+  if (subItem?.itemId && typeof subItem.itemId === 'object') {
+    return subItem.itemId;
+  }
+  return subItem;
+};
+
+const getComboChildId = (subItem) => {
+  const child = getComboChildMenuItem(subItem);
+  return child?._id?.toString?.() || child?._id || subItem?._id?.toString?.() || subItem?._id;
+};
+
+const findComboSubItem = (subItems = [], comboMenuItemId) => {
+  const requestedId = comboMenuItemId?.toString?.() || comboMenuItemId;
+  return subItems.find((sub) => {
+    const wrapperId = sub?._id?.toString?.() || sub?._id;
+    const childId = getComboChildId(sub);
+    return wrapperId === requestedId || childId === requestedId;
+  });
+};
+
+const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName }) => {
+  const subItems = Array.isArray(parentMenuItem?.subItem) ? parentMenuItem.subItem : [];
+
+  return comboItems
+    .map((comboItem) => {
+      const subItemMatch = findComboSubItem(subItems, comboItem.comboMenuItemId);
+      if (!subItemMatch) {
+        return null;
+      }
+
+      const childMenuItem = getComboChildMenuItem(subItemMatch);
+      const childName = childMenuItem?.name || itemName;
+      const selectedFlavors = Array.isArray(comboItem.selectedFlavors)
+        ? comboItem.selectedFlavors
+        : [];
+      const selectedToppings = Array.isArray(comboItem.selectedToppings)
+        ? comboItem.selectedToppings
+        : [];
+      const selectedComboSides =
+        childMenuItem?.itemType === 'COMBO'
+          ? validateComboSideSelections({
+              menuItem: childMenuItem,
+              selectedComboSides: comboItem.selectedComboSides,
+              itemName: childName,
+            })
+          : [];
+
+      if (childMenuItem?.hasFlavors) {
+        validateSelectionsAndGetCost({
+          menuItem: childMenuItem,
+          selectedOptions: selectedFlavors,
+          type: 'flavor',
+          requiredCount: childMenuItem.flavorsPerOrder || 1,
+          itemName: childName,
+        });
+      }
+
+      if (childMenuItem?.hasToppings) {
+        validateSelectionsAndGetCost({
+          menuItem: childMenuItem,
+          selectedOptions: selectedToppings,
+          type: 'topping',
+          requiredCount: childMenuItem.toppingsPerOrder || 1,
+          itemName: childName,
+        });
+      }
+
+      return {
+        ...childMenuItem,
+        _id: getComboChildId(subItemMatch),
+        comboMenuItemId: getComboChildId(subItemMatch),
+        qty: comboItem.qty || 1,
+        total: 0,
+        selectedFlavors: childMenuItem?.hasFlavors ? selectedFlavors : [],
+        selectedToppings: childMenuItem?.hasToppings ? selectedToppings : [],
+        selectedComboSides,
+        customization:
+          childMenuItem?.allowCustomize && comboItem.customization
+            ? comboItem.customization
+            : null,
+      };
+    })
+    .filter(Boolean);
 };
 /**
  * To add new entry to given collection
@@ -978,23 +1067,15 @@ exports.validateOrder = async (req, res, next) => {
             item.comboItems &&
             item.comboItems.length > 0
           ) {
-            item.comboItems.forEach((comboItem) => {
-              const subItemMatch = subItemarray.find(
-                (sub) => sub._id.toString() === comboItem.comboMenuItemId
-              );
-              if (subItemMatch) {
-                const comboQty = comboItem.qty || 1;
-                // const comboTotal = subItemMatch.price * comboQty;
-                const comboTotal = 0;
-
-                comboSubtotal += comboTotal;
-                comboItemsWithDetails.push({
-                  ...subItemMatch,
-                  qty: comboQty,
-                  total: comboTotal,
-                });
-              }
+            comboItemsWithDetails = buildValidatedComboItems({
+              parentMenuItem: menuIds[item.menuItemId],
+              comboItems: item.comboItems,
+              itemName: name,
             });
+            comboSubtotal = comboItemsWithDetails.reduce(
+              (sum, comboItem) => sum + (Number(comboItem.total) || 0),
+              0
+            );
           }
 
           // Clone original data (so we don't mutate the original menu item)
@@ -1008,6 +1089,18 @@ exports.validateOrder = async (req, res, next) => {
           // Add combo items to fullMenuItemData
           if (itemType === 'COMBO' && comboItemsWithDetails.length > 0) {
             updatedFullMenuItemData.comboItems = comboItemsWithDetails;
+          }
+          const selectedDiscountSubItems =
+            discountSourceItem?.itemType === 'COMBO'
+              ? buildValidatedComboItems({
+                  parentMenuItem: discountSourceItem,
+                  comboItems: item.selectedDiscountSubItems || [],
+                  itemName: discountSourceItem?.name || name,
+                })
+              : [];
+          if (selectedDiscountSubItems.length > 0) {
+            updatedFullMenuItemData.selectedDiscountSubItems =
+              selectedDiscountSubItems;
           }
 
           if (discountRules && discountRules.discount > 0) {
@@ -1118,6 +1211,7 @@ exports.validateOrder = async (req, res, next) => {
               : [],
             selectedDiscountCustomization,
             selectedDiscountComboSides,
+            selectedDiscountSubItems,
             selectedComboSides,
             optionsTotal: selectedOptionsCost,
             price: unitPrice,
@@ -2688,23 +2782,15 @@ exports.add = async (req, res, next) => {
             item.comboItems &&
             item.comboItems.length > 0
           ) {
-            item.comboItems.forEach((comboItem) => {
-              const subItemMatch = subItemarray.find(
-                (sub) => sub._id.toString() === comboItem.comboMenuItemId
-              );
-              if (subItemMatch) {
-                const comboQty = comboItem.qty || 1;
-                // const comboTotal = subItemMatch.price * comboQty;
-                const comboTotal = 0;
-
-                comboSubtotal += comboTotal;
-                comboItemsWithDetails.push({
-                  ...subItemMatch,
-                  qty: comboQty,
-                  total: comboTotal,
-                });
-              }
+            comboItemsWithDetails = buildValidatedComboItems({
+              parentMenuItem: menuIds[item.menuItemId],
+              comboItems: item.comboItems,
+              itemName: name,
             });
+            comboSubtotal = comboItemsWithDetails.reduce(
+              (sum, comboItem) => sum + (Number(comboItem.total) || 0),
+              0
+            );
           }
 
           // Clone original data (so we don't mutate the original menu item)
@@ -2717,6 +2803,18 @@ exports.add = async (req, res, next) => {
           // Add combo items to fullMenuItemData
           if (itemType === 'COMBO' && comboItemsWithDetails.length > 0) {
             updatedFullMenuItemData.comboItems = comboItemsWithDetails;
+          }
+          const selectedDiscountSubItems =
+            discountSourceItem?.itemType === 'COMBO'
+              ? buildValidatedComboItems({
+                  parentMenuItem: discountSourceItem,
+                  comboItems: item.selectedDiscountSubItems || [],
+                  itemName: discountSourceItem?.name || name,
+                })
+              : [];
+          if (selectedDiscountSubItems.length > 0) {
+            updatedFullMenuItemData.selectedDiscountSubItems =
+              selectedDiscountSubItems;
           }
 
           // ✅ Only replace bogoItems if discount type is "bogo"
@@ -2811,6 +2909,7 @@ exports.add = async (req, res, next) => {
               : [],
             selectedDiscountCustomization,
             selectedDiscountComboSides,
+            selectedDiscountSubItems,
             selectedComboSides,
             optionsTotal: selectedOptionsCost,
             price: unitPrice,

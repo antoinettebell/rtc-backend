@@ -247,6 +247,14 @@ const mSchema = mongoose.Schema(
             default: null,
           },
         ],
+        comboItems: {
+          type: [Object],
+          default: [],
+        },
+        selectedDiscountSubItems: {
+          type: [Object],
+          default: [],
+        },
         optionsTotal: {
           type: Number,
           default: 0,

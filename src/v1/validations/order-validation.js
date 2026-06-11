@@ -1,5 +1,14 @@
 const { Joi } = require('express-validation');
 
+const comboItemSelection = Joi.object({
+  comboMenuItemId: Joi.string().required(),
+  qty: Joi.number().min(1),
+  customization: Joi.string().allow(null, ''),
+  selectedFlavors: Joi.array().items(Joi.string().trim()),
+  selectedToppings: Joi.array().items(Joi.string().trim()),
+  selectedComboSides: Joi.array().items(Joi.string().trim()),
+});
+
 module.exports = {
   list: {
     query: Joi.object({
@@ -90,14 +99,10 @@ module.exports = {
             selectedDiscountToppings: Joi.array().items(Joi.string().trim()),
             selectedDiscountCustomization: Joi.string(),
             selectedDiscountComboSides: Joi.array().items(Joi.string().trim()),
+            selectedDiscountSubItems: Joi.array().items(comboItemSelection),
             selectedComboSides: Joi.array().items(Joi.string().trim()),
             qty: Joi.number().min(1).required(),
-            comboItems: Joi.array().items(
-              Joi.object({
-                comboMenuItemId: Joi.string().required(),
-                qty: Joi.number().min(1)
-              })
-            ).optional()
+            comboItems: Joi.array().items(comboItemSelection).optional()
           }).required()
         )
         .required(),
@@ -195,14 +200,10 @@ module.exports = {
             selectedDiscountToppings: Joi.array().items(Joi.string().trim()),
             selectedDiscountCustomization: Joi.string(),
             selectedDiscountComboSides: Joi.array().items(Joi.string().trim()),
+            selectedDiscountSubItems: Joi.array().items(comboItemSelection),
             selectedComboSides: Joi.array().items(Joi.string().trim()),
             qty: Joi.number().min(1).required(),
-            comboItems: Joi.array().items(
-              Joi.object({
-                comboMenuItemId: Joi.string().required(),
-                qty: Joi.number().min(1)
-              })
-            ).optional()
+            comboItems: Joi.array().items(comboItemSelection).optional()
           }).required()
         )
         .required(),
