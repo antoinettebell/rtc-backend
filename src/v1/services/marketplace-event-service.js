@@ -25,9 +25,77 @@ class MarketplaceEventService extends BaseService {
       .sort({ created_at: 1 })
       .lean();
 
+    let awarded_bids = [];
+    let awarded_applications = [];
+
+    if (event.status === 'AWARDED') {
+      awarded_bids = await MarketplaceBidModel.find({
+        event_id,
+        bid_status: 'AWARDED',
+      })
+        .populate('vendor_user_id', 'firstName lastName email')
+        .populate('food_truck_id', 'name logo')
+        .sort({ updated_at: -1 })
+        .lean();
+
+      awarded_applications = await MarketplaceApplicationModel.find({
+        event_id,
+        application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
+      })
+        .populate('vendor_user_id', 'firstName lastName email')
+        .populate('food_truck_id', 'name logo')
+        .sort({ updated_at: -1 })
+        .lean();
+
+      const bidIds = awarded_bids.map((bid) => bid.bid_id).filter(Boolean);
+      const applicationIds = awarded_applications
+        .map((application) => application.application_id)
+        .filter(Boolean);
+      const attachmentQuery = [
+        ...(bidIds.length ? [{ bid_id: { $in: bidIds } }] : []),
+        ...(applicationIds.length
+          ? [{ application_id: { $in: applicationIds } }]
+          : []),
+      ];
+      const attachments = attachmentQuery.length
+        ? await MarketplaceAttachmentModel.find({
+            status: 'ACTIVE',
+            $or: attachmentQuery,
+          })
+            .sort({ created_at: 1 })
+            .lean()
+        : [];
+
+      const attachmentsByBidId = attachments.reduce((acc, attachment) => {
+        if (attachment.bid_id) {
+          acc[attachment.bid_id] = acc[attachment.bid_id] || [];
+          acc[attachment.bid_id].push(attachment);
+        }
+        return acc;
+      }, {});
+      const attachmentsByApplicationId = attachments.reduce((acc, attachment) => {
+        if (attachment.application_id) {
+          acc[attachment.application_id] = acc[attachment.application_id] || [];
+          acc[attachment.application_id].push(attachment);
+        }
+        return acc;
+      }, {});
+
+      awarded_bids = awarded_bids.map((bid) => ({
+        ...bid,
+        attachments: attachmentsByBidId[bid.bid_id] || [],
+      }));
+      awarded_applications = awarded_applications.map((application) => ({
+        ...application,
+        attachments: attachmentsByApplicationId[application.application_id] || [],
+      }));
+    }
+
     return {
       ...event,
       images,
+      awarded_bids,
+      awarded_applications,
     };
   }
 
