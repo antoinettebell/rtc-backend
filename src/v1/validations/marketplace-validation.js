@@ -101,6 +101,12 @@ module.exports = {
     body: Joi.object(marketplaceEventBody),
   },
 
+  closeEvent: {
+    body: Joi.object({
+      close_comment: Joi.string().trim().max(1000).required(),
+    }),
+  },
+
   openEvents: {
     query: Joi.object({
       limit: Joi.number().integer().min(1),

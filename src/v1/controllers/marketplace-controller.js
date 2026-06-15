@@ -1366,6 +1366,70 @@ const notifyVendorsOfEventCancellation = async (event) => {
   );
 };
 
+const notifyClosedWithoutAward = async (event) => {
+  const [bids, applications, awardedBids, awardedApplications] = await Promise.all([
+    MarketplaceBidService.getByData(
+      { event_id: event.event_id, bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] } },
+      { lean: true }
+    ),
+    MarketplaceApplicationService.getByData(
+      { event_id: event.event_id, application_status: { $nin: ['DRAFT', 'WITHDRAWN'] } },
+      { lean: true }
+    ),
+    MarketplaceBidService.getByData(
+      { event_id: event.event_id, bid_status: 'AWARDED' },
+      { lean: true }
+    ),
+    MarketplaceApplicationService.getByData(
+      {
+        event_id: event.event_id,
+        application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
+      },
+      { lean: true }
+    ),
+  ]);
+
+  if (!bids.length && !applications.length) {
+    return;
+  }
+  if (awardedBids.length || awardedApplications.length) {
+    return;
+  }
+
+  const vendorIds = [
+    ...new Set(
+      [...bids, ...applications]
+        .map((item) => item.vendor_user_id)
+        .filter(Boolean)
+        .map(String)
+    ),
+  ];
+
+  await MarketplaceCommunications.sendMarketplaceCommunications([
+    {
+      userId: event.customer_user_id,
+      title: 'Marketplace event closed with no award',
+      body: `${event.event_name || 'Your event'} was closed after receiving submissions, but no vendor was awarded.`,
+      data: {
+        notificationType: 'MARKETPLACE_EVENT_CLOSED_NO_AWARD',
+        eventId: event.event_id,
+      },
+      metadata: { eventId: event.event_id },
+    },
+    ...vendorIds.map((userId) => ({
+      userId,
+      title: 'Marketplace event closed',
+      body: `${event.event_name || 'An event'} was closed and no vendor was awarded.`,
+      data: {
+        notificationType: 'MARKETPLACE_EVENT_CLOSED_NO_AWARD',
+        eventId: event.event_id,
+      },
+      channels: ['push', 'email'],
+      metadata: { eventId: event.event_id },
+    })),
+  ]);
+};
+
 const attachEventsToBids = async (bids = [], options = {}) => {
   const eventIds = [...new Set(bids.map((bid) => bid.event_id).filter(Boolean))];
   if (!eventIds.length) {
@@ -1893,6 +1957,49 @@ exports.reopenEvent = async (req, res, next) => {
     );
 
     return res.data({ marketplaceEvent }, 'Marketplace event reopened');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.closeEvent = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'CUSTOMER') {
+      throw buildError('Only customers can close marketplace events', 403);
+    }
+
+    const event = await getOwnedEvent(req.params.eventId, req.user._id);
+    if (event.status === 'AWARDED') {
+      throw buildError('Awarded events cannot be closed.', 400);
+    }
+    if (!ACTIVE_EVENT_STATUSES.includes(event.status)) {
+      throw buildError('Only open events can be closed.', 400);
+    }
+
+    const now = new Date();
+    const marketplaceEvent = await MarketplaceEventService.update(
+      { event_id: req.params.eventId, customer_user_id: req.user._id },
+      {
+        status: 'CLOSED',
+        closed_at: now,
+        archived_at: now,
+        close_comment: req.body.close_comment,
+        closed_by_user_id: req.user._id,
+      },
+      { getNew: true }
+    );
+
+    await MarketplaceEventQuestionService.updateMany(
+      {
+        event_id: req.params.eventId,
+        status: { $in: ['PENDING', 'PUBLISHED'] },
+      },
+      { status: 'ARCHIVED', archived_at: now }
+    );
+
+    await notifyClosedWithoutAward(marketplaceEvent);
+
+    return res.data({ marketplaceEvent }, 'Marketplace event closed');
   } catch (e) {
     return next(e);
   }

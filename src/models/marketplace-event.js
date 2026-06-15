@@ -281,6 +281,16 @@ const mSchema = mongoose.Schema(
       default: null,
       index: true,
     },
+    close_comment: {
+      type: String,
+      maxlength: 1000,
+      default: null,
+    },
+    closed_by_user_id: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
     close_notification_sent_at: {
       type: Date,
       default: null,

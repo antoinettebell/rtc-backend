@@ -32,6 +32,13 @@ router.post(
   Controller.reopenEvent
 );
 
+router.post(
+  '/events/:eventId/close',
+  allowedTo(['CUSTOMER']),
+  validate(Validation.closeEvent),
+  Controller.closeEvent
+);
+
 router.get(
   '/events/my',
   allowedTo(['CUSTOMER']),
