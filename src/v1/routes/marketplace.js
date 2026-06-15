@@ -19,6 +19,12 @@ router.put(
   Controller.updateEvent
 );
 
+router.delete(
+  '/events/:eventId',
+  allowedTo(['CUSTOMER']),
+  Controller.deleteDraftEvent
+);
+
 router.post(
   '/events/:eventId/reopen',
   allowedTo(['CUSTOMER']),

@@ -182,6 +182,21 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   const normalizedEventTime = normalizeTime(body.event_time);
   const normalizedCloseTime = normalizeTime(body.event_close_time);
   const eventCloseDate = combineDateAndTime(body.event_close_date, normalizedCloseTime);
+  const rawEventDurationHours = Number(body.event_duration_hours || 0);
+  const rawEventDurationMinutes = Number(body.event_duration_minutes || 0);
+  const eventDurationHours = Number.isFinite(rawEventDurationHours)
+    ? Math.max(0, rawEventDurationHours)
+    : 0;
+  const eventDurationMinutes = Number.isFinite(rawEventDurationMinutes)
+    ? Math.max(0, rawEventDurationMinutes)
+    : 0;
+  const hasLegacyDurationHours =
+    body.event_duration_hours !== undefined &&
+    body.event_duration_hours !== null &&
+    body.event_duration_hours !== '';
+  const totalEventDurationMinutes = hasLegacyDurationHours
+    ? eventDurationHours * 60 + eventDurationMinutes
+    : eventDurationMinutes;
 
   const normalized = normalizeMarketplaceEventLocation({
     ...body,
@@ -196,6 +211,8 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     budgeted_amount: budgetedAmount,
     payment_responsibility: paymentResponsibility,
     event_time: normalizedEventTime,
+    event_duration_hours: 0,
+    event_duration_minutes: totalEventDurationMinutes,
     event_close_time: normalizedCloseTime,
     event_close_date: eventCloseDate,
     draft_expires_at:
@@ -234,6 +251,11 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
       throw buildError(message, 400);
     }
   });
+  if (
+    Number(normalized.event_duration_minutes || 0) <= 0
+  ) {
+    throw buildError('Event duration is required.', 400);
+  }
 
   if (normalized.event_type === 'Other' && !hasText(normalized.event_type_other)) {
     throw buildError('Other event type details are required.', 400);
@@ -1099,6 +1121,8 @@ const IMPORTANT_EVENT_CHANGE_FIELDS = {
   event_start_date: 'Date/time',
   event_date: 'Date/time',
   event_time: 'Date/time',
+  event_duration_hours: 'Event duration',
+  event_duration_minutes: 'Event duration',
   event_close_date: 'Close date/time',
   event_close_time: 'Close date/time',
   address: 'Address/location',
@@ -1805,6 +1829,29 @@ exports.updateEvent = async (req, res, next) => {
     }
 
     return res.data({ marketplaceEvent }, 'Marketplace event updated');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.deleteDraftEvent = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'CUSTOMER') {
+      throw buildError('Only customers can delete marketplace drafts', 403);
+    }
+
+    const event = await getOwnedEvent(req.params.eventId, req.user._id);
+    if (event.status !== 'DRAFT') {
+      throw buildError('Only draft events can be deleted.', 400);
+    }
+
+    await MarketplaceEventService.destroy({
+      event_id: req.params.eventId,
+      customer_user_id: req.user._id,
+      status: 'DRAFT',
+    });
+
+    return res.data({ event_id: req.params.eventId }, 'Marketplace draft deleted');
   } catch (e) {
     return next(e);
   }

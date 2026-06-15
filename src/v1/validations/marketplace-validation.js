@@ -49,6 +49,8 @@ const marketplaceEventBody = {
   service_notes: Joi.string().allow(null, ''),
   event_date: Joi.date().allow(null, ''),
   event_time: Joi.string().allow(null, ''),
+  event_duration_hours: Joi.number().integer().min(0).allow(null, ''),
+  event_duration_minutes: Joi.number().integer().min(0).allow(null, ''),
   event_address: Joi.string().trim().allow(null, ''),
   event_city: Joi.string().trim().allow(null, ''),
   event_state: Joi.string().trim().allow(null, ''),

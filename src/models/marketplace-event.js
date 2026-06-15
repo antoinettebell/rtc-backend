@@ -145,6 +145,16 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    event_duration_hours: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    event_duration_minutes: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
     event_close_time: {
       type: String,
       default: null,
