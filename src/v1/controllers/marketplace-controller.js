@@ -1816,7 +1816,7 @@ exports.updateEvent = async (req, res, next) => {
     );
     const marketplaceEvent = await MarketplaceEventService.update(
       { event_id: req.params.eventId, customer_user_id: req.user._id },
-      { $set: normalizedEvent },
+      normalizedEvent,
       { getNew: true }
     );
     if (event.status !== 'CANCELLED' && marketplaceEvent.status === 'CANCELLED') {
@@ -1889,7 +1889,7 @@ exports.reopenEvent = async (req, res, next) => {
         },
         $inc: { reopen_count: 1 },
       },
-      { getNew: true }
+      { getNew: true, directApply: true }
     );
 
     return res.data({ marketplaceEvent }, 'Marketplace event reopened');
