@@ -287,8 +287,8 @@ const mSchema = mongoose.Schema(
       default: null,
     },
     closed_by_user_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'User',
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'users',
       default: null,
     },
     close_notification_sent_at: {
