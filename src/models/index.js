@@ -79,6 +79,9 @@ exports.TaxRatesModel = require('./tax-rates');
 /** Define review model */
 exports.ReviewModel = require('./review');
 
+/** Define review token model */
+exports.ReviewTokenModel = require('./review-token');
+
 /** Define meat model */
 exports.MeatModel = require('./meat');
 

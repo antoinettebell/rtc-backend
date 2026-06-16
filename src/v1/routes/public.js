@@ -102,6 +102,20 @@ router.get(
   ReviewController.stats
 );
 
+/** [GET] /api/v1/public/review-token/:token */
+router.get(
+  '/review-token/:token',
+  validate(ReviewValidation.tokenDetails),
+  ReviewController.getReviewToken
+);
+
+/** [POST] /api/v1/public/review-token/:token */
+router.post(
+  '/review-token/:token',
+  validate(ReviewValidation.addByToken),
+  ReviewController.addByReviewToken
+);
+
 /** [GET] /api/v1/public/menu-check-items */
 router.post(
   '/menu-check-items',

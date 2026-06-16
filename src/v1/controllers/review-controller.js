@@ -1,4 +1,8 @@
-const { ReviewService: Service,FoodTruckService } = require('../services');
+const {
+  ReviewService: Service,
+  FoodTruckService,
+  ReviewTokenService,
+} = require('../services');
 const CustomNotification = require('../../helper/custom-notification');
 
 const entityName = 'Review';
@@ -157,6 +161,112 @@ exports.add = async (req, res, next) => {
       { [`${entityName.toLocaleLowerCase()}`]: data },
       `${entityName} added`
     );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.getReviewToken = async (req, res, next) => {
+  try {
+    const {
+      params: { token },
+    } = req;
+
+    const reviewToken = await ReviewTokenService.getValidByToken(token);
+    if (!reviewToken) {
+      return res.error(new Error('Review link is invalid or expired'), 409);
+    }
+
+    const [foodTruck, existingReview] = await Promise.all([
+      FoodTruckService.getById(reviewToken.foodTruckId),
+      Service.getByData(
+        {
+          orderId: reviewToken.orderId,
+          review_source: 'WALKUP_SMS',
+          deletedAt: null,
+        },
+        { singleResult: true }
+      ),
+    ]);
+
+    if (existingReview) {
+      return res.error(new Error('This order has already been reviewed'), 409);
+    }
+
+    return res.data(
+      {
+        reviewToken: {
+          foodTruckId: reviewToken.foodTruckId,
+          orderId: reviewToken.orderId,
+          expires_at: reviewToken.expires_at,
+          foodTruckName:
+            foodTruck?.truckName ||
+            foodTruck?.name ||
+            foodTruck?.businessName ||
+            foodTruck?.companyName ||
+            'Food truck',
+        },
+      },
+      'Review link details'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.addByReviewToken = async (req, res, next) => {
+  try {
+    const {
+      params: { token },
+      body: { rate, review, images },
+    } = req;
+
+    const reviewToken = await ReviewTokenService.getValidByToken(token);
+    if (!reviewToken) {
+      return res.error(new Error('Review link is invalid or expired'), 409);
+    }
+
+    const existingReview = await Service.getByData(
+      {
+        orderId: reviewToken.orderId,
+        review_source: 'WALKUP_SMS',
+        deletedAt: null,
+      },
+      { singleResult: true }
+    );
+
+    if (existingReview) {
+      await ReviewTokenService.consume(token, existingReview._id);
+      return res.error(new Error('This order has already been reviewed'), 409);
+    }
+
+    const data = await Service.create({
+      foodTruckId: reviewToken.foodTruckId,
+      orderId: reviewToken.orderId,
+      rate,
+      review,
+      images,
+      userId: null,
+      review_source: 'WALKUP_SMS',
+      guest_phone: reviewToken.guest_phone || null,
+    });
+
+    await ReviewTokenService.consume(token, data._id);
+
+    if (rate <= 2) {
+      try {
+        const ft = await FoodTruckService.getById(reviewToken.foodTruckId);
+        if (ft) {
+          await CustomNotification.sendBadReviewNotificationToVendor(
+            { _id: ft.userId },
+            reviewToken.orderId,
+            reviewToken.foodTruckId
+          );
+        }
+      } catch (e) {}
+    }
+
+    return res.data({ review: data }, 'Review added');
   } catch (e) {
     return next(e);
   }

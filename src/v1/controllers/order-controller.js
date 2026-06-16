@@ -10,12 +10,14 @@ const {
   PaymentsLogService,
   PlanService,
   EmployeeSessionService,
+  ReviewTokenService,
 } = require('../services');
 const entityName = 'Order';
 const mongoose = require('mongoose');
 const https = require('https');
 const http = require('http');
 const CustomNotification = require('../../helper/custom-notification');
+const SmsHelper = require('../../helper/sms-helper');
 const PaymentHelper = require('../../helper/payment-helper');
 const MailHelper = require('../../helper/mail-helper');
 const TaxHelper = require('../../helper/tax-helper');
@@ -390,15 +392,78 @@ const buildInitialStatusTime = (orderStatus) => {
   };
 };
 
-const queueGuestSmsNotificationStub = async ({ order, guestCustomer }) => {
-  if (!guestCustomer?.phone) {
-    return;
+const getFoodTruckDisplayName = (foodTruck) =>
+  foodTruck?.truckName ||
+  foodTruck?.name ||
+  foodTruck?.businessName ||
+  foodTruck?.companyName ||
+  'the food truck';
+
+const buildWalkUpReviewUrl = ({ order, reviewToken }) => {
+  const baseUrl =
+    process.env.WALKUP_REVIEW_BASE_URL ||
+    process.env.CUSTOMER_APP_REVIEW_BASE_URL ||
+    'rtc-customer://review';
+
+  if (!baseUrl) {
+    return null;
   }
 
-  console.log('Guest SMS notification stub queued', {
-    orderId: order?._id,
-    orderNumber: order?.orderNumber,
-    phone: guestCustomer.phone,
+  try {
+    const url = new URL(baseUrl);
+    if (reviewToken) {
+      url.searchParams.set('reviewToken', reviewToken);
+    } else {
+      url.searchParams.set('foodTruckId', order.foodTruckId?.toString());
+      url.searchParams.set('orderId', order._id?.toString());
+    }
+    url.searchParams.set('source', 'walkup_sms');
+    return url.toString();
+  } catch (error) {
+    console.error('Invalid walkup review URL configuration', {
+      baseUrl,
+      message: error.message,
+    });
+    return null;
+  }
+};
+
+const sendWalkUpGuestSms = async ({ order, status, foodTruck }) => {
+  const phone = order?.guestCustomer?.phone;
+  if (!phone || !WALK_UP_ORDER_SOURCES.includes(order?.orderSource)) {
+    return { skipped: true, reason: 'not_walkup_guest_sms' };
+  }
+
+  const orderLabel = order.orderNumber ? `#${order.orderNumber}` : '';
+  const truckName = getFoodTruckDisplayName(foodTruck);
+  let body = null;
+
+  if (status === 'READY_FOR_PICKUP') {
+    body = `RTC: Your order ${orderLabel} from ${truckName} is ready for pickup.`;
+  }
+
+  if (status === 'COMPLETED') {
+    const reviewToken = await ReviewTokenService.createForWalkUpOrder(order);
+    const reviewUrl = buildWalkUpReviewUrl({ order, reviewToken });
+    body = reviewUrl
+      ? `RTC: Thanks for ordering from ${truckName}. Please rate your visit: ${reviewUrl}`
+      : `RTC: Thanks for ordering from ${truckName}. Open the Round The Corner app to rate your visit.`;
+  }
+
+  if (!body) {
+    return { skipped: true, reason: 'unsupported_walkup_sms_status' };
+  }
+
+  return SmsHelper.sendSms({
+    to: phone,
+    body,
+    metadata: {
+      orderId: order._id?.toString(),
+      orderNumber: order.orderNumber,
+      orderStatus: status,
+      orderSource: order.orderSource,
+      foodTruckId: order.foodTruckId?.toString(),
+    },
   });
 };
 
@@ -3232,8 +3297,6 @@ exports.add = async (req, res, next) => {
           { _id: foodTruck.userId },
           data._id
         );
-      } else {
-        await queueGuestSmsNotificationStub({ order: data, guestCustomer });
       }
     } catch (e) {}
 
@@ -3606,6 +3669,15 @@ exports.update = async (req, res, next) => {
             id,
             orderStatus
           );
+        }
+
+        if (
+          WALK_UP_ORDER_SOURCES.includes(item.orderSource) &&
+          ['READY_FOR_PICKUP', 'COMPLETED'].includes(orderStatus) &&
+          previousOrderStatus !== orderStatus
+        ) {
+          const foodTruck = await FoodTruckService.getById(item.foodTruckId);
+          await sendWalkUpGuestSms({ order: item, status: orderStatus, foodTruck });
         }
       }
     } catch (e) {}

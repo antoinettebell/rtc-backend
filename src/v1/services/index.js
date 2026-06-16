@@ -79,6 +79,9 @@ exports.TaxRatesService = require('./tax-rates-service');
 /** Define review service */
 exports.ReviewService = require('./review-service');
 
+/** Define review token service */
+exports.ReviewTokenService = require('./review-token-service');
+
 /** Define meat service */
 exports.MeatService = require('./meat-service');
 

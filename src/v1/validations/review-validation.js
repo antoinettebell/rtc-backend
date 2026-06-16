@@ -27,6 +27,23 @@ module.exports = {
     }),
   },
 
+  addByToken: {
+    params: Joi.object({
+      token: Joi.string().trim().required(),
+    }),
+    body: Joi.object({
+      rate: Joi.number().min(1).max(5).required(),
+      review: Joi.string().allow(null, ''),
+      images: Joi.array().items(Joi.string()),
+    }),
+  },
+
+  tokenDetails: {
+    params: Joi.object({
+      token: Joi.string().trim().required(),
+    }),
+  },
+
   update: {
     body: Joi.object({
       rate: Joi.number().min(1).max(5),

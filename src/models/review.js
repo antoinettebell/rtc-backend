@@ -13,7 +13,7 @@ const mSchema = mongoose.Schema(
     userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'users',
-      required: true,
+      default: null,
     },
     foodTruckId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -39,6 +39,15 @@ const mSchema = mongoose.Schema(
         default: null,
       },
     ],
+    review_source: {
+      type: String,
+      enum: ['CUSTOMER_APP', 'WALKUP_SMS'],
+      default: 'CUSTOMER_APP',
+    },
+    guest_phone: {
+      type: String,
+      default: null,
+    },
     deletedAt: {
       type: Date,
       default: null,
