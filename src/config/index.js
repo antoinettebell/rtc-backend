@@ -78,6 +78,7 @@ module.exports = {
       privateKey: process.env.DOCUSIGN_PRIVATE_KEY,
       basePath: process.env.DOCUSIGN_BASE_PATH || 'https://demo.docusign.net/restapi',
       authServer: process.env.DOCUSIGN_AUTH_SERVER || 'account-d.docusign.com',
+      webhookSecret: process.env.DOCUSIGN_WEBHOOK_SECRET,
     },
   };
 

@@ -21,6 +21,7 @@ const reviewRoutes = require('./review');
 const taxRatesRoutes = require('./tax-rates');
 const meatRoutes = require('./meat');
 const marketplaceRoutes = require('./marketplace');
+const webhookRoutes = require('./webhooks');
 const authenticate = require('../../middleware/authenticate');
 const router = express.Router();
 
@@ -29,6 +30,9 @@ router.use('/auth', authRoutes);
 
 /** Public routes */
 router.use('/public', publicRoutes);
+
+/** Webhook routes */
+router.use('/webhooks', webhookRoutes);
 
 /////////////////////////////////////////////////////////////
 //                                                         //

@@ -41,6 +41,11 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use(
+  '/api/v1/webhooks/docusign',
+  express.raw({ type: '*/*', limit: '2mb' })
+);
+
 app.use(express.json());
 
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));

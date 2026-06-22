@@ -60,3 +60,6 @@ exports.AddOnsController = require('./add-ons-controller');
 
 /** Define marketplace controller */
 exports.MarketplaceController = require('./marketplace-controller');
+
+/** Define webhook controller */
+exports.WebhookController = require('./webhook-controller');
