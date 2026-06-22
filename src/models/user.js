@@ -6,6 +6,9 @@ const jwt = require('jsonwebtoken');
 const { JWT } = require('../config');
 const bcrypt = require('bcrypt');
 
+const toPhoneDigits = (value) =>
+  value === null || value === undefined ? value : String(value).replace(/\D/g, '');
+
 /**
  * Model schema
  *
@@ -40,6 +43,7 @@ const mSchema = mongoose.Schema(
     mobileNumber: {
       type: String,
       default: null,
+      set: toPhoneDigits,
     },
     userType: {
       type: String,

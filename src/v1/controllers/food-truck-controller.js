@@ -180,6 +180,8 @@ const asPlain = (value) =>
   typeof value?.toObject === 'function' ? value.toObject() : value;
 
 const getTruckUnitId = (unit) => unit?._id?.toString();
+const toPhoneDigits = (value) =>
+  value === null || value === undefined ? '' : String(value).replace(/\D/g, '');
 
 const ensureDefaultTruckUnits = (foodTruck) => {
   if (!foodTruck) return [];
@@ -1067,10 +1069,11 @@ exports.updateTruckUnits = async (req, res, next) => {
       if (reactivate_truck_unit_id) {
         reactivateTruckUnit(item, reactivate_truck_unit_id);
       } else if (create_name) {
-        if (!req.body.phone) {
+        const phoneDigits = toPhoneDigits(req.body.phone);
+        if (!phoneDigits) {
           return res.error(new Error('Truck phone number is required'), 400);
         }
-        createTruckUnit(item, create_name, req.body.phone || null);
+        createTruckUnit(item, create_name, phoneDigits);
       } else {
         const archived = getArchivedTruckUnits(item).filter((unit) => !unit.is_primary);
         return res.data(
@@ -1140,10 +1143,11 @@ exports.updateTruckUnit = async (req, res, next) => {
       unit.name = name;
     }
     if (!unit.is_primary && phone !== undefined) {
-      if (!phone) {
+      const phoneDigits = toPhoneDigits(phone);
+      if (!phoneDigits) {
         return res.error(new Error('Truck phone number is required'), 400);
       }
-      unit.phone = phone || null;
+      unit.phone = phoneDigits;
     }
     if (!unit.is_primary && is_archived !== undefined) {
       unit.is_archived = !!is_archived;

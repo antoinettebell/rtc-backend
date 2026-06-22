@@ -3,6 +3,9 @@
  */
 const mongoose = require('mongoose');
 
+const toPhoneDigits = (value) =>
+  value === null || value === undefined ? value : String(value).replace(/\D/g, '');
+
 /**
  * Model schema
  *
@@ -75,6 +78,7 @@ const mSchema = mongoose.Schema(
     truck_unit_phone: {
       type: String,
       default: null,
+      set: toPhoneDigits,
     },
     order_source: {
       type: String,
@@ -106,6 +110,7 @@ const mSchema = mongoose.Schema(
       phone: {
         type: String,
         default: null,
+        set: toPhoneDigits,
       },
     },
     deliveryTime: {
