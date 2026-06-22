@@ -58,6 +58,7 @@ module.exports = {
     body: Joi.object({
       food_truck_count: Joi.number().integer().min(1).required(),
       create_name: Joi.string().trim().min(1).max(80),
+      phone: Joi.string().trim().allow(null, ''),
       reactivate_truck_unit_id: Joi.string().trim(),
     }),
   },
@@ -65,6 +66,7 @@ module.exports = {
   updateTruckUnit: {
     body: Joi.object({
       name: Joi.string().trim().min(1).max(80),
+      phone: Joi.string().trim().allow(null, ''),
       is_archived: Joi.boolean(),
     }).min(1),
   },

@@ -87,6 +87,10 @@ const mSchema = mongoose.Schema(
           type: String,
           default: null,
         },
+        phone: {
+          type: String,
+          default: null,
+        },
         display_order: {
           type: Number,
           default: 1,

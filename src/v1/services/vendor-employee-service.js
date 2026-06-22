@@ -476,6 +476,7 @@ class VendorEmployeeService extends BaseService {
       assignedTruckUnit: {
         _id: assignedTruckUnit._id,
         name: assignedTruckUnit.name,
+        phone: assignedTruckUnit.phone || null,
       },
       employeeCapabilities: {
         employeeWalkUpPos: !!capabilities.employeeWalkUpPos,

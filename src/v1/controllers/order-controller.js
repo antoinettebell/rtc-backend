@@ -242,14 +242,12 @@ const buildWalkUpAuditFields = ({
   const vendorUserId =
     user.userType === 'EMPLOYEE' ? user.vendor_user_id : user._id;
   const foodTruckId = foodTruck?._id;
-  const truckUnit =
-    (foodTruck?.truck_units || []).find(
-      (unit) =>
-        unit._id?.toString() ===
-        (truckUnitId || user.assigned_truck_unit_id)?.toString()
-    ) ||
-    (foodTruck?.truck_units || []).find((unit) => unit.is_primary && !unit.is_archived) ||
-    null;
+  const truckUnit = resolveOrderTruckUnit({
+    foodTruck,
+    locationId,
+    truckUnitId,
+    user,
+  });
   const employeeName =
     user.userType === 'EMPLOYEE'
       ? [user.first_name, user.last_name].filter(Boolean).join(' ')
@@ -269,6 +267,7 @@ const buildWalkUpAuditFields = ({
     location_id: locationId,
     truck_unit_id: truckUnit?._id || null,
     truck_unit_name: truckUnit?.name || null,
+    truck_unit_phone: truckUnit?.phone || null,
     order_source: orderSource,
     payment_method: paymentMethod,
     vendor_tier_at_transaction: plan
@@ -282,6 +281,28 @@ const buildWalkUpAuditFields = ({
       : null,
     created_at: new Date(),
   };
+};
+
+const resolveOrderTruckUnit = ({ foodTruck, locationId, truckUnitId = null, user }) => {
+  const units = foodTruck?.truck_units || [];
+  return (
+    units.find(
+      (unit) =>
+        unit._id?.toString() ===
+        (truckUnitId || user.assigned_truck_unit_id)?.toString()
+    ) ||
+    units.find(
+      (unit) =>
+        !unit.is_archived &&
+        (unit.open_locations || []).some(
+          (location) =>
+            location.locationId?.toString() === locationId?.toString() &&
+            location.isOrderingOpen
+        )
+    ) ||
+    units.find((unit) => unit.is_primary && !unit.is_archived) ||
+    null
+  );
 };
 
 const touchEmployeeSession = async (user) => {
@@ -3149,6 +3170,12 @@ exports.add = async (req, res, next) => {
         if (total < 0) total = 0; // Ensure total doesn't go negative
       }
     }
+    const orderTruckUnit = resolveOrderTruckUnit({
+      foodTruck,
+      locationId,
+      truckUnitId,
+      user,
+    });
     const data = await Service.create({
       foodTruckId: foodTruck?._id,
       userId:
@@ -3161,15 +3188,18 @@ exports.add = async (req, res, next) => {
         vendorPosOrder && user.userType === 'EMPLOYEE'
           ? user.employee_internal_id
           : null,
-      ...buildWalkUpAuditFields({
+	      ...buildWalkUpAuditFields({
 	        user,
 	        foodTruck,
 	        locationId,
 	        truckUnitId,
 	        orderSource,
         paymentMethod: normalizedPaymentMethod,
-        plan: vendorTierAtTransaction,
-      }),
+	        plan: vendorTierAtTransaction,
+	      }),
+      truck_unit_id: orderTruckUnit?._id || null,
+      truck_unit_name: orderTruckUnit?.name || null,
+      truck_unit_phone: orderTruckUnit?.phone || null,
       orderSource,
       guestCustomer: vendorPosOrder
         ? { phone: guestCustomer?.phone || null }

@@ -189,6 +189,7 @@ const ensureDefaultTruckUnits = (foodTruck) => {
     foodTruck.truck_units = [
       {
         name: foodTruck.name || 'Truck 1',
+        phone: null,
         display_order: 1,
         is_primary: true,
         is_archived: false,
@@ -205,6 +206,7 @@ const ensureDefaultTruckUnits = (foodTruck) => {
       return {
         ...plainUnit,
         name: isPrimary ? foodTruck.name || plainUnit.name || 'Truck 1' : plainUnit.name,
+        phone: isPrimary ? plainUnit.phone || null : plainUnit.phone || null,
         display_order: plainUnit.display_order || index + 1,
         is_primary: isPrimary,
         is_archived: !!plainUnit.is_archived,
@@ -312,13 +314,14 @@ const archiveExtraTruckUnits = (foodTruck, targetCount) => {
   syncOrderingLocationFlagsFromTruckUnits(foodTruck);
 };
 
-const createTruckUnit = (foodTruck, name) => {
+const createTruckUnit = (foodTruck, name, phone = null) => {
   ensureDefaultTruckUnits(foodTruck);
   const nextOrder =
     Math.max(0, ...(foodTruck.truck_units || []).map((unit) => unit.display_order || 0)) +
     1;
   foodTruck.truck_units.push({
     name,
+    phone,
     display_order: nextOrder,
     is_primary: false,
     is_archived: false,
@@ -1064,7 +1067,10 @@ exports.updateTruckUnits = async (req, res, next) => {
       if (reactivate_truck_unit_id) {
         reactivateTruckUnit(item, reactivate_truck_unit_id);
       } else if (create_name) {
-        createTruckUnit(item, create_name);
+        if (!req.body.phone) {
+          return res.error(new Error('Truck phone number is required'), 400);
+        }
+        createTruckUnit(item, create_name, req.body.phone || null);
       } else {
         const archived = getArchivedTruckUnits(item).filter((unit) => !unit.is_primary);
         return res.data(
@@ -1105,7 +1111,7 @@ exports.updateTruckUnits = async (req, res, next) => {
 exports.updateTruckUnit = async (req, res, next) => {
   try {
     const {
-      body: { name, is_archived },
+      body: { name, phone, is_archived },
       params: { id, truckUnitId },
       user,
     } = req;
@@ -1132,6 +1138,12 @@ exports.updateTruckUnit = async (req, res, next) => {
 
     if (!unit.is_primary && name !== undefined) {
       unit.name = name;
+    }
+    if (!unit.is_primary && phone !== undefined) {
+      if (!phone) {
+        return res.error(new Error('Truck phone number is required'), 400);
+      }
+      unit.phone = phone || null;
     }
     if (!unit.is_primary && is_archived !== undefined) {
       unit.is_archived = !!is_archived;
