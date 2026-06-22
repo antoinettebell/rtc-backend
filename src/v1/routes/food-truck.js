@@ -50,6 +50,22 @@ router.patch(
   Controller.toggleLocationOrdering
 );
 
+/** [PUT] /api/v1/food-truck/:id/truck-units */
+router.put(
+  '/:id/truck-units',
+  allowedTo(['VENDOR']),
+  validate(Validation.updateTruckUnits),
+  Controller.updateTruckUnits
+);
+
+/** [PATCH] /api/v1/food-truck/:id/truck-units/:truckUnitId */
+router.patch(
+  '/:id/truck-units/:truckUnitId',
+  allowedTo(['VENDOR']),
+  validate(Validation.updateTruckUnit),
+  Controller.updateTruckUnit
+);
+
 /** [PUT] /api/v1/food-truck/:id */
 router.put(
   '/:id/update-extra',

@@ -50,7 +50,23 @@ module.exports = {
   toggleLocationOrdering: {
     body: Joi.object({
       isOrderingOpen: Joi.boolean().required(),
+      truck_unit_id: Joi.string().trim().allow(null, ''),
     }),
+  },
+
+  updateTruckUnits: {
+    body: Joi.object({
+      food_truck_count: Joi.number().integer().min(1).required(),
+      create_name: Joi.string().trim().min(1).max(80),
+      reactivate_truck_unit_id: Joi.string().trim(),
+    }),
+  },
+
+  updateTruckUnit: {
+    body: Joi.object({
+      name: Joi.string().trim().min(1).max(80),
+      is_archived: Joi.boolean(),
+    }).min(1),
   },
 
   filtersNew: {
@@ -110,6 +126,7 @@ module.exports = {
       planId: Joi.string().trim(),
       logo: Joi.string().min(2).trim(),
       currentLocation: Joi.string().trim().allow(null),
+      food_truck_count: Joi.number().integer().min(1),
       // photos: Joi.array().items(Joi.string().required()).min(0).allow(null).optional(),
       photos: Joi.alternatives().try(
         Joi.array().items(Joi.string()).min(0),

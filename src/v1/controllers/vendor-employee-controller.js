@@ -88,9 +88,10 @@ exports.add = async (req, res, next) => {
   try {
     const {
       body: {
-        food_truck_id,
-        assigned_location_id,
-        first_name,
+	        food_truck_id,
+	        assigned_location_id,
+	        assigned_truck_unit_id,
+	        first_name,
         last_name,
         zip_code,
         pin,
@@ -105,9 +106,10 @@ exports.add = async (req, res, next) => {
 
     const employee = await Service.createForVendor({
       vendor_user_id: user._id,
-      food_truck_id,
-      assigned_location_id,
-      first_name,
+	      food_truck_id,
+	      assigned_location_id,
+	      assigned_truck_unit_id,
+	      first_name,
       last_name,
       zip_code,
       pin,
@@ -138,9 +140,12 @@ exports.update = async (req, res, next) => {
       includeArchived: true,
     });
     const assignedLocationChanged =
-      body.assigned_location_id &&
-      employee.assigned_location_id?.toString() !==
-        body.assigned_location_id?.toString();
+      (body.assigned_location_id &&
+        employee.assigned_location_id?.toString() !==
+          body.assigned_location_id?.toString()) ||
+      (body.assigned_truck_unit_id &&
+        employee.assigned_truck_unit_id?.toString() !==
+          body.assigned_truck_unit_id?.toString());
     const foodTruck = await Service.getVendorFoodTruck(
       user._id,
       employee.food_truck_id
@@ -509,20 +514,24 @@ const assertEmployeeCanUseShift = async (user) => {
     foodTruck,
     employee.assigned_location_id
   );
+  const assignedTruckUnit = Service.getAssignedTruckUnit(
+    foodTruck,
+    employee.assigned_truck_unit_id
+  );
   if (!assignedLocation) {
     const error = new Error('Employee assigned location is unavailable');
     error.code = 404;
     throw error;
   }
 
-  return { employee, foodTruck, assignedLocation };
+  return { employee, foodTruck, assignedLocation, assignedTruckUnit };
 };
 
 exports.toggleDuty = async (req, res, next) => {
   try {
     const { user, body } = req;
     const isWorking = !!body.is_working;
-    const { employee, foodTruck, assignedLocation } =
+    const { employee, foodTruck, assignedLocation, assignedTruckUnit } =
       await assertEmployeeCanUseShift(user);
 
     employee.is_working = isWorking;
@@ -543,6 +552,7 @@ exports.toggleDuty = async (req, res, next) => {
           },
           employeeSession,
           assignedLocation,
+          assignedTruckUnit,
           authToken: null,
         },
         'Employee is off duty'
@@ -559,6 +569,7 @@ exports.toggleDuty = async (req, res, next) => {
         vendor_user_id: employee.vendor_user_id,
         food_truck_id: employee.food_truck_id,
         assigned_location_id: employee.assigned_location_id,
+        assigned_truck_unit_id: employee.assigned_truck_unit_id || null,
       },
       JWT.secret,
       { expiresIn: '168h' }
@@ -573,6 +584,7 @@ exports.toggleDuty = async (req, res, next) => {
           },
         employeeSession: null,
         assignedLocation,
+        assignedTruckUnit,
         authToken,
       },
       'Employee is on duty'
@@ -586,7 +598,7 @@ exports.shiftAction = async (req, res, next) => {
   try {
     const { user, body } = req;
     const action = String(body.action || '').toUpperCase();
-    const { employee, foodTruck, assignedLocation } =
+    const { employee, foodTruck, assignedLocation, assignedTruckUnit } =
       await assertEmployeeCanUseShift(user);
     let employeeSession = null;
     let authToken = null;
@@ -614,6 +626,7 @@ exports.shiftAction = async (req, res, next) => {
           vendor_user_id: employee.vendor_user_id,
           food_truck_id: employee.food_truck_id,
           assigned_location_id: employee.assigned_location_id,
+          assigned_truck_unit_id: employee.assigned_truck_unit_id || null,
         },
         JWT.secret,
         { expiresIn: '168h' }
@@ -663,6 +676,7 @@ exports.shiftAction = async (req, res, next) => {
         },
         employeeSession,
         assignedLocation,
+        assignedTruckUnit,
         authToken,
       },
       'Employee shift updated'
@@ -683,6 +697,10 @@ exports.dashboard = async (req, res, next) => {
       foodTruck,
       user.assigned_location_id
     );
+    const assignedTruckUnit = Service.getAssignedTruckUnit(
+      foodTruck,
+      user.assigned_truck_unit_id
+    );
 
     if (!assignedLocation) {
       return res.error(
@@ -695,6 +713,7 @@ exports.dashboard = async (req, res, next) => {
       user,
       foodTruck,
       assignedLocation,
+      assignedTruckUnit,
     });
 
     return res.data({ dashboard }, 'Employee dashboard');

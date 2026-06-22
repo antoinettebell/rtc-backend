@@ -47,6 +47,15 @@ const mSchema = mongoose.Schema(
       required: true,
       index: true,
     },
+    assigned_truck_unit_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+      index: true,
+    },
+    assigned_truck_unit_name: {
+      type: String,
+      default: null,
+    },
     first_name: {
       type: String,
       required: true,

@@ -64,6 +64,14 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    truck_unit_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
+    truck_unit_name: {
+      type: String,
+      default: null,
+    },
     order_source: {
       type: String,
       enum: ['CUSTOMER_APP', 'VENDOR_POS', 'WALK_UP_EMPLOYEE', null],

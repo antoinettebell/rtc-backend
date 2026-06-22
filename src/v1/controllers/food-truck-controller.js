@@ -176,7 +176,181 @@ const normalizeLocations = (incomingLocations, existingLocations = []) => {
   });
 };
 
+const asPlain = (value) =>
+  typeof value?.toObject === 'function' ? value.toObject() : value;
+
+const getTruckUnitId = (unit) => unit?._id?.toString();
+
+const ensureDefaultTruckUnits = (foodTruck) => {
+  if (!foodTruck) return [];
+
+  const units = foodTruck.truck_units || [];
+  if (!units.length) {
+    foodTruck.truck_units = [
+      {
+        name: foodTruck.name || 'Truck 1',
+        display_order: 1,
+        is_primary: true,
+        is_archived: false,
+        archived_at: null,
+        open_locations: [],
+      },
+    ];
+  } else {
+    let primaryFound = false;
+    foodTruck.truck_units = units.map((unit, index) => {
+      const plainUnit = asPlain(unit);
+      const isPrimary = plainUnit.is_primary || (!primaryFound && index === 0);
+      if (isPrimary) primaryFound = true;
+      return {
+        ...plainUnit,
+        name: isPrimary ? foodTruck.name || plainUnit.name || 'Truck 1' : plainUnit.name,
+        display_order: plainUnit.display_order || index + 1,
+        is_primary: isPrimary,
+        is_archived: !!plainUnit.is_archived,
+        archived_at: plainUnit.archived_at || null,
+        open_locations: plainUnit.open_locations || [],
+      };
+    });
+  }
+
+  const activeCount = (foodTruck.truck_units || []).filter(
+    (unit) => !unit.is_archived
+  ).length;
+  foodTruck.food_truck_count = Math.max(activeCount || 1, 1);
+  return foodTruck.truck_units;
+};
+
+const hasTruckUnitOpenState = (foodTruck) =>
+  (foodTruck.truck_units || []).some((unit) =>
+    (unit.open_locations || []).some((loc) => loc.isOrderingOpen)
+  );
+
+const syncOrderingLocationFlagsFromTruckUnits = (foodTruck) => {
+  const openLocationIds = new Set();
+  (foodTruck.truck_units || []).forEach((unit) => {
+    if (unit.is_archived) return;
+    (unit.open_locations || []).forEach((loc) => {
+      if (loc.isOrderingOpen && loc.locationId) {
+        openLocationIds.add(loc.locationId.toString());
+      }
+    });
+  });
+
+  foodTruck.locations = (foodTruck.locations || []).map((loc) => {
+    loc.isOrderingOpen = openLocationIds.has(loc._id?.toString());
+    return loc;
+  });
+
+  foodTruck.currentLocation = openLocationIds.values().next().value || null;
+};
+
+const getPrimaryTruckUnit = (foodTruck) => {
+  ensureDefaultTruckUnits(foodTruck);
+  return (
+    (foodTruck.truck_units || []).find((unit) => unit.is_primary) ||
+    (foodTruck.truck_units || [])[0]
+  );
+};
+
+const findTruckUnit = (foodTruck, truckUnitId) => {
+  ensureDefaultTruckUnits(foodTruck);
+  const normalizedTruckUnitId =
+    truckUnitId || getTruckUnitId(getPrimaryTruckUnit(foodTruck));
+  return (foodTruck.truck_units || []).find(
+    (unit) => getTruckUnitId(unit) === normalizedTruckUnitId?.toString()
+  );
+};
+
+const setTruckUnitLocationOpen = ({
+  foodTruck,
+  truckUnitId,
+  locationId,
+  isOpen,
+}) => {
+  const unit = findTruckUnit(foodTruck, truckUnitId);
+  if (!unit || unit.is_archived) {
+    const error = new Error('Truck name not found or archived');
+    error.code = 404;
+    throw error;
+  }
+
+  unit.open_locations = (unit.open_locations || []).filter(
+    (loc) => loc.locationId?.toString() !== locationId?.toString()
+  );
+  unit.open_locations.push({
+    locationId,
+    isOrderingOpen: !!isOpen,
+    updated_at: new Date(),
+  });
+
+  syncOrderingLocationFlagsFromTruckUnits(foodTruck);
+  return unit;
+};
+
+const getActiveTruckUnits = (foodTruck) => {
+  ensureDefaultTruckUnits(foodTruck);
+  return (foodTruck.truck_units || []).filter((unit) => !unit.is_archived);
+};
+
+const getArchivedTruckUnits = (foodTruck) => {
+  ensureDefaultTruckUnits(foodTruck);
+  return (foodTruck.truck_units || []).filter((unit) => unit.is_archived);
+};
+
+const archiveExtraTruckUnits = (foodTruck, targetCount) => {
+  const activeUnits = getActiveTruckUnits(foodTruck).sort(
+    (a, b) => (a.display_order || 0) - (b.display_order || 0)
+  );
+  activeUnits.slice(targetCount).forEach((unit) => {
+    if (unit.is_primary) return;
+    unit.is_archived = true;
+    unit.archived_at = new Date();
+    unit.open_locations = [];
+  });
+  foodTruck.food_truck_count = Math.max(targetCount, 1);
+  syncOrderingLocationFlagsFromTruckUnits(foodTruck);
+};
+
+const createTruckUnit = (foodTruck, name) => {
+  ensureDefaultTruckUnits(foodTruck);
+  const nextOrder =
+    Math.max(0, ...(foodTruck.truck_units || []).map((unit) => unit.display_order || 0)) +
+    1;
+  foodTruck.truck_units.push({
+    name,
+    display_order: nextOrder,
+    is_primary: false,
+    is_archived: false,
+    archived_at: null,
+    open_locations: [],
+  });
+  foodTruck.food_truck_count = getActiveTruckUnits(foodTruck).length;
+  return foodTruck.truck_units[foodTruck.truck_units.length - 1];
+};
+
+const reactivateTruckUnit = (foodTruck, truckUnitId) => {
+  const unit = (foodTruck.truck_units || []).find(
+    (item) => getTruckUnitId(item) === truckUnitId?.toString()
+  );
+  if (!unit || !unit.is_archived || unit.is_primary) {
+    const error = new Error('Archived truck name not found');
+    error.code = 404;
+    throw error;
+  }
+  unit.is_archived = false;
+  unit.archived_at = null;
+  foodTruck.food_truck_count = getActiveTruckUnits(foodTruck).length;
+  return unit;
+};
+
 const syncOrderingLocationFlags = (foodTruck) => {
+  ensureDefaultTruckUnits(foodTruck);
+  if (hasTruckUnitOpenState(foodTruck)) {
+    syncOrderingLocationFlagsFromTruckUnits(foodTruck);
+    return;
+  }
+
   const currentLocation = foodTruck.currentLocation?.toString() || null;
   const hasCurrentLocation =
     !!currentLocation &&
@@ -555,9 +729,11 @@ exports.update = async (req, res, next) => {
     if (!item) {
       return res.error(new Error('No food truck found'), 409);
     }
+    ensureDefaultTruckUnits(item);
 
     if (name) {
       item.name = name;
+      ensureDefaultTruckUnits(item);
     }
 
     // if (facebookLink) {
@@ -746,7 +922,7 @@ exports.updateExtra = async (req, res, next) => {
 exports.toggleLocationOrdering = async (req, res, next) => {
   try {
     const {
-      body: { isOrderingOpen },
+      body: { isOrderingOpen, truck_unit_id },
       params: { id, locationId },
       user,
     } = req;
@@ -765,10 +941,15 @@ exports.toggleLocationOrdering = async (req, res, next) => {
       return res.error(new Error('No food truck found'), 404);
     }
 
+    ensureDefaultTruckUnits(item);
+
     if (
       user.userType === 'EMPLOYEE' &&
       (item._id.toString() !== user.food_truck_id?.toString() ||
-        locationId?.toString() !== user.assigned_location_id?.toString())
+        locationId?.toString() !== user.assigned_location_id?.toString() ||
+        (user.assigned_truck_unit_id &&
+          truck_unit_id &&
+          user.assigned_truck_unit_id?.toString() !== truck_unit_id?.toString()))
     ) {
       return res.error(new Error('Location not found or access denied'), 403);
     }
@@ -795,12 +976,21 @@ exports.toggleLocationOrdering = async (req, res, next) => {
         );
       }
 
-      item.currentLocation = locationId;
-    } else if (item.currentLocation?.toString() === locationId?.toString()) {
-      item.currentLocation = null;
+      setTruckUnitLocationOpen({
+        foodTruck: item,
+        truckUnitId: truck_unit_id || user.assigned_truck_unit_id || null,
+        locationId,
+        isOpen: true,
+      });
+    } else {
+      setTruckUnitLocationOpen({
+        foodTruck: item,
+        truckUnitId: truck_unit_id || user.assigned_truck_unit_id || null,
+        locationId,
+        isOpen: false,
+      });
     }
 
-    syncOrderingLocationFlags(item);
     await item.save();
 
     if (user.userType === 'EMPLOYEE') {
@@ -836,6 +1026,128 @@ exports.toggleLocationOrdering = async (req, res, next) => {
     return res.data(
       { [`${entityName.toLocaleLowerCase()}`]: responseFoodTruck },
       `${entityName} updated`
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.updateTruckUnits = async (req, res, next) => {
+  try {
+    const {
+      body: { food_truck_count, create_name, reactivate_truck_unit_id },
+      params: { id },
+      user,
+    } = req;
+
+    const item = await Service.getByData(
+      { _id: id, userId: user._id },
+      { singleResult: true }
+    );
+
+    if (!item) {
+      return res.error(new Error('No food truck found'), 404);
+    }
+
+    ensureDefaultTruckUnits(item);
+    const targetCount = Number(food_truck_count);
+    const activeCount = getActiveTruckUnits(item).length;
+
+    if (targetCount < 1) {
+      return res.error(new Error('At least one food truck is required'), 409);
+    }
+
+    if (targetCount < activeCount) {
+      archiveExtraTruckUnits(item, targetCount);
+    } else if (targetCount > activeCount) {
+      const needed = targetCount - activeCount;
+      if (reactivate_truck_unit_id) {
+        reactivateTruckUnit(item, reactivate_truck_unit_id);
+      } else if (create_name) {
+        createTruckUnit(item, create_name);
+      } else {
+        const archived = getArchivedTruckUnits(item).filter((unit) => !unit.is_primary);
+        return res.data(
+          {
+            actionRequired: true,
+            reason: 'TRUCK_UNIT_CHOICE_REQUIRED',
+            needed,
+            archived_truck_units: archived,
+          },
+          'Choose whether to create a new truck or reactivate an existing truck'
+        );
+      }
+
+      if (needed > 1) {
+        const error = new Error('Add one truck name at a time');
+        error.code = 409;
+        throw error;
+      }
+    }
+
+    ensureDefaultTruckUnits(item);
+    await item.save();
+
+    const latest = await Service.getByData(
+      { _id: id },
+      { singleResult: true, populate: ['cuisine', 'addOns', 'planId'] }
+    );
+
+    return res.data(
+      { [`${entityName.toLocaleLowerCase()}`]: latest },
+      `${entityName} truck names updated`
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.updateTruckUnit = async (req, res, next) => {
+  try {
+    const {
+      body: { name, is_archived },
+      params: { id, truckUnitId },
+      user,
+    } = req;
+
+    const item = await Service.getByData(
+      { _id: id, userId: user._id },
+      { singleResult: true }
+    );
+
+    if (!item) {
+      return res.error(new Error('No food truck found'), 404);
+    }
+
+    const unit = findTruckUnit(item, truckUnitId);
+    if (!unit) {
+      return res.error(new Error('Truck name not found'), 404);
+    }
+    if (unit.is_primary && name && name !== item.name) {
+      return res.error(
+        new Error('Truck 1 name can only be changed by contacting support'),
+        409
+      );
+    }
+
+    if (!unit.is_primary && name !== undefined) {
+      unit.name = name;
+    }
+    if (!unit.is_primary && is_archived !== undefined) {
+      unit.is_archived = !!is_archived;
+      unit.archived_at = unit.is_archived ? new Date() : null;
+      if (unit.is_archived) {
+        unit.open_locations = [];
+      }
+    }
+
+    ensureDefaultTruckUnits(item);
+    syncOrderingLocationFlagsFromTruckUnits(item);
+    await item.save();
+
+    return res.data(
+      { truckUnit: unit, foodtruck: item },
+      'Truck name updated'
     );
   } catch (e) {
     return next(e);

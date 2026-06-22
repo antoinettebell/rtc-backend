@@ -240,7 +240,12 @@ class EmployeeSessionService extends BaseService {
     return OrderModel.find(query).sort({ created_at: -1, createdAt: -1 }).lean();
   }
 
-  async getEmployeeDashboard({ user, foodTruck, assignedLocation }) {
+  async getEmployeeDashboard({
+    user,
+    foodTruck,
+    assignedLocation,
+    assignedTruckUnit = null,
+  }) {
     const { start: startOfToday, end: endOfToday } = getCurrentDayRange();
 
     const activeSession = await this.getActiveSession(
@@ -307,10 +312,17 @@ class EmployeeSessionService extends BaseService {
       { pending: 0, approved: 0, rejected: 0 }
     );
 
-    const locationIsOpen =
-      foodTruck?.currentLocation?.toString() ===
-        user.assigned_location_id?.toString() ||
-      !!assignedLocation?.isOrderingOpen;
+    const truckOpenLocations = assignedTruckUnit?.open_locations || [];
+    const locationIsOpen = assignedTruckUnit
+      ? truckOpenLocations.some(
+          (location) =>
+            location.locationId?.toString() ===
+              user.assigned_location_id?.toString() &&
+            location.isOrderingOpen
+        )
+      : foodTruck?.currentLocation?.toString() ===
+          user.assigned_location_id?.toString() ||
+        !!assignedLocation?.isOrderingOpen;
 
     return {
       employee: {
@@ -321,6 +333,7 @@ class EmployeeSessionService extends BaseService {
           'Employee',
       },
       assignedLocation,
+      assignedTruckUnit,
       location: {
         location_id: user.assigned_location_id,
         is_open: locationIsOpen,

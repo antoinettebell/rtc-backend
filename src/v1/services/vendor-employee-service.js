@@ -18,6 +18,7 @@ const buildError = (message, code = 409) => {
 };
 
 const completedSalesStatuses = ['COMPLETED', 'DELIVERED'];
+const getTruckUnitId = (unit) => unit?._id?.toString();
 const toSafeEmployee = (employee) => {
   const safeEmployee =
     typeof employee?.toObject === 'function' ? employee.toObject() : employee;
@@ -68,6 +69,7 @@ class VendorEmployeeService extends BaseService {
     vendor_user_id,
     food_truck_id,
     assigned_location_id,
+    assigned_truck_unit_id = null,
     first_name,
     last_name,
     zip_code,
@@ -94,6 +96,11 @@ class VendorEmployeeService extends BaseService {
       throw buildError('Employee must be assigned to an existing location.');
     }
 
+    const assignedTruckUnit = this.getAssignedTruckUnit(
+      foodTruck,
+      assigned_truck_unit_id
+    );
+
     if (!pin) {
       throw buildError('Employee PIN is required.');
     }
@@ -110,6 +117,8 @@ class VendorEmployeeService extends BaseService {
       vendor_user_id,
       food_truck_id,
       assigned_location_id,
+      assigned_truck_unit_id: assignedTruckUnit._id,
+      assigned_truck_unit_name: assignedTruckUnit.name,
       first_name,
       last_name,
       zip_code,
@@ -197,6 +206,30 @@ class VendorEmployeeService extends BaseService {
     }
   }
 
+  getAssignedTruckUnit(foodTruck, assignedTruckUnitId = null) {
+    const units = foodTruck.truck_units || [];
+    if (!units.length && !assignedTruckUnitId) {
+      return {
+        _id: null,
+        name: foodTruck.name || 'Truck 1',
+      };
+    }
+
+    const unit =
+      (assignedTruckUnitId
+        ? units.find(
+            (item) => getTruckUnitId(item) === assignedTruckUnitId?.toString()
+          )
+        : units.find((item) => item.is_primary && !item.is_archived)) ||
+      units.find((item) => !item.is_archived);
+
+    if (!unit || unit.is_archived) {
+      throw buildError('Employee must be assigned to an active truck name.');
+    }
+
+    return unit;
+  }
+
   async getScopedEmployee({
     vendor_user_id,
     employee_id,
@@ -227,16 +260,26 @@ class VendorEmployeeService extends BaseService {
     const employee = await this.getScopedEmployee({ vendor_user_id, employee_id });
     let assignedLocationChanged = false;
 
-    if (update.assigned_location_id) {
+    if (update.assigned_location_id || update.assigned_truck_unit_id) {
       const foodTruck = await this.getVendorFoodTruck(
         vendor_user_id,
         employee.food_truck_id
       );
-      this.assertExistingLocation(foodTruck, update.assigned_location_id);
+      const nextLocationId =
+        update.assigned_location_id || employee.assigned_location_id;
+      this.assertExistingLocation(foodTruck, nextLocationId);
+      const assignedTruckUnit = this.getAssignedTruckUnit(
+        foodTruck,
+        update.assigned_truck_unit_id || employee.assigned_truck_unit_id
+      );
       assignedLocationChanged =
         employee.assigned_location_id?.toString() !==
-        update.assigned_location_id?.toString();
-      employee.assigned_location_id = update.assigned_location_id;
+          nextLocationId?.toString() ||
+        employee.assigned_truck_unit_id?.toString() !==
+          assignedTruckUnit._id?.toString();
+      employee.assigned_location_id = nextLocationId;
+      employee.assigned_truck_unit_id = assignedTruckUnit._id;
+      employee.assigned_truck_unit_name = assignedTruckUnit.name;
     }
 
     ['first_name', 'last_name', 'zip_code'].forEach((field) => {
@@ -390,6 +433,10 @@ class VendorEmployeeService extends BaseService {
       foodTruck,
       employee.assigned_location_id
     );
+    const assignedTruckUnit = this.getAssignedTruckUnit(
+      foodTruck,
+      employee.assigned_truck_unit_id
+    );
 
     if (!assignedLocation) {
       throw buildError('Employee assigned location is no longer available.', 403);
@@ -426,6 +473,10 @@ class VendorEmployeeService extends BaseService {
         logo: foodTruck.logo,
       },
       assignedLocation,
+      assignedTruckUnit: {
+        _id: assignedTruckUnit._id,
+        name: assignedTruckUnit.name,
+      },
       employeeCapabilities: {
         employeeWalkUpPos: !!capabilities.employeeWalkUpPos,
         walkUpPosPaymentMethods: capabilities.walkUpPosPaymentMethods || [],

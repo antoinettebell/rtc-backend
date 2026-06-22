@@ -43,6 +43,7 @@ module.exports = {
     body: Joi.object({
       foodTruckId: Joi.string().required(),
       locationId: Joi.string().required(),
+      truckUnitId: Joi.string().trim().allow(null, ''),
       deliveryTime: Joi.string(),
       deliveryDate: Joi.string(),
       fulfillmentType: Joi.string().valid('PICKUP', 'DELIVERY').default('PICKUP'),

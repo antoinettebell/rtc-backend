@@ -230,6 +230,7 @@ const buildWalkUpAuditFields = ({
   user,
   foodTruck,
   locationId,
+  truckUnitId = null,
   orderSource,
   paymentMethod,
   plan,
@@ -241,6 +242,14 @@ const buildWalkUpAuditFields = ({
   const vendorUserId =
     user.userType === 'EMPLOYEE' ? user.vendor_user_id : user._id;
   const foodTruckId = foodTruck?._id;
+  const truckUnit =
+    (foodTruck?.truck_units || []).find(
+      (unit) =>
+        unit._id?.toString() ===
+        (truckUnitId || user.assigned_truck_unit_id)?.toString()
+    ) ||
+    (foodTruck?.truck_units || []).find((unit) => unit.is_primary && !unit.is_archived) ||
+    null;
   const employeeName =
     user.userType === 'EMPLOYEE'
       ? [user.first_name, user.last_name].filter(Boolean).join(' ')
@@ -258,6 +267,8 @@ const buildWalkUpAuditFields = ({
     vendor_user_id: vendorUserId,
     food_truck_id: foodTruckId,
     location_id: locationId,
+    truck_unit_id: truckUnit?._id || null,
+    truck_unit_name: truckUnit?.name || null,
     order_source: orderSource,
     payment_method: paymentMethod,
     vendor_tier_at_transaction: plan
@@ -2651,10 +2662,11 @@ exports.add = async (req, res, next) => {
         deliveryAddress = null,
         deliveryLat = null,
         deliveryLong = null,
-        availabilityId,
-        orderSource: incomingOrderSource = 'CUSTOMER_APP',
-        guestCustomer = {},
-      },
+	        availabilityId,
+	        orderSource: incomingOrderSource = 'CUSTOMER_APP',
+	        guestCustomer = {},
+	        truckUnitId = null,
+	      },
       user,
     } = req;
     const orderSource = normalizeWalkUpOrderSource(user, incomingOrderSource);
@@ -3150,10 +3162,11 @@ exports.add = async (req, res, next) => {
           ? user.employee_internal_id
           : null,
       ...buildWalkUpAuditFields({
-        user,
-        foodTruck,
-        locationId,
-        orderSource,
+	        user,
+	        foodTruck,
+	        locationId,
+	        truckUnitId,
+	        orderSource,
         paymentMethod: normalizedPaymentMethod,
         plan: vendorTierAtTransaction,
       }),

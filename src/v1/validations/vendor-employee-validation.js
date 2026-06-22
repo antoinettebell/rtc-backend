@@ -34,6 +34,7 @@ module.exports = {
     body: Joi.object({
       food_truck_id: Joi.string().trim().required(),
       assigned_location_id: Joi.string().trim().required(),
+      assigned_truck_unit_id: Joi.string().trim().allow(null, ''),
       first_name: Joi.string().trim().required(),
       last_name: Joi.string().trim().required(),
       zip_code: Joi.string().trim().required(),
@@ -48,6 +49,7 @@ module.exports = {
       vendor_user_id: Joi.string().trim().required(),
       food_truck_id: Joi.string().trim().required(),
       assigned_location_id: Joi.string().trim().required(),
+      assigned_truck_unit_id: Joi.string().trim().allow(null, ''),
       first_name: Joi.string().trim().required(),
       last_name: Joi.string().trim().required(),
       zip_code: Joi.string().trim().required(),
@@ -60,6 +62,7 @@ module.exports = {
   update: {
     body: Joi.object({
       assigned_location_id: Joi.string().trim(),
+      assigned_truck_unit_id: Joi.string().trim().allow(null, ''),
       first_name: Joi.string().trim(),
       last_name: Joi.string().trim(),
       zip_code: Joi.string().trim(),

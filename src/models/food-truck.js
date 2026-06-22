@@ -76,6 +76,52 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    food_truck_count: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
+    truck_units: [
+      {
+        name: {
+          type: String,
+          default: null,
+        },
+        display_order: {
+          type: Number,
+          default: 1,
+        },
+        is_primary: {
+          type: Boolean,
+          default: false,
+        },
+        is_archived: {
+          type: Boolean,
+          default: false,
+          index: true,
+        },
+        archived_at: {
+          type: Date,
+          default: null,
+        },
+        open_locations: [
+          {
+            locationId: {
+              type: String,
+              required: true,
+            },
+            isOrderingOpen: {
+              type: Boolean,
+              default: false,
+            },
+            updated_at: {
+              type: Date,
+              default: Date.now,
+            },
+          },
+        ],
+      },
+    ],
     photos: [
       {
         type: String,

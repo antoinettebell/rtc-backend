@@ -578,12 +578,17 @@ exports.loginEmployee = async (req, res, next) => {
       body: { vendorAccessCode, employeeLoginId, pin },
     } = req;
 
-    const { employee, foodTruck, assignedLocation, employeeCapabilities } =
-      await VendorEmployeeService.validateEmployeeLogin({
-        vendorAccessCode,
-        employeeLoginId,
-        pin,
-      });
+    const {
+      employee,
+      foodTruck,
+      assignedLocation,
+      assignedTruckUnit,
+      employeeCapabilities,
+    } = await VendorEmployeeService.validateEmployeeLogin({
+      vendorAccessCode,
+      employeeLoginId,
+      pin,
+    });
     const authToken = jwt.sign(
       {
         _id: employee._id,
@@ -594,6 +599,7 @@ exports.loginEmployee = async (req, res, next) => {
         vendor_user_id: employee.vendor_user_id,
         food_truck_id: employee.food_truck_id,
         assigned_location_id: employee.assigned_location_id,
+        assigned_truck_unit_id: employee.assigned_truck_unit_id || null,
       },
       JWT.secret,
       { expiresIn: '168h' }
@@ -608,6 +614,7 @@ exports.loginEmployee = async (req, res, next) => {
           vendor_user_id: employee.vendor_user_id,
           food_truck_id: employee.food_truck_id,
           assigned_location_id: employee.assigned_location_id,
+          assigned_truck_unit_id: employee.assigned_truck_unit_id || null,
           employee_login_id: employee.employee_login_id,
           first_name: employee.first_name,
           last_name: employee.last_name,
@@ -620,6 +627,7 @@ exports.loginEmployee = async (req, res, next) => {
         },
         foodTruck,
         assignedLocation,
+        assignedTruckUnit,
         employeeCapabilities,
         authToken,
       },
