@@ -38,19 +38,30 @@ const toMoney = (value, fallback = 0) => {
 const toCents = (value) => Math.round(toMoney(value) * 100);
 const centsToMoney = (value) => Number((Math.max(0, value) / 100).toFixed(2));
 
-const BUILT_IN_DELIVERY_FEE = 6.49;
-const PLATFORM_SERVICE_FEE_RATE = 3.5;
+const DEFAULT_PLATFORM_SERVICE_FEE_RATE = 3.5;
+const CUSTOMER_FEE_TIERS = [
+  { min: 80, serviceFeeRate: 4.25, deliveryFee: 3.99 },
+  { min: 60, serviceFeeRate: 5, deliveryFee: 4.49 },
+  { min: 40, serviceFeeRate: 6, deliveryFee: 5 },
+  { min: 0, serviceFeeRate: 5.5, deliveryFee: 6 },
+];
 
-const normalizeDeliveryFee = (fulfillmentType, deliveryFee) => {
+const getCustomerFeeTier = (foodSubtotal) => {
+  const amount = toMoney(foodSubtotal);
+  return CUSTOMER_FEE_TIERS.find((tier) => amount >= tier.min) || CUSTOMER_FEE_TIERS.at(-1);
+};
+
+const normalizeDeliveryFee = (fulfillmentType, deliveryFee, foodSubtotal = 0) => {
   if (fulfillmentType !== 'DELIVERY') {
     return 0;
   }
 
+  const customerTierFee = getCustomerFeeTier(foodSubtotal).deliveryFee;
   if (deliveryFee !== undefined && deliveryFee !== null && deliveryFee !== '') {
-    return toMoney(deliveryFee);
+    return customerTierFee;
   }
 
-  return BUILT_IN_DELIVERY_FEE;
+  return customerTierFee;
 };
 
 const normalizeDriverTip = (fulfillmentType, tip, tips) =>
@@ -61,6 +72,7 @@ const calculatePlatformServiceFee = ({
   foodTruckTip = 0,
   applyFee,
   includeTip = false,
+  serviceFeeRate = DEFAULT_PLATFORM_SERVICE_FEE_RATE,
 }) => {
   if (!applyFee) {
     return 0;
@@ -68,7 +80,7 @@ const calculatePlatformServiceFee = ({
 
   const baseCents =
     toCents(subtotalAfterDiscount) + (includeTip ? toCents(foodTruckTip) : 0);
-  const feeCents = Math.round((baseCents * PLATFORM_SERVICE_FEE_RATE) / 100);
+  const feeCents = Math.round((baseCents * serviceFeeRate) / 100);
 
   return centsToMoney(feeCents);
 };
@@ -985,10 +997,7 @@ exports.validateOrder = async (req, res, next) => {
       return res.error(new Error('Vendor orders must use the POS flow'), 403);
     }
     let normalizedTaxAmount = toMoney(tax ?? taxAmount);
-    const normalizedDeliveryFee = normalizeDeliveryFee(
-      fulfillmentType,
-      deliveryFee
-    );
+    let normalizedDeliveryFee = normalizeDeliveryFee(fulfillmentType, deliveryFee);
     const normalizedDriverTip = normalizeDriverTip(fulfillmentType, tip, tips);
     const normalizedFoodTruckTip = toMoney(tipsAmount);
 
@@ -1392,11 +1401,20 @@ exports.validateOrder = async (req, res, next) => {
     }
 
     const taxableFoodAmount = Math.max(0, subTotal - disAmount);
+    const customerFeeTier = getCustomerFeeTier(taxableFoodAmount);
+    normalizedDeliveryFee = normalizeDeliveryFee(
+      fulfillmentType,
+      deliveryFee,
+      taxableFoodAmount
+    );
     let paymentProcessingFee = calculatePlatformServiceFee({
       subtotalAfterDiscount: taxableFoodAmount,
       foodTruckTip: normalizedFoodTruckTip,
       applyFee: applyGatewayFee,
       includeTip: vendorPosOrder && paymentMethod === 'TAP_TO_PAY',
+      serviceFeeRate: vendorPosOrder
+        ? DEFAULT_PLATFORM_SERVICE_FEE_RATE
+        : customerFeeTier.serviceFeeRate,
     });
     const avalaraTax = await calculateAvalaraOrderTax({
       foodTruck,
@@ -2702,10 +2720,7 @@ exports.add = async (req, res, next) => {
       return res.error(new Error('Vendor orders must use the POS flow'), 403);
     }
     let normalizedTaxAmount = toMoney(tax ?? taxAmount);
-    const normalizedDeliveryFee = normalizeDeliveryFee(
-      fulfillmentType,
-      deliveryFee
-    );
+    let normalizedDeliveryFee = normalizeDeliveryFee(fulfillmentType, deliveryFee);
     const normalizedDriverTip = normalizeDriverTip(fulfillmentType, tip, tips);
     const normalizedFoodTruckTip = toMoney(tipsAmount);
 
@@ -3093,11 +3108,20 @@ exports.add = async (req, res, next) => {
     }
 
     const taxableFoodAmount = Math.max(0, subTotal - disAmount);
+    const customerFeeTier = getCustomerFeeTier(taxableFoodAmount);
+    normalizedDeliveryFee = normalizeDeliveryFee(
+      fulfillmentType,
+      deliveryFee,
+      taxableFoodAmount
+    );
     let paymentProcessingFee = calculatePlatformServiceFee({
       subtotalAfterDiscount: taxableFoodAmount,
       foodTruckTip: normalizedFoodTruckTip,
       applyFee: isGatewayPaymentMethod(normalizedPaymentMethod),
       includeTip: vendorPosOrder && normalizedPaymentMethod === 'TAP_TO_PAY',
+      serviceFeeRate: vendorPosOrder
+        ? DEFAULT_PLATFORM_SERVICE_FEE_RATE
+        : customerFeeTier.serviceFeeRate,
     });
     const avalaraEstimate = await calculateAvalaraOrderTax({
       foodTruck,
