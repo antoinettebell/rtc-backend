@@ -279,6 +279,22 @@ const setTruckUnitLocationOpen = ({
     throw error;
   }
 
+  if (isOpen) {
+    const existingOpenLocation = (unit.open_locations || []).find(
+      (loc) =>
+        loc.isOrderingOpen &&
+        loc.locationId?.toString() !== locationId?.toString()
+    );
+
+    if (existingOpenLocation) {
+      const error = new Error(
+        'Please close this truck at its current location before opening a new one'
+      );
+      error.code = 409;
+      throw error;
+    }
+  }
+
   unit.open_locations = (unit.open_locations || []).filter(
     (loc) => loc.locationId?.toString() !== locationId?.toString()
   );
