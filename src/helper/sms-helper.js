@@ -2,6 +2,7 @@ const https = require('https');
 const { twilio } = require('../config');
 
 const isBlank = (value) => !String(value || '').trim();
+const E164_PHONE_RE = /^\+[1-9]\d{1,14}$/;
 
 const isConfigured = () =>
   twilio?.enabled &&
@@ -16,18 +17,31 @@ const normalizePhoneNumber = (value) => {
   }
 
   if (raw.startsWith('+')) {
-    return raw;
+    const normalized = `+${raw.slice(1).replace(/\D/g, '')}`;
+    return E164_PHONE_RE.test(normalized) ? normalized : null;
   }
 
   const digits = raw.replace(/\D/g, '');
   if (digits.length === 10) {
-    return `+1${digits}`;
+    const normalized = `+1${digits}`;
+    return E164_PHONE_RE.test(normalized) ? normalized : null;
   }
   if (digits.length === 11 && digits.startsWith('1')) {
-    return `+${digits}`;
+    const normalized = `+${digits}`;
+    return E164_PHONE_RE.test(normalized) ? normalized : null;
   }
 
   return null;
+};
+
+const maskPhoneNumber = (value) => {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) {
+    return '[missing]';
+  }
+
+  const lastFour = digits.slice(-4);
+  return `***${lastFour}`;
 };
 
 const postTwilioMessage = ({ to, body }) =>
@@ -77,8 +91,16 @@ const postTwilioMessage = ({ to, body }) =>
 
 exports.sendSms = async ({ to, body, metadata = {} }) => {
   const normalizedTo = normalizePhoneNumber(to);
-  if (!normalizedTo || isBlank(body)) {
-    return { skipped: true, reason: 'missing_recipient_or_body' };
+  if (!normalizedTo) {
+    console.log('Twilio SMS skipped: invalid recipient', {
+      ...metadata,
+      maskedTo: maskPhoneNumber(to),
+    });
+    return { skipped: true, reason: 'invalid_recipient' };
+  }
+
+  if (isBlank(body)) {
+    return { skipped: true, reason: 'missing_body' };
   }
 
   if (!isConfigured()) {
@@ -99,4 +121,5 @@ exports.sendSms = async ({ to, body, metadata = {} }) => {
 };
 
 exports.normalizePhoneNumber = normalizePhoneNumber;
+exports.maskPhoneNumber = maskPhoneNumber;
 exports.isConfigured = isConfigured;
