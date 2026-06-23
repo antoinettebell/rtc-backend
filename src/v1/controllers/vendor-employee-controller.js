@@ -26,7 +26,7 @@ const assertEmployeeManagementAllowed = async (foodTruck) => {
   );
 };
 
-const buildTempPin = () => String(crypto.randomInt(100000, 999999));
+const buildTempPin = () => String(crypto.randomInt(1000, 10000));
 
 const sendAdminPinResetEmail = async ({
   vendor,

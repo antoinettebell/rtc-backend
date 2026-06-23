@@ -1,6 +1,12 @@
 const { Joi } = require('express-validation');
 
-const employeePin = Joi.string().trim().min(4).max(12).required();
+const employeePin = Joi.string()
+  .trim()
+  .pattern(/^\d{4}$/)
+  .required()
+  .messages({
+    'string.pattern.base': 'PIN must be exactly 4 digits',
+  });
 const reasonCode = Joi.string()
   .valid(
     'customer changed mind',

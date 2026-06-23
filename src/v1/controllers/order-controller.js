@@ -40,10 +40,11 @@ const centsToMoney = (value) => Number((Math.max(0, value) / 100).toFixed(2));
 
 const DEFAULT_PLATFORM_SERVICE_FEE_RATE = 3.5;
 const CUSTOMER_FEE_TIERS = [
-  { min: 80, serviceFeeRate: 4.25, deliveryFee: 3.99 },
-  { min: 60, serviceFeeRate: 5, deliveryFee: 4.49 },
-  { min: 40, serviceFeeRate: 6, deliveryFee: 5 },
-  { min: 0, serviceFeeRate: 5.5, deliveryFee: 6 },
+  { min: 200, serviceFeeRate: 3.5, deliveryFee: 0.99 },
+  { min: 80, serviceFeeRate: 3.5, deliveryFee: 3.99 },
+  { min: 60, serviceFeeRate: 4.5, deliveryFee: 4.49 },
+  { min: 40, serviceFeeRate: 4.5, deliveryFee: 5 },
+  { min: 0, serviceFeeRate: 5.5, deliveryFee: 6.49 },
 ];
 
 const getCustomerFeeTier = (foodSubtotal) => {
@@ -736,10 +737,14 @@ const normalizeMenuOptions = (menuItem, type) => {
     return [];
   }
 
-  return rawOptions
+  const normalizedOptions = rawOptions
     .map((option) => {
       if (typeof option === 'string') {
-        return { name: option, hasCost: false, cost: 0 };
+        return {
+          name: option,
+          hasCost: false,
+          cost: 0,
+        };
       }
 
       const cost =
@@ -754,11 +759,33 @@ const normalizeMenuOptions = (menuItem, type) => {
 
       return {
         name: option?.name || option?.label,
-        hasCost: cost > 0 && option?.hasCost !== false,
-        cost,
+        hasCost:
+          (option?.name || option?.label || '').trim().toLowerCase() !==
+            'plain' &&
+          cost > 0 &&
+          option?.hasCost !== false,
+        cost:
+          (option?.name || option?.label || '').trim().toLowerCase() === 'plain'
+            ? 0
+            : cost,
       };
     })
     .filter((option) => option.name);
+
+  if (
+    ['flavor', 'topping'].includes(type) &&
+    !normalizedOptions.some(
+      (option) => option.name.trim().toLowerCase() === 'plain'
+    )
+  ) {
+    return [{ name: 'Plain', hasCost: false, cost: 0 }, ...normalizedOptions];
+  }
+
+  return normalizedOptions.map((option) =>
+    option.name.trim().toLowerCase() === 'plain'
+      ? { ...option, name: 'Plain', hasCost: false, cost: 0 }
+      : option
+  );
 };
 
 const validateSelectionsAndGetCost = ({
@@ -776,9 +803,9 @@ const validateSelectionsAndGetCost = ({
     options.length
   );
 
-  if (selected.length !== maxCount) {
+  if (selected.length < 1 || selected.length > maxCount) {
     throw new Error(
-      `Please select exactly ${maxCount} ${label}${
+      `Please select at least 1 and no more than ${maxCount} ${label}${
         maxCount === 1 ? '' : 's'
       } for the "${itemName}"`
     );
@@ -971,6 +998,7 @@ exports.validateOrder = async (req, res, next) => {
         deliveryDate,
         items,
         locationId,
+        truckUnitId = null,
         couponId,
         taxAmount = 0,
         tax,
@@ -1503,6 +1531,7 @@ exports.validateOrder = async (req, res, next) => {
         user,
         foodTruck,
         locationId,
+        truckUnitId,
         orderSource,
         paymentMethod: paymentMethod || 'CASH',
         plan: vendorTierAtTransaction,
@@ -3744,10 +3773,32 @@ exports.update = async (req, res, next) => {
           previousOrderStatus !== orderStatus
         ) {
           const foodTruck = await FoodTruckService.getById(item.foodTruckId);
-          await sendWalkUpGuestSms({ order: item, status: orderStatus, foodTruck });
+          const smsResult = await sendWalkUpGuestSms({
+            order: item,
+            status: orderStatus,
+            foodTruck,
+          });
+          if (smsResult?.skipped) {
+            console.log('Walk-up guest SMS skipped', {
+              orderId: item._id?.toString(),
+              orderNumber: item.orderNumber,
+              orderStatus,
+              orderSource: item.orderSource,
+              reason: smsResult.reason,
+              hasGuestPhone: !!item.guestCustomer?.phone,
+            });
+          }
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('Walk-up guest SMS failed', {
+        orderId: item._id?.toString(),
+        orderNumber: item.orderNumber,
+        orderStatus,
+        orderSource: item.orderSource,
+        message: e.message,
+      });
+    }
 
     return res.data(
       { [`${entityName.toLocaleLowerCase()}`]: item },

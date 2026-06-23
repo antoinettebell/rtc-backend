@@ -289,6 +289,9 @@ const setTruckUnitLocationOpen = ({
   });
 
   syncOrderingLocationFlagsFromTruckUnits(foodTruck);
+  foodTruck.markModified('truck_units');
+  foodTruck.markModified('locations');
+  foodTruck.markModified('currentLocation');
   return unit;
 };
 
