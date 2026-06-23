@@ -4030,6 +4030,7 @@ exports.getVendorEarnings = async (req, res, next) => {
         startDate,
         endDate,
         locationId,
+        truckUnitId,
         employeeInternalId,
         paymentMethod,
         refundCancelStatus,
@@ -4056,11 +4057,13 @@ exports.getVendorEarnings = async (req, res, next) => {
       foodTruckId,
       startDate,
       endDate,
+      truckUnitId,
       fallbackVendorTierRate
     );
     const earningsFulldata = await Service.getVendorEarningsWithFreeDessertTest(
       foodTruckId,
-      fallbackVendorTierRate
+      fallbackVendorTierRate,
+      truckUnitId
     );
     const employeeAnalytics =
       await EmployeeSessionService.getVendorEmployeeAnalytics({
@@ -4069,6 +4072,7 @@ exports.getVendorEarnings = async (req, res, next) => {
         startDate,
         endDate,
         locationId,
+        truckUnitId,
         employeeInternalId,
         paymentMethod,
         refundCancelStatus,

@@ -378,6 +378,7 @@ class EmployeeSessionService extends BaseService {
     startDate,
     endDate,
     locationId,
+    truckUnitId,
     employeeInternalId,
     paymentMethod,
     refundCancelStatus,
@@ -398,6 +399,7 @@ class EmployeeSessionService extends BaseService {
     const employees = await VendorEmployeeModel.find({
       vendor_user_id: vendorUserId,
       food_truck_id: foodTruck._id,
+      ...(truckUnitId ? { assigned_truck_unit_id: truckUnitId } : {}),
       is_archived: false,
       ...(employeeInternalId
         ? { employee_internal_id: employeeInternalId }
@@ -413,6 +415,7 @@ class EmployeeSessionService extends BaseService {
           startDate: start,
           endDate: end,
           locationId: locationId || null,
+          truckUnitId: truckUnitId || null,
           employeeInternalId: employeeInternalId || null,
           paymentMethod: paymentMethod || null,
           refundCancelStatus: refundCancelStatus || null,
@@ -432,6 +435,7 @@ class EmployeeSessionService extends BaseService {
       food_truck_id: foodTruck._id,
       deletedAt: null,
       ...(locationId ? { location_id: locationId } : {}),
+      ...(truckUnitId ? { truck_unit_id: truckUnitId } : {}),
       ...(paymentMethod
         ? {
             $and: [
@@ -473,7 +477,7 @@ class EmployeeSessionService extends BaseService {
       return map;
     }, {});
 
-    const locationsById = (foodTruck.locations || []).reduce(
+	    const locationsById = (foodTruck.locations || []).reduce(
       (map, location) => {
         if (location?._id) {
           map[location._id.toString()] = location;
@@ -481,7 +485,16 @@ class EmployeeSessionService extends BaseService {
         return map;
       },
       {}
-    );
+	    );
+	    const truckUnitsById = (foodTruck.truck_units || []).reduce(
+	      (map, truckUnit) => {
+	        if (truckUnit?._id) {
+	          map[truckUnit._id.toString()] = truckUnit;
+	        }
+	        return map;
+	      },
+	      {}
+	    );
 
     const getRefundCancelStatus = (request) => {
       if (request.request_status === 'REJECTED') {
@@ -535,8 +548,10 @@ class EmployeeSessionService extends BaseService {
         );
         const session =
           sessionsByEmployee[employee.employee_internal_id] || null;
-        const assignedLocation =
-          locationsById[employee.assigned_location_id?.toString()] || null;
+	        const assignedLocation =
+	          locationsById[employee.assigned_location_id?.toString()] || null;
+	        const assignedTruckUnit =
+	          truckUnitsById[employee.assigned_truck_unit_id?.toString()] || null;
 
         return {
           employee_internal_id: employee.employee_internal_id,
@@ -545,8 +560,13 @@ class EmployeeSessionService extends BaseService {
             [employee.first_name, employee.last_name]
               .filter(Boolean)
               .join(' ') || 'Employee',
-          assigned_location_id: employee.assigned_location_id,
-          assigned_location: assignedLocation,
+	          assigned_location_id: employee.assigned_location_id,
+	          assigned_location: assignedLocation,
+	          assigned_truck_unit_id: employee.assigned_truck_unit_id || null,
+	          assigned_truck_unit_name:
+	            employee.assigned_truck_unit_name ||
+	            assignedTruckUnit?.name ||
+	            null,
           is_active: !!employee.is_active,
           is_working: !!employee.is_working,
           last_activity_at:
@@ -586,8 +606,9 @@ class EmployeeSessionService extends BaseService {
       filters: {
         startDate: start,
         endDate: end,
-        locationId: locationId || null,
-        employeeInternalId: employeeInternalId || null,
+	        locationId: locationId || null,
+	        truckUnitId: truckUnitId || null,
+	        employeeInternalId: employeeInternalId || null,
         paymentMethod: paymentMethod || null,
         refundCancelStatus: refundCancelStatus || null,
       },

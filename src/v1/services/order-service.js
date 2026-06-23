@@ -438,6 +438,7 @@ class OrderService extends BaseService {
     foodTruckId,
     startDate,
     endDate,
+    truckUnitId = null,
     fallbackVendorTierRate = 0
   ) {
     const vendorEarningExpression =
@@ -446,6 +447,7 @@ class OrderService extends BaseService {
       foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
       orderStatus: { $in: deliveredOrderStatuses },
       deletedAt: null,
+      ...(truckUnitId ? { truck_unit_id: new mongoose.Types.ObjectId(truckUnitId) } : {}),
     };
 
     if (startDate && endDate) {
@@ -498,7 +500,8 @@ class OrderService extends BaseService {
 
   async getVendorEarningsWithFreeDessertTest(
     foodTruckId,
-    fallbackVendorTierRate = 0
+    fallbackVendorTierRate = 0,
+    truckUnitId = null
   ) {
     const vendorEarningExpression =
       buildVendorEarningExpression(fallbackVendorTierRate);
@@ -506,6 +509,7 @@ class OrderService extends BaseService {
       foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
       orderStatus: { $in: deliveredOrderStatuses },
       deletedAt: null,
+      ...(truckUnitId ? { truck_unit_id: new mongoose.Types.ObjectId(truckUnitId) } : {}),
     };
 
     const today = new Date();

@@ -100,6 +100,7 @@ class EmployeeRefundCancelRequestService extends BaseService {
     status,
     employeeInternalId,
     locationId,
+    truckUnitId,
     limit = 50,
   }) {
     const foodTruck = await FoodTruckService.getByData(
@@ -111,7 +112,7 @@ class EmployeeRefundCancelRequestService extends BaseService {
       throw buildError('Food truck not found or access denied.', 404);
     }
 
-    return Model.find({
+    const requests = await Model.find({
       vendor_user_id: vendorUserId,
       food_truck_id: foodTruckId,
       ...(status ? { request_status: status } : {}),
@@ -122,6 +123,15 @@ class EmployeeRefundCancelRequestService extends BaseService {
       .limit(Number(limit) || 50)
       .populate('order_id')
       .lean();
+
+    if (!truckUnitId) {
+      return requests;
+    }
+
+    return requests.filter(
+      (request) =>
+        request.order_id?.truck_unit_id?.toString() === truckUnitId?.toString()
+    );
   }
 
   async listForEmployee({ user, orderId }) {

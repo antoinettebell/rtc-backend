@@ -788,6 +788,7 @@ exports.listRefundCancelRequests = async (req, res, next) => {
       status: query.status,
       employeeInternalId: query.employeeInternalId,
       locationId: query.locationId,
+      truckUnitId: query.truckUnitId,
       limit: query.limit,
     });
     return res.data({ requests }, 'Vendor refund/cancel requests');

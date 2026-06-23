@@ -105,6 +105,7 @@ module.exports = {
       status: Joi.string().valid('PENDING', 'APPROVED', 'REJECTED'),
       employeeInternalId: Joi.string().trim(),
       locationId: Joi.string().trim(),
+      truckUnitId: Joi.string().trim(),
       limit: Joi.number(),
     }),
   },

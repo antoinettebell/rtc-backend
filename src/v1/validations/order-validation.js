@@ -147,6 +147,7 @@ module.exports = {
       startDate: Joi.date().iso(),
       endDate: Joi.date().iso(),
       locationId: Joi.string().trim(),
+      truckUnitId: Joi.string().trim(),
       employeeInternalId: Joi.string().trim(),
       paymentMethod: Joi.string()
         .valid('CASH', 'COD', 'TAP_TO_PAY', 'APPLE_PAY', 'GOOGLE_PAY', 'CARD')
