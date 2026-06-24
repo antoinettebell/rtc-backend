@@ -110,6 +110,15 @@ module.exports = {
     }),
   },
 
+  shiftHistory: {
+    params: Joi.object({
+      id: Joi.string().trim().required(),
+    }),
+    query: Joi.object({
+      range: Joi.string().valid('week', 'month'),
+    }),
+  },
+
   reviewRefundCancelRequest: {
     body: Joi.object({
       request_status: Joi.string().valid('APPROVED', 'REJECTED').required(),

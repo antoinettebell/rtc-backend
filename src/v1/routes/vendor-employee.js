@@ -95,6 +95,13 @@ router.delete(
   Controller.adminRemove
 );
 
+router.get(
+  '/:id/shift-history',
+  allowedTo(['VENDOR']),
+  validate(Validation.shiftHistory),
+  Controller.shiftHistory
+);
+
 router.put(
   '/:id',
   allowedTo(['VENDOR']),

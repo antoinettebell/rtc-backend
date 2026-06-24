@@ -615,6 +615,34 @@ class EmployeeSessionService extends BaseService {
       employees: employeesData,
     };
   }
+
+  async getEmployeeShiftHistory({
+    foodTruckId,
+    employeeInternalId,
+    range = 'week',
+  }) {
+    const end = new Date();
+    const start = new Date(end);
+
+    if (range === 'month') {
+      start.setMonth(start.getMonth() - 1);
+    } else {
+      start.setDate(start.getDate() - 7);
+    }
+    start.setHours(0, 0, 0, 0);
+
+    return Model.find({
+      food_truck_id: foodTruckId,
+      employee_internal_id: employeeInternalId,
+      started_at: { $gte: start, $lte: end },
+    })
+      .sort({ started_at: -1 })
+      .limit(100)
+      .select(
+        'employee_session_id started_at ended_at last_active_at shift_status is_active'
+      )
+      .lean();
+  }
 }
 
 module.exports = new EmployeeSessionService();

@@ -27,6 +27,8 @@ const assertEmployeeManagementAllowed = async (foodTruck) => {
 };
 
 const buildTempPin = () => String(crypto.randomInt(1000, 10000));
+const parseBooleanFlag = (value) =>
+  value === true || String(value).toLowerCase() === 'true';
 
 const sendAdminPinResetEmail = async ({
   vendor,
@@ -64,6 +66,8 @@ exports.list = async (req, res, next) => {
       },
       user,
     } = req;
+    const shouldIncludeArchived = parseBooleanFlag(includeArchived);
+    const shouldShowArchivedOnly = parseBooleanFlag(archivedOnly);
 
     const foodTruck = await Service.getVendorFoodTruckByUser(user._id);
     await assertEmployeeManagementAllowed(foodTruck);
@@ -71,14 +75,46 @@ exports.list = async (req, res, next) => {
     const data = await Service.listForVendor({
       vendor_user_id: user._id,
       food_truck_id: foodTruckId,
-      includeArchived,
-      archivedOnly,
+      includeArchived: shouldIncludeArchived,
+      archivedOnly: shouldShowArchivedOnly,
     });
 
     return res.data(
       { [`${entityName.toLocaleLowerCase()}List`]: data },
       `${entityName} items`
     );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.shiftHistory = async (req, res, next) => {
+  try {
+    const {
+      params: { id },
+      query: { range = 'week' },
+      user,
+    } = req;
+
+    const employee = await Service.getByData(
+      {
+        _id: id,
+        vendor_user_id: user._id,
+      },
+      { singleResult: true }
+    );
+
+    if (!employee) {
+      return res.error(new Error('Employee not found'), 404);
+    }
+
+    const sessions = await EmployeeSessionService.getEmployeeShiftHistory({
+      foodTruckId: employee.food_truck_id,
+      employeeInternalId: employee.employee_internal_id,
+      range,
+    });
+
+    return res.data({ sessions }, 'Employee shift history');
   } catch (e) {
     return next(e);
   }
