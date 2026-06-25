@@ -271,6 +271,7 @@ const setTruckUnitLocationOpen = ({
   truckUnitId,
   locationId,
   isOpen,
+  closeOtherLocations = false,
 }) => {
   const unit = findTruckUnit(foodTruck, truckUnitId);
   if (!unit || unit.is_archived) {
@@ -279,7 +280,7 @@ const setTruckUnitLocationOpen = ({
     throw error;
   }
 
-  if (isOpen) {
+  if (isOpen && !closeOtherLocations) {
     const existingOpenLocation = (unit.open_locations || []).find(
       (loc) =>
         loc.isOrderingOpen &&
@@ -295,9 +296,13 @@ const setTruckUnitLocationOpen = ({
     }
   }
 
-  unit.open_locations = (unit.open_locations || []).filter(
-    (loc) => loc.locationId?.toString() !== locationId?.toString()
-  );
+  unit.open_locations = (unit.open_locations || []).filter((loc) => {
+    if (loc.locationId?.toString() === locationId?.toString()) {
+      return false;
+    }
+
+    return !(closeOtherLocations && loc.isOrderingOpen);
+  });
   unit.open_locations.push({
     locationId,
     isOrderingOpen: !!isOpen,
@@ -971,11 +976,18 @@ exports.toggleLocationOrdering = async (req, res, next) => {
       user.userType === 'EMPLOYEE' &&
       (item._id.toString() !== user.food_truck_id?.toString() ||
         locationId?.toString() !== user.assigned_location_id?.toString() ||
-        (user.assigned_truck_unit_id &&
-          truck_unit_id &&
-          user.assigned_truck_unit_id?.toString() !== truck_unit_id?.toString()))
+        !user.assigned_truck_unit_id ||
+        !truck_unit_id ||
+        user.assigned_truck_unit_id?.toString() !== truck_unit_id?.toString())
     ) {
       return res.error(new Error('Location not found or access denied'), 403);
+    }
+
+    if (user.userType === 'EMPLOYEE' && !user.is_working) {
+      return res.error(
+        new Error('Employee status must be Working before changing store status'),
+        403
+      );
     }
 
     const locationExists = (item.locations || []).some(
@@ -1005,6 +1017,7 @@ exports.toggleLocationOrdering = async (req, res, next) => {
         truckUnitId: truck_unit_id || user.assigned_truck_unit_id || null,
         locationId,
         isOpen: true,
+        closeOtherLocations: user.userType === 'EMPLOYEE',
       });
     } else {
       setTruckUnitLocationOpen({

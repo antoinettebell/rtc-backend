@@ -120,6 +120,64 @@ exports.shiftHistory = async (req, res, next) => {
   }
 };
 
+exports.vendorShiftAction = async (req, res, next) => {
+  try {
+    const {
+      params: { id },
+      body: { action },
+      user,
+    } = req;
+
+    const employee = await Service.getScopedEmployee({
+      vendor_user_id: user._id,
+      employee_id: id,
+      includeArchived: true,
+    });
+
+    if (!employee || employee.is_archived) {
+      return res.error(new Error('Employee not found'), 404);
+    }
+
+    if (!employee.is_active) {
+      return res.error(new Error('Employee is not active'), 403);
+    }
+
+    const foodTruck = await Service.getVendorFoodTruck(
+      user._id,
+      employee.food_truck_id
+    );
+    await assertEmployeeManagementAllowed(foodTruck);
+
+    let employeeSession = null;
+    if (action === 'END') {
+      employeeSession = await EmployeeSessionService.endSession({
+        employeeInternalId: employee.employee_internal_id,
+      });
+    } else if (action === 'REOPEN') {
+      if (!employee.is_working) {
+        return res.error(
+          new Error('Employee must be marked Working before reopening a shift'),
+          403
+        );
+      }
+
+      employeeSession = await EmployeeSessionService.reopenLatestEndedSession(
+        employee.employee_internal_id
+      );
+
+      if (!employeeSession) {
+        return res.error(new Error('No ended shift found to reopen'), 404);
+      }
+    } else {
+      return res.error(new Error('Invalid shift action'), 409);
+    }
+
+    return res.data({ employeeSession }, 'Employee shift updated');
+  } catch (e) {
+    return next(e);
+  }
+};
+
 exports.add = async (req, res, next) => {
   try {
     const {
@@ -565,65 +623,9 @@ const assertEmployeeCanUseShift = async (user) => {
 
 exports.toggleDuty = async (req, res, next) => {
   try {
-    const { user, body } = req;
-    const isWorking = !!body.is_working;
-    const { employee, foodTruck, assignedLocation, assignedTruckUnit } =
-      await assertEmployeeCanUseShift(user);
-
-    employee.is_working = isWorking;
-    await employee.save();
-
-    if (!isWorking) {
-      const employeeSession = await EmployeeSessionService.endSession({
-        employeeSessionId: user.employee_session_id,
-        employeeInternalId: user.employee_internal_id,
-      });
-
-      return res.data(
-        {
-          employee: {
-            ...employee.toObject(),
-            pin_hash: undefined,
-            employee_session_id: null,
-          },
-          employeeSession,
-          assignedLocation,
-          assignedTruckUnit,
-          authToken: null,
-        },
-        'Employee is off duty'
-      );
-    }
-
-    const authToken = jwt.sign(
-      {
-        _id: employee._id,
-        userType: 'EMPLOYEE',
-        role: 'EMPLOYEE',
-        employee_internal_id: employee.employee_internal_id,
-        employee_session_id: user.employee_session_id || null,
-        vendor_user_id: employee.vendor_user_id,
-        food_truck_id: employee.food_truck_id,
-        assigned_location_id: employee.assigned_location_id,
-        assigned_truck_unit_id: employee.assigned_truck_unit_id || null,
-      },
-      JWT.secret,
-      { expiresIn: '168h' }
-    );
-
-    return res.data(
-      {
-          employee: {
-            ...employee.toObject(),
-            pin_hash: undefined,
-            employee_session_id: user.employee_session_id || null,
-          },
-        employeeSession: null,
-        assignedLocation,
-        assignedTruckUnit,
-        authToken,
-      },
-      'Employee is on duty'
+    return res.error(
+      new Error('Duty status is managed by the vendor schedule'),
+      403
     );
   } catch (e) {
     return next(e);
@@ -643,6 +645,19 @@ exports.shiftAction = async (req, res, next) => {
       if (!employee.is_working) {
         return res.error(
           new Error('Employee must be On Duty before starting a shift'),
+          403
+        );
+      }
+
+      const latestSession =
+        await EmployeeSessionService.getLatestCurrentDaySession(
+          employee.employee_internal_id
+        );
+      if (latestSession?.ended_at && !latestSession?.is_active) {
+        return res.error(
+          new Error(
+            'This shift has already been ended. Ask the vendor to clock you back in.'
+          ),
           403
         );
       }
@@ -692,8 +707,6 @@ exports.shiftAction = async (req, res, next) => {
         employeeInternalId: user.employee_internal_id,
       });
     } else if (action === 'END') {
-      employee.is_working = false;
-      await employee.save();
       employeeSession = await EmployeeSessionService.endSession({
         employeeSessionId: user.employee_session_id,
         employeeInternalId: user.employee_internal_id,

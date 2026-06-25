@@ -20,18 +20,107 @@ const toMoney = (value, fallback = 0) => {
 };
 
 const isCashPaymentMethod = (paymentMethod) =>
-  ['COD', 'CASH'].includes(paymentMethod);
+  ['COD', 'CASH'].includes(String(paymentMethod || '').toUpperCase());
 
 const isGatewayPaymentMethod = (paymentMethod) =>
   !isCashPaymentMethod(paymentMethod);
+
+const PAID_PAYMENT_STATUSES = ['PAID', 'COMPLETED', 'CAPTURED'];
+const POST_PICKUP_STATUSES = ['DRIVER_PICKED_UP', 'DELIVERED', 'COMPLETED'];
+const REFUNDABLE_STATUSES = [
+  'PREPARING',
+  'READY_FOR_PICKUP',
+  'DRIVER_PICKED_UP',
+  'DELIVERED',
+  'COMPLETED',
+];
+const TEN_MINUTES_MS = 10 * 60 * 1000;
+
+const getCompletedAt = (order) =>
+  order.completed_at || order.statusTime?.completedAt || null;
+
+const isPastCompletedRefundWindow = (order) => {
+  if (order.orderStatus !== 'COMPLETED') {
+    return false;
+  }
+
+  const completedAt = getCompletedAt(order);
+  if (!completedAt) {
+    return false;
+  }
+
+  const completedDate = new Date(completedAt);
+  if (Number.isNaN(completedDate.getTime())) {
+    return false;
+  }
+
+  return Date.now() - completedDate.getTime() > TEN_MINUTES_MS;
+};
+
+const isPaidOrPickedUp = (order) =>
+  PAID_PAYMENT_STATUSES.includes(String(order.paymentStatus || '').toUpperCase()) ||
+  POST_PICKUP_STATUSES.includes(String(order.orderStatus || '').toUpperCase());
+
+const assertRefundCancelAllowed = ({
+  order,
+  request_type,
+  reason_code,
+  employee_notes,
+}) => {
+  if (reason_code === 'other' && !String(employee_notes || '').trim()) {
+    throw buildError('Notes are required when reason is other.');
+  }
+
+  if (order.paymentStatus === 'REFUNDED') {
+    throw buildError('Order has already been refunded.');
+  }
+
+  if (isPaidOrPickedUp(order) && request_type !== 'REFUND') {
+    throw buildError('Only a refund can be requested after payment or pickup.');
+  }
+
+  if (
+    request_type === 'REFUND' &&
+    isCashPaymentMethod(order.paymentMethod || order.payment_method) &&
+    reason_code === 'payment issue'
+  ) {
+    throw buildError('Payment issue is not available for cash refunds.');
+  }
+
+  if (request_type === 'CANCEL' && isPaidOrPickedUp(order)) {
+    throw buildError('Cancel is only available before payment.');
+  }
+
+  if (request_type === 'REFUND' && !REFUNDABLE_STATUSES.includes(order.orderStatus)) {
+    throw buildError('Refund requests are not available for this order status.');
+  }
+
+  if (request_type === 'CANCEL' && !['PREPARING', 'READY_FOR_PICKUP'].includes(order.orderStatus)) {
+    throw buildError('Cancel requests are only available before pickup.');
+  }
+
+  if (isPastCompletedRefundWindow(order)) {
+    throw buildError(
+      'Refund requests are only available for 10 minutes after completion.'
+    );
+  }
+};
 
 class EmployeeRefundCancelRequestService extends BaseService {
   constructor() {
     super(Model);
   }
 
-  async submitForEmployee({ user, orderId, request_type, reason_code, employee_notes }) {
-    const order = await OrderService.getById(orderId);
+  async submitForEmployee({
+    user,
+    orderId,
+    order_id,
+    request_type,
+    reason_code,
+    employee_notes,
+  }) {
+    const orderLookupId = orderId || order_id;
+    const order = await OrderService.getById(orderLookupId);
     if (!order) {
       throw buildError('Order not found.', 404);
     }
@@ -49,15 +138,12 @@ class EmployeeRefundCancelRequestService extends BaseService {
       throw buildError('Only walk-up orders can use this workflow.');
     }
 
-    if (order.paymentStatus === 'REFUNDED') {
-      throw buildError('Order has already been refunded.');
-    }
-
-    if (!['PREPARING', 'READY_FOR_PICKUP'].includes(order.orderStatus)) {
-      throw buildError(
-        'Refund/cancel requests are only available while preparing or ready for pickup.'
-      );
-    }
+    assertRefundCancelAllowed({
+      order,
+      request_type,
+      reason_code,
+      employee_notes,
+    });
 
     const existing = await Model.findOne({
       order_id: order._id,
@@ -65,6 +151,11 @@ class EmployeeRefundCancelRequestService extends BaseService {
     }).lean();
 
     if (existing) {
+      if (request_type === 'REFUND' && order.refundStatus !== 'PENDING') {
+        order.refundStatus = 'PENDING';
+        order.refundReason = reason_code || null;
+        await order.save();
+      }
       return { request: existing, existing: true };
     }
 
@@ -89,6 +180,13 @@ class EmployeeRefundCancelRequestService extends BaseService {
       request,
       order
     );
+
+    if (request_type === 'REFUND') {
+      order.refundStatus = 'PENDING';
+      order.refundReason = reason_code || null;
+      order.refundErrorMessage = null;
+      await order.save();
+    }
     // TODO: Add employee push notification when employee notification routing exists.
 
     return { request, existing: false };
@@ -169,10 +267,19 @@ class EmployeeRefundCancelRequestService extends BaseService {
     }
 
     if (request_status === 'REJECTED') {
+      if (!String(vendor_response_notes || '').trim()) {
+        throw buildError('Vendor notes are required when rejecting a request.');
+      }
       request.request_status = 'REJECTED';
       request.reviewed_at = new Date();
       request.reviewed_by_vendor_user_id = vendorUserId;
       request.vendor_response_notes = vendor_response_notes || null;
+      const order = await OrderService.getById(request.order_id);
+      if (order && request.request_type === 'REFUND') {
+        order.refundStatus = null;
+        order.refundErrorMessage = null;
+        await order.save();
+      }
       await request.save();
       return { request, order: null, refund: null };
     }
@@ -201,15 +308,12 @@ class EmployeeRefundCancelRequestService extends BaseService {
       throw buildError('Order not found or access denied.', 404);
     }
 
-    if (order.paymentStatus === 'REFUNDED') {
-      throw buildError('Order has already been refunded.');
-    }
-
-    if (!['PREPARING', 'READY_FOR_PICKUP'].includes(order.orderStatus)) {
-      throw buildError(
-        'Order can only be refunded or canceled while preparing or ready for pickup.'
-      );
-    }
+    assertRefundCancelAllowed({
+      order,
+      request_type: request.request_type,
+      reason_code: request.reason_code,
+      employee_notes: request.employee_notes,
+    });
 
     const reason =
       request.vendor_response_notes ||
@@ -302,21 +406,23 @@ class EmployeeRefundCancelRequestService extends BaseService {
       order.refundErrorMessage = null;
     }
 
-    order.orderStatus = 'CANCEL';
-    order.status = 'CANCEL';
-    order.cancelReason = reason;
-    order.statusTime = order.statusTime || {
-      placedAt: order.createdAt,
-      canceledAt: null,
-      acceptedAt: null,
-      rejectedAt: null,
-      preparingAt: null,
-      readyAt: null,
-      driverPickedUpAt: null,
-      deliveredAt: null,
-      completedAt: null,
-    };
-    order.statusTime.canceledAt = new Date().toISOString();
+    if (request.request_type === 'CANCEL') {
+      order.orderStatus = 'CANCEL';
+      order.status = 'CANCEL';
+      order.cancelReason = reason;
+      order.statusTime = order.statusTime || {
+        placedAt: order.createdAt,
+        canceledAt: null,
+        acceptedAt: null,
+        rejectedAt: null,
+        preparingAt: null,
+        readyAt: null,
+        driverPickedUpAt: null,
+        deliveredAt: null,
+        completedAt: null,
+      };
+      order.statusTime.canceledAt = new Date().toISOString();
+    }
     await order.save();
 
     return { order, refund: refundResponse };

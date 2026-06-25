@@ -75,6 +75,8 @@ const Authenticate = async (req, res, next) => {
         vendor_user_id: employee.vendor_user_id,
         food_truck_id: employee.food_truck_id,
         assigned_location_id: employee.assigned_location_id,
+        assigned_truck_unit_id: employee.assigned_truck_unit_id || null,
+        is_working: !!employee.is_working,
         authToken: authorization,
       };
       next();

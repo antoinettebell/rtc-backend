@@ -102,6 +102,13 @@ router.get(
   Controller.shiftHistory
 );
 
+router.post(
+  '/:id/session/action',
+  allowedTo(['VENDOR']),
+  validate(Validation.vendorShiftAction),
+  Controller.vendorShiftAction
+);
+
 router.put(
   '/:id',
   allowedTo(['VENDOR']),

@@ -119,6 +119,15 @@ module.exports = {
     }),
   },
 
+  vendorShiftAction: {
+    params: Joi.object({
+      id: Joi.string().trim().required(),
+    }),
+    body: Joi.object({
+      action: Joi.string().trim().uppercase().valid('END', 'REOPEN').required(),
+    }),
+  },
+
   reviewRefundCancelRequest: {
     body: Joi.object({
       request_status: Joi.string().valid('APPROVED', 'REJECTED').required(),

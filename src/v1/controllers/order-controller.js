@@ -2107,11 +2107,34 @@ exports.refundPosOrder = async (req, res, next) => {
       return res.error(new Error('Order has already been refunded'), 409);
     }
 
-    if (!['PREPARING', 'READY_FOR_PICKUP'].includes(order.orderStatus)) {
+    const completedAt = order.completed_at || order.statusTime?.completedAt;
+    const completedDate = completedAt ? new Date(completedAt) : null;
+    const completedRefundWindowExpired =
+      order.orderStatus === 'COMPLETED' &&
+      completedDate &&
+      !Number.isNaN(completedDate.getTime()) &&
+      Date.now() - completedDate.getTime() > 10 * 60 * 1000;
+
+    if (
+      ![
+        'PREPARING',
+        'READY_FOR_PICKUP',
+        'DRIVER_PICKED_UP',
+        'DELIVERED',
+        'COMPLETED',
+      ].includes(order.orderStatus)
+    ) {
       return res.error(
         new Error(
-          'Order can only be refunded while preparing or ready for pickup'
+          'Order can not be refunded in its current status'
         ),
+        409
+      );
+    }
+
+    if (completedRefundWindowExpired) {
+      return res.error(
+        new Error('Refunds are only available for 10 minutes after completion'),
         409
       );
     }
@@ -2252,20 +2275,6 @@ exports.refundPosOrder = async (req, res, next) => {
     }
 
     order.paymentStatus = 'REFUNDED';
-    order.orderStatus = 'CANCEL';
-    order.status = 'CANCEL';
-    order.statusTime = order.statusTime || {
-      placedAt: order.createdAt,
-      canceledAt: null,
-      acceptedAt: null,
-      rejectedAt: null,
-      preparingAt: null,
-      readyAt: null,
-      driverPickedUpAt: null,
-      deliveredAt: null,
-      completedAt: null,
-    };
-    order.statusTime.canceledAt = new Date().toISOString();
     order.refundTransactionId = refundResponse?.refundTransactionId || null;
     order.refundDateTime = new Date();
     order.refundStatus = 'SUCCESS';

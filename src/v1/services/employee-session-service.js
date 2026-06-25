@@ -33,6 +33,32 @@ const getOrderSubtotal = (order) =>
 const getOrderTax = (order) =>
   toNumber(order.taxAmount || order.tax || order.tax_amount);
 
+const getOrderVendorTip = (order) =>
+  toNumber(order.tipsAmount || order.foodTruckTip || order.vendorTip);
+
+const isWalkUpOrder = (order) =>
+  ['VENDOR_POS', 'WALK_UP_EMPLOYEE'].includes(
+    String(order.order_source || order.orderSource || '').toUpperCase()
+  );
+
+const getOrderFoodSalesAmount = (order) => {
+  const hasTotalAfterDiscount =
+    order.totalAfterDiscount !== undefined && order.totalAfterDiscount !== null;
+  const foodSubtotal = hasTotalAfterDiscount
+    ? toNumber(order.totalAfterDiscount)
+    : Math.max(
+        0,
+        getOrderSubtotal(order) -
+          toNumber(order.discount || order.discountAmount || order.disAmount)
+      );
+
+  return (
+    foodSubtotal +
+    getOrderVendorTip(order) +
+    (isWalkUpOrder(order) ? getOrderTax(order) : 0)
+  );
+};
+
 class EmployeeSessionService extends BaseService {
   constructor() {
     super(Model);
@@ -83,39 +109,35 @@ class EmployeeSessionService extends BaseService {
   }
 
   async touchSession(employeeSessionId, employeeInternalId) {
-    const q = {
-      is_active: true,
-      ...(employeeSessionId
-        ? { employee_session_id: employeeSessionId }
-        : { employee_internal_id: employeeInternalId }),
-    };
+    if (!employeeSessionId && !employeeInternalId) {
+      return null;
+    }
 
-    if (!q.employee_session_id && !q.employee_internal_id) {
+    const session = await this.getActiveSession(employeeSessionId, employeeInternalId);
+    if (!session) {
       return null;
     }
 
     return Model.findOneAndUpdate(
-      q,
+      { _id: session._id },
       { $set: { last_active_at: new Date() } },
       { new: true }
     );
   }
 
   async endSession({ employeeSessionId, employeeInternalId }) {
-    const q = {
-      is_active: true,
-      ...(employeeSessionId
-        ? { employee_session_id: employeeSessionId }
-        : { employee_internal_id: employeeInternalId }),
-    };
+    if (!employeeSessionId && !employeeInternalId) {
+      return null;
+    }
 
-    if (!q.employee_session_id && !q.employee_internal_id) {
+    const session = await this.getActiveSession(employeeSessionId, employeeInternalId);
+    if (!session) {
       return null;
     }
 
     const now = new Date();
     return Model.findOneAndUpdate(
-      q,
+      { _id: session._id },
       {
         $set: {
           ended_at: now,
@@ -129,19 +151,82 @@ class EmployeeSessionService extends BaseService {
     );
   }
 
-  async getActiveSession(employeeSessionId, employeeInternalId) {
-    const q = {
-      is_active: true,
-      ...(employeeSessionId
-        ? { employee_session_id: employeeSessionId }
-        : { employee_internal_id: employeeInternalId }),
-    };
-
-    if (!q.employee_session_id && !q.employee_internal_id) {
+  async getLatestSessionForEmployee(employeeInternalId) {
+    if (!employeeInternalId) {
       return null;
     }
 
-    return Model.findOne(q).lean();
+    return Model.findOne({
+      employee_internal_id: employeeInternalId,
+    })
+      .sort({ started_at: -1, createdAt: -1 })
+      .lean();
+  }
+
+  async getLatestCurrentDaySession(employeeInternalId) {
+    if (!employeeInternalId) {
+      return null;
+    }
+
+    const { start, end } = getCurrentDayRange();
+    return Model.findOne({
+      employee_internal_id: employeeInternalId,
+      started_at: { $gte: start, $lt: end },
+    })
+      .sort({ started_at: -1, createdAt: -1 })
+      .lean();
+  }
+
+  async reopenLatestEndedSession(employeeInternalId) {
+    const session = await this.getLatestCurrentDaySession(employeeInternalId);
+    if (!session || session.is_active) {
+      return session;
+    }
+
+    const now = new Date();
+    return Model.findOneAndUpdate(
+      { _id: session._id },
+      {
+        $set: {
+          ended_at: null,
+          last_active_at: now,
+          break_started_at: null,
+          break_ended_at: null,
+          shift_status: 'STARTED',
+          is_active: true,
+        },
+      },
+      { new: true }
+    );
+  }
+
+  async getActiveSession(employeeSessionId, employeeInternalId) {
+    if (!employeeSessionId && !employeeInternalId) {
+      return null;
+    }
+
+    if (employeeSessionId) {
+      const session = await Model.findOne({
+        employee_session_id: employeeSessionId,
+        ...(employeeInternalId ? { employee_internal_id: employeeInternalId } : {}),
+        is_active: true,
+      }).lean();
+
+      if (session) {
+        return session;
+      }
+    }
+
+    if (!employeeInternalId) {
+      return null;
+    }
+
+    return Model.findOne({
+      employee_internal_id: employeeInternalId,
+      is_active: true,
+    })
+      .sort({ last_active_at: -1, started_at: -1 })
+      .lean();
   }
 
   async assertActiveEmployeeSession(employeeSessionId, employeeInternalId) {
@@ -171,6 +256,12 @@ class EmployeeSessionService extends BaseService {
       return session;
     }
 
+    if ((session.break_count || 0) >= 2) {
+      const error = new Error('Maximum of two breaks reached for this shift.');
+      error.code = 403;
+      throw error;
+    }
+
     const now = new Date();
     return Model.findOneAndUpdate(
       { _id: session._id },
@@ -181,6 +272,7 @@ class EmployeeSessionService extends BaseService {
           last_active_at: now,
           shift_status: 'ON_BREAK',
         },
+        $inc: { break_count: 1 },
       },
       { new: true }
     );
@@ -193,14 +285,6 @@ class EmployeeSessionService extends BaseService {
     );
 
     const now = new Date();
-    const breakStart = session.break_started_at
-      ? new Date(session.break_started_at)
-      : null;
-    const breakMinutes =
-      breakStart && !Number.isNaN(breakStart.getTime())
-        ? Math.max(0, Math.floor((now - breakStart) / 60000))
-        : 0;
-
     return Model.findOneAndUpdate(
       { _id: session._id },
       {
@@ -211,7 +295,6 @@ class EmployeeSessionService extends BaseService {
           last_active_at: now,
           shift_status: 'STARTED',
         },
-        $inc: { total_break_minutes: breakMinutes },
       },
       { new: true }
     );
@@ -252,6 +335,9 @@ class EmployeeSessionService extends BaseService {
       user.employee_session_id,
       user.employee_internal_id
     );
+    const latestSession =
+      activeSession ||
+      (await this.getLatestCurrentDaySession(user.employee_internal_id));
 
     const [todayOrders, requests] = await Promise.all([
       OrderModel.find({
@@ -286,7 +372,7 @@ class EmployeeSessionService extends BaseService {
     );
 
     const grossSalesToday = salesOrders.reduce(
-      (sum, order) => sum + toNumber(order.totalOrderCost || order.total),
+      (sum, order) => sum + getOrderFoodSalesAmount(order),
       0
     );
     const cashSalesOrders = salesOrders.filter((order) =>
@@ -313,21 +399,20 @@ class EmployeeSessionService extends BaseService {
     );
 
     const truckOpenLocations = assignedTruckUnit?.open_locations || [];
-    const locationIsOpen = assignedTruckUnit
+    const locationIsOpen = !!assignedTruckUnit
       ? truckOpenLocations.some(
           (location) =>
             location.locationId?.toString() ===
               user.assigned_location_id?.toString() &&
             location.isOrderingOpen
         )
-      : foodTruck?.currentLocation?.toString() ===
-          user.assigned_location_id?.toString() ||
-        !!assignedLocation?.isOrderingOpen;
+      : false;
 
     return {
       employee: {
         employee_internal_id: user.employee_internal_id,
         employee_login_id: user.employee_login_id,
+        is_working: !!user.is_working,
         name:
           [user.first_name, user.last_name].filter(Boolean).join(' ') ||
           'Employee',
@@ -340,19 +425,20 @@ class EmployeeSessionService extends BaseService {
       },
       shift: {
         employee_session_id:
-          activeSession?.employee_session_id ||
+          latestSession?.employee_session_id ||
           user.employee_session_id ||
           null,
-        started_at: activeSession?.started_at || null,
-        ended_at: activeSession?.ended_at || null,
-        last_active_at: activeSession?.last_active_at || null,
-        paused_at: activeSession?.paused_at || null,
-        resumed_at: activeSession?.resumed_at || null,
-        break_started_at: activeSession?.break_started_at || null,
-        break_ended_at: activeSession?.break_ended_at || null,
-        total_break_minutes: activeSession?.total_break_minutes || 0,
-        shift_status: activeSession?.shift_status || null,
-        is_active: !!activeSession?.is_active,
+        started_at: latestSession?.started_at || null,
+        ended_at: latestSession?.ended_at || null,
+        last_active_at: latestSession?.last_active_at || null,
+        paused_at: latestSession?.paused_at || null,
+        resumed_at: latestSession?.resumed_at || null,
+        break_started_at: latestSession?.break_started_at || null,
+        break_ended_at: latestSession?.break_ended_at || null,
+        total_break_minutes: latestSession?.total_break_minutes || 0,
+        break_count: latestSession?.break_count || 0,
+        shift_status: latestSession?.shift_status || null,
+        is_active: !!latestSession?.is_active,
       },
       metrics: {
         orders_created_today: todayOrders.length,
@@ -554,6 +640,7 @@ class EmployeeSessionService extends BaseService {
 	          truckUnitsById[employee.assigned_truck_unit_id?.toString()] || null;
 
         return {
+          employee_id: employee._id,
           employee_internal_id: employee.employee_internal_id,
           employee_login_id: employee.employee_login_id,
           employee_name:
@@ -581,8 +668,7 @@ class EmployeeSessionService extends BaseService {
             orders_processed: filteredOrders.length,
             completed_orders: completedOrders.length,
             gross_sales: salesOrders.reduce(
-              (sum, order) =>
-                sum + toNumber(order.totalOrderCost || order.total),
+              (sum, order) => sum + getOrderFoodSalesAmount(order),
               0
             ),
             cash_orders: filteredOrders.filter((order) =>

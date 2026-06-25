@@ -353,7 +353,7 @@ class VendorEmployeeService extends BaseService {
 
     if (completedSalesExist) {
       throw buildError(
-        'This employee has completed sales and cannot be deleted. Archive the employee instead.',
+        'Employee cannot be deleted due to prior sales activity. Please Disable Login Access then Archive the Employee.',
         409
       );
     }

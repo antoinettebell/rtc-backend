@@ -66,6 +66,10 @@ const mSchema = mongoose.Schema(
       type: Number,
       default: 0,
     },
+    break_count: {
+      type: Number,
+      default: 0,
+    },
     shift_status: {
       type: String,
       enum: ['STARTED', 'ON_BREAK', 'ENDED'],
