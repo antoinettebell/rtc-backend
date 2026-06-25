@@ -1,12 +1,31 @@
 const { AddOnsService: Service } = require('../services');
 const entityName = 'AddOns';
 
+const isSocialMediaAddOn = (name = '') =>
+  /social\s*media|social\s*promotion|social\s*management/i.test(name);
+
+const isAdSpaceAddOn = (name = '') =>
+  /ad\s*space|advertis|banner|social\s*media|social\s*promotion|social\s*management/i.test(
+    name
+  );
+
 const normalizeAddOn = (addOn) => {
   if (!addOn) {
     return addOn;
   }
 
   const source = typeof addOn.toObject === 'function' ? addOn.toObject() : addOn;
+  const name = source.name || '';
+
+  if (isSocialMediaAddOn(name) || /ad\s*space|advertis|banner/i.test(name)) {
+    return {
+      ...source,
+      name: 'Ad Space',
+      priceLabel: source.priceLabel || '$125/month',
+      description: 'Monthly advertising placement for RTC ad inventory.',
+    };
+  }
+
   const isEventAddOn = /event/i.test(source.name || '');
 
   if (!isEventAddOn) {
@@ -46,19 +65,24 @@ exports.list = async (req, res, next) => {
 
     let q = {};
     if (search && search.trim()) {
+      const searchText = search.trim();
+      const searchRegex =
+        /ad\s*space/i.test(searchText)
+          ? 'ad space|advertis|banner|social media|social promotion|social management'
+          : searchText.toLowerCase();
       q = {
-        $or: [{ name: { $regex: search.trim().toLowerCase(), $options: 'i' } }],
+        $or: [{ name: { $regex: searchRegex, $options: 'i' } }],
       };
     }
-    const data = (await Service.getByData(
+    const records = await Service.getByData(
       { ...q, deletedAt: null },
       { paging: { limit, page }, lean: true }
-    )).map(normalizeAddOn);
+    );
+    const data = records
+      .filter((item) => isAdSpaceAddOn(item?.name || ''))
+      .map(normalizeAddOn);
 
-    const total = await Service.getCount({
-      ...q,
-      deletedAt: null,
-    });
+    const total = data.length;
     return res.data(
       {
         [`${entityName.toLocaleLowerCase()}List`]: data,
