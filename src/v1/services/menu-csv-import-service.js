@@ -543,6 +543,52 @@ class MenuCsvImportService {
     };
   }
 
+  parseComboSides(row) {
+    const itemType = String(row.itemType || 'INDIVIDUAL').toUpperCase();
+
+    if (itemType !== 'COMBO') {
+      return {
+        comboSideOptions: [],
+        comboSidesPerOrder: 1,
+      };
+    }
+
+    const comboSideOptions = this.parseStringArray(row.comboSideOptions).slice(
+      0,
+      15
+    );
+    const comboSidesPerOrder = this.parseNumber(
+      row.comboSidesPerOrder,
+      1,
+      'comboSidesPerOrder',
+      row._rowNumber
+    );
+
+    if (comboSideOptions.length === 0) {
+      return {
+        comboSideOptions: [],
+        comboSidesPerOrder: 1,
+      };
+    }
+
+    if (comboSidesPerOrder < 1 || comboSidesPerOrder > 5) {
+      throw new Error(
+        `Row ${row._rowNumber}: comboSidesPerOrder must be between 1 and 5.`
+      );
+    }
+
+    if (comboSidesPerOrder > comboSideOptions.length) {
+      throw new Error(
+        `Row ${row._rowNumber}: comboSidesPerOrder cannot exceed the number of comboSideOptions.`
+      );
+    }
+
+    return {
+      comboSideOptions,
+      comboSidesPerOrder,
+    };
+  }
+
   parseDietObjectIds(row) {
     const indexedDietKeys = Object.keys(row)
       .filter((key) => /^diet\[\d+\]$/i.test(key))
@@ -644,6 +690,7 @@ class MenuCsvImportService {
   buildMenuItem(row, categoryId, userId, imgUrls, subItem = []) {
     const flavorSettings = this.parseFlavors(row);
     const toppingSettings = this.parseToppings(row);
+    const comboSideSettings = this.parseComboSides(row);
 
     return {
       name: this.parseRequiredString(row.name, 'name', row._rowNumber),
@@ -694,6 +741,7 @@ class MenuCsvImportService {
       allowCustomize: this.parseBoolean(row.allowCustomize, true),
       ...flavorSettings,
       ...toppingSettings,
+      ...comboSideSettings,
       newDish: this.parseBoolean(row.newDish, false),
       popularDish: this.parseBoolean(row.popularDish, false),
       diet: this.parseDietObjectIds(row),
