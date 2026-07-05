@@ -18,6 +18,8 @@ const {
   assertSocialMediaLinksAllowed,
   normalizeVendorPlan,
 } = require('../../helper/vendor-plan-helper');
+const { addObjectWithKey, removeObject } = require('../../helper/aws');
+const fs = require('fs');
 const entityName = 'FoodTruck';
 
 const toNumberOrNull = (value) => {
@@ -30,6 +32,20 @@ const parseCsvParam = (value) =>
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
+
+const DOCUMENT_TYPES = new Set(['PERMIT', 'LICENSE', 'INSURANCE', 'OTHER']);
+
+const normalizeDocumentType = (value) => {
+  const normalized = String(value || 'OTHER')
+    .trim()
+    .toUpperCase();
+  return DOCUMENT_TYPES.has(normalized) ? normalized : 'OTHER';
+};
+
+const normalizeDocumentName = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase();
 
 const normalizeFilterValue = (value) => String(value || '').trim().toLowerCase();
 
@@ -742,6 +758,7 @@ exports.update = async (req, res, next) => {
         // snn,
         ssn,
         addOns,
+        documents,
       },
       params: { id },
       user,
@@ -784,6 +801,10 @@ exports.update = async (req, res, next) => {
 
     if (photos) {
       item.photos = photos;
+    }
+
+    if (documents !== undefined) {
+      item.documents = documents;
     }
 
     if (cuisine) {
@@ -864,6 +885,122 @@ exports.update = async (req, res, next) => {
     return res.data(
       { [`${entityName.toLocaleLowerCase()}`]: latest },
       `${entityName} updated`
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.addDocument = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { title, document_type, replace_existing } = req.body;
+    const { user } = req;
+
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded!' });
+    }
+
+    const item = await Service.getByData(
+      { _id: id, ...(user.userType === 'VENDOR' ? { userId: user._id } : {}) },
+      { singleResult: true }
+    );
+
+    if (!item) {
+      return res.error(new Error('No food truck found'), 409);
+    }
+
+    const documentTitle = String(title || req.file.originalname || 'Document').trim();
+    const documentName = normalizeDocumentName(documentTitle || req.file.originalname);
+    const duplicateDocument = (item.documents || []).find((document) => {
+      const existingName = normalizeDocumentName(
+        document.title || document.original_name
+      );
+      return existingName && existingName === documentName;
+    });
+    const shouldReplaceExisting =
+      replace_existing === true ||
+      String(replace_existing || '').toLowerCase() === 'true';
+
+    if (duplicateDocument && !shouldReplaceExisting) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(409).json({
+        message: 'A vendor document with this name already exists.',
+      });
+    }
+
+    const { url, key } = await addObjectWithKey(
+      req.file,
+      `food-truck-documents/${id}`
+    );
+    fs.unlink(req.file.path, () => {});
+
+    const replacedFileKey = duplicateDocument?.file_key;
+    if (duplicateDocument && shouldReplaceExisting) {
+      item.documents.pull({ _id: duplicateDocument._id });
+    }
+
+    const document = {
+      title: documentTitle,
+      document_type: normalizeDocumentType(document_type),
+      file_url: url,
+      file_key: key,
+      original_name: req.file.originalname,
+      mime_type: req.file.mimetype,
+      size_bytes: req.file.size,
+      uploaded_by_user_id: user._id,
+      uploaded_at: new Date(),
+    };
+
+    item.documents = [...(item.documents || []), document];
+    await item.save();
+
+    if (replacedFileKey) {
+      await removeObject(replacedFileKey);
+    }
+
+    return res.data(
+      { [`${entityName.toLocaleLowerCase()}`]: item },
+      `${entityName} document uploaded`
+    );
+  } catch (e) {
+    if (req.file?.path) {
+      fs.unlink(req.file.path, () => {});
+    }
+    return next(e);
+  }
+};
+
+exports.deleteDocument = async (req, res, next) => {
+  try {
+    const { id, documentId } = req.params;
+    const { user } = req;
+
+    const item = await Service.getByData(
+      { _id: id, ...(user.userType === 'VENDOR' ? { userId: user._id } : {}) },
+      { singleResult: true }
+    );
+
+    if (!item) {
+      return res.error(new Error('No food truck found'), 409);
+    }
+
+    const document = (item.documents || []).id(documentId);
+    if (!document) {
+      return res.error(new Error('No document found'), 404);
+    }
+
+    const fileKey = document.file_key;
+    item.documents.pull({ _id: documentId });
+    await item.save();
+
+    if (fileKey) {
+      await removeObject(fileKey);
+    }
+
+    return res.data(
+      { [`${entityName.toLocaleLowerCase()}`]: item },
+      `${entityName} document deleted`
     );
   } catch (e) {
     return next(e);

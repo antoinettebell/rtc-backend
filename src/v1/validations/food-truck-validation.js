@@ -134,6 +134,25 @@ module.exports = {
         Joi.array().items(Joi.string()).min(0),
         Joi.valid(null)
       ),
+      documents: Joi.alternatives().try(
+        Joi.array().items(
+          Joi.object({
+            _id: Joi.string(),
+            title: Joi.string().trim().allow(null, ''),
+            document_type: Joi.string()
+              .valid('PERMIT', 'LICENSE', 'INSURANCE', 'OTHER')
+              .default('OTHER'),
+            file_url: Joi.string().uri().required(),
+            file_key: Joi.string().allow(null, ''),
+            original_name: Joi.string().allow(null, ''),
+            mime_type: Joi.string().allow(null, ''),
+            size_bytes: Joi.number().min(0).allow(null),
+            uploaded_by_user_id: Joi.string().allow(null, ''),
+            uploaded_at: Joi.date(),
+          })
+        ).min(0),
+        Joi.valid(null)
+      ),
       cuisine: Joi.alternatives().try(
         Joi.array().items(Joi.string()).min(0),
         Joi.valid(null)

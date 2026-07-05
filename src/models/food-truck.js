@@ -136,6 +136,49 @@ const mSchema = mongoose.Schema(
         default: null,
       },
     ],
+    documents: [
+      {
+        title: {
+          type: String,
+          default: null,
+        },
+        document_type: {
+          type: String,
+          enum: ['PERMIT', 'LICENSE', 'INSURANCE', 'OTHER'],
+          default: 'OTHER',
+        },
+        file_url: {
+          type: String,
+          required: true,
+        },
+        file_key: {
+          type: String,
+          default: null,
+        },
+        original_name: {
+          type: String,
+          default: null,
+        },
+        mime_type: {
+          type: String,
+          default: null,
+        },
+        size_bytes: {
+          type: Number,
+          default: null,
+          min: 0,
+        },
+        uploaded_by_user_id: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'users',
+          default: null,
+        },
+        uploaded_at: {
+          type: Date,
+          default: Date.now,
+        },
+      },
+    ],
     cuisine: [
       {
         type: mongoose.Schema.Types.ObjectId,

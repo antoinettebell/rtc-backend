@@ -6,6 +6,7 @@ const router = express.Router();
 const { FoodTruckController: Controller } = require('../controllers');
 const { validate, FoodTruckValidation: Validation } = require('../validations');
 const { allowedTo } = require('../../middleware/allow-route');
+const Upload = require('../../middleware/marketplace-upload');
 
 /** [GET] /api/v1/food-truck */
 router.get('/', validate(Validation.list), Controller.list);
@@ -40,6 +41,21 @@ router.put(
   allowedTo(['SUPER_ADMIN', 'VENDOR']),
   validate(Validation.update),
   Controller.update
+);
+
+/** [POST] /api/v1/food-truck/:id/documents */
+router.post(
+  '/:id/documents',
+  allowedTo(['SUPER_ADMIN', 'VENDOR']),
+  Upload.single(),
+  Controller.addDocument
+);
+
+/** [DELETE] /api/v1/food-truck/:id/documents/:documentId */
+router.delete(
+  '/:id/documents/:documentId',
+  allowedTo(['SUPER_ADMIN', 'VENDOR']),
+  Controller.deleteDocument
 );
 
 /** [PATCH] /api/v1/food-truck/:id/location/:locationId/ordering-open */
