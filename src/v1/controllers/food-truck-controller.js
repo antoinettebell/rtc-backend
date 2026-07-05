@@ -1098,7 +1098,9 @@ exports.toggleLocationOrdering = async (req, res, next) => {
         _id: id,
         ...(user.userType === 'EMPLOYEE'
           ? { userId: user.vendor_user_id }
-          : { userId: user._id }),
+          : user.userType === 'VENDOR'
+          ? { userId: user._id }
+          : {}),
       },
       { singleResult: true }
     );
@@ -1361,6 +1363,17 @@ exports.deleteLocation = async (req, res, next) => {
     item.locations = (item.locations || []).filter(
       (item) => item._id.toString() !== locationId
     );
+    ensureDefaultTruckUnits(item);
+    item.truck_units = (item.truck_units || []).map((unit) => {
+      unit.open_locations = (unit.open_locations || []).filter(
+        (loc) => loc.locationId?.toString() !== locationId
+      );
+      return unit;
+    });
+    syncOrderingLocationFlagsFromTruckUnits(item);
+    item.markModified('truck_units');
+    item.markModified('locations');
+    item.markModified('currentLocation');
 
     await item.save();
 

@@ -61,7 +61,7 @@ router.delete(
 /** [PATCH] /api/v1/food-truck/:id/location/:locationId/ordering-open */
 router.patch(
   '/:id/location/:locationId/ordering-open',
-  allowedTo(['VENDOR', 'EMPLOYEE']),
+  allowedTo(['SUPER_ADMIN', 'VENDOR', 'EMPLOYEE']),
   validate(Validation.toggleLocationOrdering),
   Controller.toggleLocationOrdering
 );
