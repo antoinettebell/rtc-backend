@@ -214,6 +214,45 @@ class MenuCsvImportService {
       .filter(Boolean);
   }
 
+  parseOptionCostMap(value, fieldName, rowNumber) {
+    return this.parseStringArray(value).reduce((map, entry) => {
+      const separatorIndex = entry.search(/[:=]/);
+
+      if (separatorIndex <= 0) {
+        throw new Error(
+          `Row ${rowNumber}: ${fieldName} entries must use Name:Cost format.`
+        );
+      }
+
+      const name = entry.slice(0, separatorIndex).trim();
+      const costValue = entry.slice(separatorIndex + 1).trim();
+      const cost = this.parseNumber(costValue, 0, fieldName, rowNumber);
+
+      if (!name) {
+        throw new Error(`Row ${rowNumber}: ${fieldName} is missing an option name.`);
+      }
+
+      if (cost < 0) {
+        throw new Error(`Row ${rowNumber}: ${fieldName} costs cannot be negative.`);
+      }
+
+      map.set(name.toLowerCase(), cost);
+      return map;
+    }, new Map());
+  }
+
+  buildPaidOptions(optionNames, costMap = new Map()) {
+    return optionNames.map((name) => {
+      const cost = costMap.get(String(name).toLowerCase()) || 0;
+
+      return {
+        name,
+        hasCost: cost > 0,
+        cost,
+      };
+    });
+  }
+
   getImageLookupKey(value) {
     return String(value || '')
       .trim()
@@ -319,6 +358,93 @@ class MenuCsvImportService {
     }
   }
 
+  parseComboSubItems(row) {
+    const itemType = String(row.itemType || 'INDIVIDUAL').toUpperCase();
+
+    if (itemType !== 'COMBO') {
+      return [];
+    }
+
+    const comboItemIds = this.parseObjectIdArray(
+      row.comboItemIds,
+      'comboItemIds',
+      row._rowNumber
+    );
+
+    if (comboItemIds.length > 0) {
+      return comboItemIds.map((menuItem) => ({
+        menuItem,
+        qty: 1,
+      }));
+    }
+
+    return this.parseJsonArray(row.subItemJson, 'subItemJson', row._rowNumber);
+  }
+
+  parseComboItemNames(row) {
+    return this.parseStringArray(row.comboItemNames);
+  }
+
+  buildMenuItemNameMap(records) {
+    return records.reduce((map, row) => {
+      const menuItemId = this.getMenuItemId(row);
+      const name = String(row.name || '').trim().toLowerCase();
+
+      if (menuItemId && Types.ObjectId.isValid(menuItemId) && name) {
+        map.set(name, new Types.ObjectId(menuItemId));
+      }
+
+      return map;
+    }, new Map());
+  }
+
+  escapeRegex(value) {
+    return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  async resolveComboSubItems(row, userId, menuItemNameMap) {
+    const comboItemIds = this.parseComboSubItems(row);
+
+    if (comboItemIds.length > 0) {
+      return comboItemIds;
+    }
+
+    const comboItemNames = this.parseComboItemNames(row);
+    const subItems = [];
+
+    for (const comboItemName of comboItemNames) {
+      const normalizedName = comboItemName.toLowerCase();
+      let menuItemId = menuItemNameMap.get(normalizedName);
+
+      if (!menuItemId) {
+        const existingMenuItem = await MenuItemModel.findOne({
+          userId,
+          itemType: 'INDIVIDUAL',
+          name: {
+            $regex: `^${this.escapeRegex(comboItemName)}$`,
+            $options: 'i',
+          },
+          deletedAt: null,
+        }).select('_id');
+
+        menuItemId = existingMenuItem?._id;
+      }
+
+      if (!menuItemId) {
+        throw new Error(
+          `Row ${row._rowNumber}: combo item "${comboItemName}" was not found. Load that individual item first or include its menuItemId in the CSV.`
+        );
+      }
+
+      subItems.push({
+        menuItem: menuItemId,
+        qty: 1,
+      });
+    }
+
+    return subItems;
+  }
+
   parseFlavors(row) {
     const hasFlavors = this.parseBoolean(row.hasFlavors, false);
 
@@ -326,6 +452,7 @@ class MenuCsvImportService {
       return {
         hasFlavors: false,
         flavors: [],
+        flavorOptions: [],
         flavorsPerOrder: 1,
       };
     }
@@ -359,7 +486,60 @@ class MenuCsvImportService {
     return {
       hasFlavors: true,
       flavors: normalizedFlavors,
+      flavorOptions: this.buildPaidOptions(
+        normalizedFlavors,
+        this.parseOptionCostMap(row.flavorCosts, 'flavorCosts', row._rowNumber)
+      ),
       flavorsPerOrder,
+    };
+  }
+
+  parseToppings(row) {
+    const hasToppings = this.parseBoolean(row.hasToppings, false);
+
+    if (!hasToppings) {
+      return {
+        hasToppings: false,
+        toppings: [],
+        toppingOptions: [],
+        toppingsPerOrder: 1,
+      };
+    }
+
+    const toppings = this.parseStringArray(row.toppings);
+    const normalizedToppings = [
+      'Plain',
+      ...toppings
+        .filter((topping) => topping.toLowerCase() !== 'plain')
+        .slice(0, 14),
+    ];
+    const toppingsPerOrder = this.parseNumber(
+      row.toppingsPerOrder,
+      1,
+      'toppingsPerOrder',
+      row._rowNumber
+    );
+
+    if (toppingsPerOrder < 1 || toppingsPerOrder > 15) {
+      throw new Error(
+        `Row ${row._rowNumber}: toppingsPerOrder must be between 1 and 15.`
+      );
+    }
+
+    if (toppingsPerOrder > normalizedToppings.length) {
+      throw new Error(
+        `Row ${row._rowNumber}: toppingsPerOrder cannot exceed the number of toppings.`
+      );
+    }
+
+    return {
+      hasToppings: true,
+      toppings: normalizedToppings,
+      toppingOptions: this.buildPaidOptions(
+        normalizedToppings,
+        this.parseOptionCostMap(row.toppingCosts, 'toppingCosts', row._rowNumber)
+      ),
+      toppingsPerOrder,
     };
   }
 
@@ -461,8 +641,9 @@ class MenuCsvImportService {
     return { categoryId: menuCategory._id, created: true };
   }
 
-  buildMenuItem(row, categoryId, userId, imgUrls) {
+  buildMenuItem(row, categoryId, userId, imgUrls, subItem = []) {
     const flavorSettings = this.parseFlavors(row);
+    const toppingSettings = this.parseToppings(row);
 
     return {
       name: this.parseRequiredString(row.name, 'name', row._rowNumber),
@@ -512,14 +693,11 @@ class MenuCsvImportService {
       ),
       allowCustomize: this.parseBoolean(row.allowCustomize, true),
       ...flavorSettings,
+      ...toppingSettings,
       newDish: this.parseBoolean(row.newDish, false),
       popularDish: this.parseBoolean(row.popularDish, false),
       diet: this.parseDietObjectIds(row),
-      subItem: this.parseJsonArray(
-        row.subItemJson,
-        'subItemJson',
-        row._rowNumber
-      ),
+      subItem,
       userId,
       deletedAt: null,
     };
@@ -589,6 +767,7 @@ class MenuCsvImportService {
     const normalizedVendorUserId = String(vendorUserId || '').trim();
     const imageFileMap = this.buildImageFileMap(imageFiles);
     const uploadedImageUrls = new Map();
+    const menuItemNameMap = this.buildMenuItemNameMap(records);
 
     if (!normalizedVendorUserId) {
       throw new Error('vendorUserId is required for menu import.');
@@ -629,11 +808,17 @@ class MenuCsvImportService {
           row
         );
         const now = new Date();
+        const subItem = await this.resolveComboSubItems(
+          row,
+          rowUserId,
+          menuItemNameMap
+        );
         const menuItem = this.buildMenuItem(
           row,
           categoryId,
           rowUserId,
-          imgUrls
+          imgUrls,
+          subItem
         );
         if (menuItem.newDish && !canHighlightNewDish) {
           menuItem.newDish = false;
