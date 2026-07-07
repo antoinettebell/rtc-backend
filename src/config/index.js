@@ -71,6 +71,7 @@ module.exports = {
       PAYMENT_MODE: "prod",
     },
     docusign: {
+      enabled: String(process.env.DOCUSIGN_ENABLED || 'false').toLowerCase() === 'true',
       integrationKey: process.env.DOCUSIGN_INTEGRATION_KEY,
       clientSecret: process.env.DOCUSIGN_CLIENT_SECRET,
       userId: process.env.DOCUSIGN_USER_ID,
@@ -79,6 +80,21 @@ module.exports = {
       basePath: process.env.DOCUSIGN_BASE_PATH || 'https://demo.docusign.net/restapi',
       authServer: process.env.DOCUSIGN_AUTH_SERVER || 'account-d.docusign.com',
       webhookSecret: process.env.DOCUSIGN_WEBHOOK_SECRET,
+      returnUrl:
+        process.env.DOCUSIGN_RETURN_URL ||
+        'rounddacornervendor://docusign/return',
+      signerRole:
+        process.env.DOCUSIGN_SIGNER_ROLE ||
+        process.env.DOCUSIGN_VENDOR_ROLE_NAME ||
+        'VendorSigner',
+      governanceTemplateId: process.env.DOCUSIGN_GOVERNANCE_TEMPLATE_ID,
+      ndaTemplateId: process.env.DOCUSIGN_NDA_TEMPLATE_ID,
+      governanceVersion: process.env.DOCUSIGN_GOVERNANCE_VERSION || '1.0',
+      ndaVersion: process.env.DOCUSIGN_NDA_VERSION || '1.0',
+      developerAlertEmail:
+        process.env.DOCUSIGN_DEVELOPER_ALERT_EMAIL ||
+        process.env.DEVELOPER_ALERT_EMAIL ||
+        'developer@roundthecornerapp.com',
     },
   };
 

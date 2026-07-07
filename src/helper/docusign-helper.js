@@ -26,6 +26,22 @@ const assertConfigured = () => {
   }
 };
 
+const assertTemplateSigningConfigured = () => {
+  assertConfigured();
+  const missing = [
+    ['DOCUSIGN_GOVERNANCE_TEMPLATE_ID', docusign.governanceTemplateId],
+    ['DOCUSIGN_NDA_TEMPLATE_ID', docusign.ndaTemplateId],
+    ['DOCUSIGN_SIGNER_ROLE', docusign.signerRole],
+    ['DOCUSIGN_RETURN_URL', docusign.returnUrl],
+  ]
+    .filter(([, value]) => !value)
+    .map(([name]) => name);
+
+  if (missing.length) {
+    throw new Error(`DocuSign vendor signing is not configured: ${missing.join(', ')}`);
+  }
+};
+
 const docusignFetch = async (url, options = {}) => {
   const response = await fetch(url, options);
   const contentType = response.headers.get('content-type') || '';
@@ -146,6 +162,115 @@ exports.createMarketplaceAgreementEnvelope = async ({
   });
 };
 
+exports.createVendorMarketplaceSigningEnvelope = async ({
+  vendorName,
+  vendorEmail,
+  vendorUserId,
+  event,
+  bid = null,
+  application = null,
+}) => {
+  assertTemplateSigningConfigured();
+  const accessToken = await exports.getAccessToken();
+  const url = `${docusign.basePath}/v2.1/accounts/${docusign.accountId}/envelopes`;
+  const clientUserId = String(vendorUserId);
+  const templateRoles = [
+    {
+      email: vendorEmail,
+      name: vendorName,
+      roleName: docusign.signerRole,
+      clientUserId,
+      tabs: {
+        textTabs: [
+          {
+            tabLabel: 'EventName',
+            value: event?.event_name || '',
+          },
+          {
+            tabLabel: 'EventId',
+            value: event?.event_id || '',
+          },
+          {
+            tabLabel: 'SubmissionId',
+            value: bid?.bid_id || application?.application_id || '',
+          },
+        ],
+      },
+    },
+  ];
+
+  return docusignFetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      emailSubject: `RTC Event Marketplace Agreements - ${event?.event_name || event?.event_id}`,
+      compositeTemplates: [
+        {
+          compositeTemplateId: 'governance',
+          serverTemplates: [
+            {
+              sequence: '1',
+              templateId: docusign.governanceTemplateId,
+            },
+          ],
+          inlineTemplates: [
+            {
+              sequence: '2',
+              recipients: { signers: templateRoles },
+            },
+          ],
+        },
+        {
+          compositeTemplateId: 'nda',
+          serverTemplates: [
+            {
+              sequence: '3',
+              templateId: docusign.ndaTemplateId,
+            },
+          ],
+          inlineTemplates: [
+            {
+              sequence: '4',
+              recipients: { signers: templateRoles },
+            },
+          ],
+        },
+      ],
+      status: 'sent',
+    }),
+  });
+};
+
+exports.createRecipientView = async ({
+  envelopeId,
+  signerName,
+  signerEmail,
+  vendorUserId,
+  returnUrl,
+}) => {
+  assertTemplateSigningConfigured();
+  const accessToken = await exports.getAccessToken();
+  const url = `${docusign.basePath}/v2.1/accounts/${docusign.accountId}/envelopes/${envelopeId}/views/recipient`;
+
+  return docusignFetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      authenticationMethod: 'none',
+      clientUserId: String(vendorUserId),
+      email: signerEmail,
+      userName: signerName,
+      returnUrl: returnUrl || docusign.returnUrl,
+    }),
+  });
+};
+
 exports.getEnvelopeStatus = async (envelopeId) => {
   const accessToken = await exports.getAccessToken();
   const url = `${docusign.basePath}/v2.1/accounts/${docusign.accountId}/envelopes/${envelopeId}`;
@@ -157,6 +282,25 @@ exports.getEnvelopeStatus = async (envelopeId) => {
       'Content-Type': 'application/json',
     },
   });
+};
+
+exports.downloadEnvelopeDocuments = async (envelopeId) => {
+  const accessToken = await exports.getAccessToken();
+  const url = `${docusign.basePath}/v2.1/accounts/${docusign.accountId}/envelopes/${envelopeId}/documents/combined`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/pdf',
+    },
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `DocuSign document download failed with status ${response.status}`);
+  }
+
+  return Buffer.from(await response.arrayBuffer());
 };
 
 exports.mapEnvelopeStatus = (status) => {

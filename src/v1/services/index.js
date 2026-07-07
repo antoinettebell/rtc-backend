@@ -103,6 +103,7 @@ exports.MarketplaceFileAuditService = require('./marketplace-file-audit-service'
 exports.MarketplacePaymentService = require('./marketplace-payment-service');
 exports.MarketplacePaymentAuditService = require('./marketplace-payment-audit-service');
 exports.MarketplaceAgreementAuditService = require('./marketplace-agreement-audit-service');
+exports.MarketplaceVendorAgreementService = require('./marketplace-vendor-agreement-service');
 
 /** Define admin-notification service */
 exports.AdminNotificationService = require('./admin-notification-service');

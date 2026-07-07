@@ -118,6 +118,9 @@ exports.MarketplacePaymentAuditModel = require('./marketplace-payment-audit');
 /** Define marketplace agreement audit model */
 exports.MarketplaceAgreementAuditModel = require('./marketplace-agreement-audit');
 
+/** Define marketplace vendor agreement model */
+exports.MarketplaceVendorAgreementModel = require('./marketplace-vendor-agreement');
+
 /** Define admin-notification model */
 exports.AdminNotificationModel = require('./admin-notification');
 

@@ -65,6 +65,20 @@ router.get(
   Controller.repositoryFileAccess
 );
 
+router.post(
+  '/vendor-agreements/signing',
+  allowedTo(['VENDOR']),
+  validate(Validation.startVendorAgreementSigning),
+  Controller.startVendorAgreementSigning
+);
+
+router.post(
+  '/vendor-agreements/:agreementId/return',
+  allowedTo(['VENDOR']),
+  validate(Validation.vendorAgreementReturn),
+  Controller.vendorAgreementReturn
+);
+
 router.patch(
   '/repository/files/:attachmentId/status',
   allowedTo(['CUSTOMER', 'VENDOR', 'SUPER_ADMIN']),
@@ -210,6 +224,12 @@ router.delete(
   '/bids/:bidId/attachments/:attachmentId',
   allowedTo(['VENDOR']),
   Controller.deleteBidAttachment
+);
+
+router.delete(
+  '/applications/:applicationId/attachments/:attachmentId',
+  allowedTo(['VENDOR']),
+  Controller.deleteApplicationAttachment
 );
 
 router.get(

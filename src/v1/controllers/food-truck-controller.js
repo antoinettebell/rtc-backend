@@ -16,6 +16,7 @@ const Utils = require('../../helper/utils');
 const {
   assertNewDishHighlightAllowed,
   assertSocialMediaLinksAllowed,
+  canUseMultipleTruckUnits,
   normalizeVendorPlan,
 } = require('../../helper/vendor-plan-helper');
 const { addObjectWithKey, removeObject } = require('../../helper/aws');
@@ -1236,6 +1237,13 @@ exports.updateTruckUnits = async (req, res, next) => {
     if (targetCount < activeCount) {
       archiveExtraTruckUnits(item, targetCount);
     } else if (targetCount > activeCount) {
+      const plan = await getPlanForFoodTruck(item);
+      if (!canUseMultipleTruckUnits(plan)) {
+        return res.error(
+          new Error('Multiple food trucks are available on the Elite plan.'),
+          403
+        );
+      }
       const needed = targetCount - activeCount;
       if (reactivate_truck_unit_id) {
         reactivateTruckUnit(item, reactivate_truck_unit_id);
@@ -1321,6 +1329,16 @@ exports.updateTruckUnit = async (req, res, next) => {
       unit.phone = phoneDigits;
     }
     if (!unit.is_primary && is_archived !== undefined) {
+      if (unit.is_archived && is_archived === false) {
+        const plan = await getPlanForFoodTruck(item);
+        const activeCount = getActiveTruckUnits(item).length;
+        if (!canUseMultipleTruckUnits(plan) && activeCount >= 1) {
+          return res.error(
+            new Error('Multiple food trucks are available on the Elite plan.'),
+            403
+          );
+        }
+      }
       unit.is_archived = !!is_archived;
       unit.archived_at = unit.is_archived ? new Date() : null;
       if (unit.is_archived) {

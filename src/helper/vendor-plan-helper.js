@@ -25,6 +25,7 @@ const VENDOR_PLAN_TIERS = {
       walkUpPosPaymentMethods: [],
       tapToPay: false,
       eventMarketplace: false,
+      multipleTruckUnits: false,
       maxSocialMediaLinks: 1,
       newDishHighlight: false,
     },
@@ -52,6 +53,7 @@ const VENDOR_PLAN_TIERS = {
       walkUpPosPaymentMethods: ['CASH'],
       tapToPay: false,
       eventMarketplace: false,
+      multipleTruckUnits: false,
       maxSocialMediaLinks: 2,
       newDishHighlight: false,
     },
@@ -77,6 +79,7 @@ const VENDOR_PLAN_TIERS = {
       walkUpPosPaymentMethods: ['CASH', 'TAP_TO_PAY'],
       tapToPay: true,
       eventMarketplace: true,
+      multipleTruckUnits: true,
       maxSocialMediaLinks: 4,
       newDishHighlight: true,
     },
@@ -118,6 +121,11 @@ const canUseTapToPay = (foodTruckOrPlan) =>
   !!getVendorPlanCapabilities(
     foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan
   ).tapToPay;
+
+const canUseMultipleTruckUnits = (foodTruckOrPlan) =>
+  !!getVendorPlanCapabilities(
+    foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan
+  ).multipleTruckUnits;
 
 const hasEventMarketplaceAddOn = (foodTruck) =>
   Array.isArray(foodTruck?.addOns) &&
@@ -226,6 +234,7 @@ module.exports = {
   canAccessEventMarketplace,
   canUseCashPOS,
   canUseEmployeeLogin,
+  canUseMultipleTruckUnits,
   canUseTapToPay,
   canUseWalkupPOS,
   getPayoutSpeed,

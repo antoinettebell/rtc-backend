@@ -70,6 +70,10 @@ const mSchema = mongoose.Schema(
         type: Boolean,
         default: false,
       },
+      multipleTruckUnits: {
+        type: Boolean,
+        default: false,
+      },
       maxSocialMediaLinks: {
         type: Number,
         default: 0,

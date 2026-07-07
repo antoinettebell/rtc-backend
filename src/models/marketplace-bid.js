@@ -162,6 +162,7 @@ const mSchema = mongoose.Schema(
       type: String,
       enum: [
         'DRAFT',
+        'PENDING_SIGNATURE',
         'SUBMITTED',
         'UNDER_REVIEW',
         'AWARDED',

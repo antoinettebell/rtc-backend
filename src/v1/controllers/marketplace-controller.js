@@ -11,6 +11,7 @@ const {
   MarketplaceFileAuditService,
   MarketplacePaymentAuditService,
   MarketplacePaymentService,
+  MarketplaceVendorAgreementService,
   UserService,
 } = require('../services');
 const {
@@ -20,6 +21,8 @@ const { addObjectWithKey, removeObject } = require('../../helper/aws');
 const PaymentHelper = require('../../helper/payment-helper');
 const DocuSignHelper = require('../../helper/docusign-helper');
 const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
+const MailHelper = require('../../helper/mail-helper');
+const { docusign } = require('../../config');
 const {
   moderateMarketplaceText,
 } = require('../../helper/marketplace-content-moderation');
@@ -37,6 +40,18 @@ const VENDOR_EVENT_PROCESSING_RATE = 0.02;
 const roundMoney = (value) => Number((Number(value || 0)).toFixed(2));
 const ACTIVE_EVENT_STATUSES = ['OPEN', 'REOPENED'];
 const DRAFT_TTL_DAYS = 7;
+const VENDOR_AGREEMENT_VALID_DAYS = 365;
+const REQUIREMENT_ATTACHMENT_TYPE = 'REQUIREMENT_DOCUMENT';
+const DEFAULT_REQUIREMENT_LABELS = [
+  'Insurance',
+  'Health Permit',
+  'Fire Permit',
+  'Liquor License',
+  'Certificate of Insurance',
+  'Business License',
+  'Food Handler Permit',
+  'Other',
+];
 
 const asArray = (value) => {
   if (Array.isArray(value)) {
@@ -478,6 +493,15 @@ const BID_ATTACHMENT_TYPES = {
       'image/heic',
     ],
   },
+  REQUIREMENT_DOCUMENT: {
+    folder: 'marketplace/requirements',
+    allowedMimeTypes: [
+      'application/pdf',
+      'image/png',
+      'image/jpg',
+      'image/jpeg',
+    ],
+  },
 };
 
 const isImageMimeType = (mimeType) => /^image\//i.test(mimeType || '');
@@ -566,10 +590,14 @@ const isCoordinatorPaymentSatisfied = (event = {}, bid = null, application = nul
   return awardPaymentSatisfied && isAgreementSatisfied(event);
 };
 
-const isVendorPaymentSatisfied = (event = {}, application = null) => {
+const isVendorPaymentSatisfied = (event = {}, bid = null, application = null) => {
   const vendorPays = roundMoney(event.vendor_fee || 0) > 0;
   if (!vendorPays) {
     return true;
+  }
+
+  if (bid) {
+    return bid.payment_status === 'PAID' || bid.bid_status === 'SUBMITTED';
   }
 
   return (
@@ -587,7 +615,7 @@ const getMarketplaceUnlockState = ({ event, bid = null, application = null }) =>
     bid,
     application
   );
-  const vendorPaymentSatisfied = isVendorPaymentSatisfied(event, application);
+  const vendorPaymentSatisfied = isVendorPaymentSatisfied(event, bid, application);
   const matchSatisfied =
     bid?.bid_status === 'AWARDED' ||
     ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'].includes(
@@ -608,6 +636,120 @@ const getMarketplaceUnlockState = ({ event, bid = null, application = null }) =>
       agreement_satisfied: isAgreementSatisfied(event),
     },
   };
+};
+
+const normalizeRequirementLabel = (label) => {
+  const value = String(label || '').trim();
+  if (!value) {
+    return null;
+  }
+
+  const match = DEFAULT_REQUIREMENT_LABELS.find(
+    (item) => item.toLowerCase() === value.toLowerCase()
+  );
+  return match || value;
+};
+
+const getAnnualAgreementExpiry = () =>
+  new Date(Date.now() + VENDOR_AGREEMENT_VALID_DAYS * 24 * 60 * 60 * 1000);
+
+const getValidVendorAgreement = async (vendorUserId) =>
+  MarketplaceVendorAgreementService.getByData(
+    {
+      vendor_user_id: vendorUserId,
+      status: 'SIGNED',
+      expires_at: { $gt: new Date() },
+      governance_template_id: docusign.governanceTemplateId,
+      nda_template_id: docusign.ndaTemplateId,
+      governance_version: docusign.governanceVersion,
+      nda_version: docusign.ndaVersion,
+    },
+    { singleResult: true, sort: { signed_at: -1 } }
+  );
+
+const isVendorAgreementSigned = async (vendorUserId) =>
+  !!(await getValidVendorAgreement(vendorUserId));
+
+const getVendorSignerInfo = (user) => ({
+  signerName:
+    [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
+    user?.email ||
+    'Vendor',
+  signerEmail: user?.email,
+});
+
+const sendDeveloperAlert = async (subject, error, context = {}) => {
+  try {
+    await MailHelper.sendMail(
+      docusign.developerAlertEmail,
+      subject,
+      `<p>${subject}</p><pre>${JSON.stringify(
+        {
+          message: error?.message || error,
+          context,
+        },
+        null,
+        2
+      )}</pre>`
+    );
+  } catch (mailError) {
+    console.error('Developer alert email failed', mailError?.message || mailError);
+  }
+};
+
+const requireSignedVendorAgreementForSubmission = async (vendorUserId) => {
+  if (await isVendorAgreementSigned(vendorUserId)) {
+    return;
+  }
+
+  throw buildError('Vendor agreements must be signed before submission can continue.', 409);
+};
+
+const getVendorAgreementReturnUrl = (status = 'completed') =>
+  `rounddacornervendor://docusign/return?status=${status}`;
+
+const normalizeDocuSignReturnStatus = (status) => {
+  const value = String(status || '').toLowerCase();
+  if (['completed', 'cancelled', 'declined', 'error'].includes(value)) {
+    return value;
+  }
+  return 'error';
+};
+
+const setSubmissionSignatureStatus = async (agreement, status) => {
+  const nextStatus =
+    status === 'SIGNED'
+      ? 'PENDING_SIGNATURE'
+      : status === 'ERROR' || status === 'CANCELLED' || status === 'DECLINED'
+        ? 'DRAFT'
+        : 'PENDING_SIGNATURE';
+
+  if (agreement.bid_id) {
+    await MarketplaceBidService.update(
+      { bid_id: agreement.bid_id, vendor_user_id: agreement.vendor_user_id },
+      {
+        bid_status: nextStatus,
+        agreement_provider: 'DOCUSIGN',
+        agreement_status: status,
+      },
+      { getNew: false }
+    );
+  }
+
+  if (agreement.application_id) {
+    await MarketplaceApplicationService.update(
+      {
+        application_id: agreement.application_id,
+        vendor_user_id: agreement.vendor_user_id,
+      },
+      {
+        application_status: nextStatus,
+        agreement_provider: 'DOCUSIGN',
+        agreement_status: status,
+      },
+      { getNew: false }
+    );
+  }
 };
 
 const redactLockedMarketplaceEvent = (event, unlockState, { fullAccess = false } = {}) => {
@@ -734,6 +876,7 @@ const redactLockedMarketplaceRecord = (
 const isSensitiveMarketplaceAttachment = (attachment = {}) =>
   [
     'PERMIT_LICENSE',
+    'REQUIREMENT_DOCUMENT',
     'AGREEMENT_DOCUMENT',
     'EVENT_BRIEF',
     'LOGISTICS_PACKET',
@@ -1313,6 +1456,153 @@ const notifyVendorMatchLocked = async ({ event, vendorUserId }) => {
   });
 };
 
+const getUserName = (user, fallback = 'there') =>
+  [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
+  user?.name ||
+  user?.email ||
+  fallback;
+
+const formatEventSummaryHtml = (event) => `
+  <p><strong>Event:</strong> ${event?.event_name || event?.event_id || 'Marketplace event'}</p>
+  <p><strong>Date:</strong> ${event?.event_date || 'Not set'}</p>
+  <p><strong>Time:</strong> ${event?.event_time || 'Not set'}</p>
+  <p><strong>Location:</strong> ${
+    event?.formatted_address || event?.event_address || 'Not provided'
+  }</p>
+  <p><strong>Guest count:</strong> ${event?.number_of_guests || 'Not provided'}</p>
+`;
+
+const attachmentToEmailFile = async (attachment) => {
+  if (!attachment?.file_url) {
+    return null;
+  }
+
+  const response = await fetch(attachment.file_url);
+  if (!response.ok) {
+    throw new Error(
+      `Unable to fetch marketplace attachment ${attachment.attachment_id}`
+    );
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return {
+    content: buffer.toString('base64'),
+    filename:
+      attachment.original_name ||
+      `${attachment.requirement_label || attachment.attachment_type || 'document'}.pdf`,
+    type: attachment.mime_type || 'application/octet-stream',
+    disposition: 'attachment',
+  };
+};
+
+const collectVendorEmailAttachments = async ({ bid = null, application = null }) => {
+  const attachmentQuery = {
+    status: 'ACTIVE',
+    ...(bid ? { bid_id: bid.bid_id } : {}),
+    ...(application ? { application_id: application.application_id } : {}),
+  };
+  const collectedAttachments = await MarketplaceAttachmentService.getByData(
+    attachmentQuery,
+    { sort: { created_at: 1 }, lean: true }
+  );
+  const emailAttachments = [];
+
+  for (const attachment of collectedAttachments) {
+    try {
+      const emailAttachment = await attachmentToEmailFile(attachment);
+      if (emailAttachment) {
+        emailAttachments.push(emailAttachment);
+      }
+    } catch (error) {
+      await sendDeveloperAlert('Marketplace attachment email fetch error', error, {
+        attachment_id: attachment.attachment_id,
+        bid_id: bid?.bid_id || null,
+        application_id: application?.application_id || null,
+      });
+    }
+  }
+
+  const agreement = await MarketplaceVendorAgreementService.getByData(
+    {
+      vendor_user_id: bid?.vendor_user_id || application?.vendor_user_id,
+      status: 'SIGNED',
+      envelope_id: { $ne: null },
+    },
+    { singleResult: true, sort: { signed_at: -1 } }
+  );
+
+  if (agreement?.envelope_id) {
+    try {
+      const signedDocuments = await DocuSignHelper.downloadEnvelopeDocuments(
+        agreement.envelope_id
+      );
+      emailAttachments.push({
+        content: signedDocuments.toString('base64'),
+        filename: 'RTC Vendor Agreements.pdf',
+        type: 'application/pdf',
+        disposition: 'attachment',
+      });
+    } catch (error) {
+      await sendDeveloperAlert('DocuSign signed document email fetch error', error, {
+        agreement_id: agreement.agreement_id,
+        envelope_id: agreement.envelope_id,
+      });
+    }
+  }
+
+  return emailAttachments;
+};
+
+const sendMarketplaceInformationEmailsIfUnlocked = async ({
+  event,
+  bid = null,
+  application = null,
+}) => {
+  const unlockState = getMarketplaceUnlockState({ event, bid, application });
+  if (!unlockState.details_unlocked) {
+    return;
+  }
+
+  const [coordinator, vendor] = await Promise.all([
+    UserService.getById(event.customer_user_id),
+    UserService.getById(bid?.vendor_user_id || application?.vendor_user_id),
+  ]);
+
+  const emailAttachments = await collectVendorEmailAttachments({ bid, application });
+  const vendorName = getUserName(vendor, 'Vendor');
+  const coordinatorName = getUserName(coordinator, 'Event Coordinator');
+  const submissionLabel = bid?.bid_id || application?.application_id || 'submission';
+
+  if (coordinator?.email) {
+    await MailHelper.sendMail(
+      coordinator.email,
+      `RTC Marketplace vendor information - ${event.event_name || event.event_id}`,
+      `
+        <p>${coordinatorName},</p>
+        <p>The marketplace payment requirements are complete. Vendor information and collected documents are attached.</p>
+        ${formatEventSummaryHtml(event)}
+        <p><strong>Vendor:</strong> ${vendorName}</p>
+        <p><strong>Submission:</strong> ${submissionLabel}</p>
+      `,
+      { attachments: emailAttachments }
+    );
+  }
+
+  if (vendor?.email) {
+    await MailHelper.sendMail(
+      vendor.email,
+      `RTC Marketplace coordinator information - ${event.event_name || event.event_id}`,
+      `
+        <p>${vendorName},</p>
+        <p>The marketplace payment requirements are complete. Coordinator information is below.</p>
+        ${formatEventSummaryHtml(event)}
+        <p><strong>Coordinator:</strong> ${coordinatorName}</p>
+        <p><strong>Email:</strong> ${coordinator?.email || 'Not provided'}</p>
+        <p><strong>Phone:</strong> ${coordinator?.phone || coordinator?.phoneNumber || 'Not provided'}</p>
+      `
+    );
+  }
+};
+
 const notifyVendorsOfEventChanges = async (event, changes = []) => {
   if (!changes.length) {
     return;
@@ -1596,6 +1886,10 @@ const finalizePaidVendorPayment = async (payment) => {
           event,
           vendorUserId: application.vendor_user_id,
         });
+        await sendMarketplaceInformationEmailsIfUnlocked({
+          event,
+          application,
+        });
       }
     }
 
@@ -1685,6 +1979,17 @@ const completeSignedAward = async (payment) => {
   if (!alreadyAwarded) {
     await notifyCoordinatorOfMatchLocked(marketplaceEvent);
     await notifyBidAwardOutcomes(marketplaceEvent, selectedBidIds);
+  }
+
+  const awardedBids = await MarketplaceBidService.getByData(
+    { event_id: payment.event_id, bid_id: { $in: selectedBidIds } },
+    { lean: true }
+  );
+  for (const bid of awardedBids) {
+    await sendMarketplaceInformationEmailsIfUnlocked({
+      event: marketplaceEvent,
+      bid,
+    });
   }
 
   return { awarded_bid_ids: selectedBidIds, marketplaceEvent };
@@ -2464,10 +2769,6 @@ exports.submitBid = async (req, res, next) => {
     await assertEventOpenForSubmission(event);
     await assertVendorCanSubmitRound(event, req.user._id);
 
-    if (req.body.nda_required && !req.body.nda_acknowledged) {
-      throw buildError('NDA acknowledgment is required for this bid', 400);
-    }
-
     if (event.alcohol_required && !req.body.liquor_license_confirmed) {
       throw buildError(
         'Liquor license confirmation is required for this event',
@@ -2484,30 +2785,50 @@ exports.submitBid = async (req, res, next) => {
       { singleResult: true }
     );
 
-    if (existingBid) {
+    if (
+      existingBid &&
+      !['DRAFT', 'PENDING_SIGNATURE'].includes(existingBid.bid_status)
+    ) {
       throw buildError('A bid has already been submitted for this event', 409);
     }
 
-    const ndaAcknowledgedAt = req.body.nda_acknowledged ? new Date() : null;
+    const requestedStatus = req.body.bid_status || 'SUBMITTED';
+    if (requestedStatus === 'SUBMITTED') {
+      await requireSignedVendorAgreementForSubmission(req.user._id);
+    }
+
     const vendorFee = roundMoney(event.vendor_fee || 0);
     const requiresPayment = vendorFee > 0;
-    const marketplaceBid = await MarketplaceBidService.create({
+    const bidPayload = {
       ...req.body,
       event_id: req.params.eventId,
       vendor_user_id: req.user._id,
       food_truck_id: foodTruck._id,
       submission_round: event.current_submission_round || 1,
-      nda_acknowledged_at: ndaAcknowledgedAt,
-      agreement_status: req.body.nda_acknowledged
-        ? 'ACKNOWLEDGED'
-        : 'NOT_REQUIRED',
-      bid_status: requiresPayment ? 'DRAFT' : req.body.bid_status || 'SUBMITTED',
+      nda_required: true,
+      nda_acknowledged: requestedStatus === 'SUBMITTED',
+      nda_acknowledged_at: requestedStatus === 'SUBMITTED' ? new Date() : null,
+      agreement_provider: 'DOCUSIGN',
+      agreement_status:
+        requestedStatus === 'SUBMITTED' ? 'SIGNED' : 'PENDING_SIGNATURE',
+      bid_status:
+        requestedStatus === 'SUBMITTED' && requiresPayment
+          ? 'DRAFT'
+          : requestedStatus,
       payment_status: requiresPayment ? 'PENDING' : 'NOT_REQUIRED',
-      submitted_at: requiresPayment ? null : new Date(),
-    });
+      submitted_at:
+        requestedStatus === 'SUBMITTED' && !requiresPayment ? new Date() : null,
+    };
+    const marketplaceBid = existingBid
+      ? await MarketplaceBidService.update(
+          { bid_id: existingBid.bid_id },
+          bidPayload,
+          { getNew: true }
+        )
+      : await MarketplaceBidService.create(bidPayload);
 
     let marketplacePayment = null;
-    if (requiresPayment) {
+    if (requiresPayment && requestedStatus === 'SUBMITTED') {
       marketplacePayment = await MarketplacePaymentService.create({
         event_id: event.event_id,
         bid_id: marketplaceBid.bid_id,
@@ -2526,12 +2847,14 @@ exports.submitBid = async (req, res, next) => {
       await createPaymentAudit(marketplacePayment, req, 'CREATE');
     }
 
-    await notifyMarketplaceSubmission({
-      event,
-      vendorUserId: req.user._id,
-      submissionType: 'bid',
-      requiresPayment,
-    });
+    if (requestedStatus === 'SUBMITTED' && !requiresPayment) {
+      await notifyMarketplaceSubmission({
+        event,
+        vendorUserId: req.user._id,
+        submissionType: 'bid',
+        requiresPayment,
+      });
+    }
 
     return res.data(
       {
@@ -2540,9 +2863,11 @@ exports.submitBid = async (req, res, next) => {
         requires_payment: requiresPayment,
         rtc_phone_number: MARKETPLACE_PHONE_NUMBER,
       },
-      requiresPayment
-        ? 'Marketplace bid saved. Event registration payment is required.'
-        : 'Marketplace bid submitted'
+      requestedStatus !== 'SUBMITTED'
+        ? 'Marketplace bid saved'
+        : requiresPayment
+          ? 'Marketplace bid saved. Event registration payment is required.'
+          : 'Marketplace bid submitted'
     );
   } catch (e) {
     return next(e);
@@ -2598,10 +2923,6 @@ exports.submitApplication = async (req, res, next) => {
       throw buildError('This event uses the bid flow, not applications', 400);
     }
 
-    if (req.body.nda_required && !req.body.nda_acknowledged) {
-      throw buildError('NDA acknowledgment is required for this application', 400);
-    }
-
     if (event.alcohol_required && !req.body.liquor_license_confirmed) {
       throw buildError(
         'Liquor license confirmation is required for this event',
@@ -2618,35 +2939,61 @@ exports.submitApplication = async (req, res, next) => {
       { singleResult: true }
     );
 
-    if (existingApplication) {
+    if (
+      existingApplication &&
+      !['DRAFT', 'PENDING_SIGNATURE'].includes(
+        existingApplication.application_status
+      )
+    ) {
       throw buildError('An application has already been submitted for this event', 409);
     }
 
-    const marketplaceApplication = await MarketplaceApplicationService.create({
+    const requestedStatus = req.body.application_status || 'SUBMITTED';
+    if (requestedStatus === 'SUBMITTED') {
+      await requireSignedVendorAgreementForSubmission(req.user._id);
+    }
+
+    const applicationPayload = {
       ...req.body,
       event_id: req.params.eventId,
       vendor_user_id: req.user._id,
       food_truck_id: foodTruck._id,
       submission_round: event.current_submission_round || 1,
-      nda_acknowledged_at: req.body.nda_acknowledged ? new Date() : null,
-      application_status: req.body.application_status || 'SUBMITTED',
+      nda_required: true,
+      nda_acknowledged: requestedStatus === 'SUBMITTED',
+      nda_acknowledged_at: requestedStatus === 'SUBMITTED' ? new Date() : null,
+      agreement_provider: 'DOCUSIGN',
+      agreement_status:
+        requestedStatus === 'SUBMITTED' ? 'SIGNED' : 'PENDING_SIGNATURE',
+      application_status: requestedStatus,
       payment_status: 'NOT_REQUIRED',
       submitted_at:
-        (req.body.application_status || 'SUBMITTED') === 'SUBMITTED'
+        requestedStatus === 'SUBMITTED'
           ? new Date()
           : null,
-    });
+    };
+    const marketplaceApplication = existingApplication
+      ? await MarketplaceApplicationService.update(
+          { application_id: existingApplication.application_id },
+          applicationPayload,
+          { getNew: true }
+        )
+      : await MarketplaceApplicationService.create(applicationPayload);
 
-    await notifyMarketplaceSubmission({
-      event,
-      vendorUserId: req.user._id,
-      submissionType: 'application',
-      requiresPayment: false,
-    });
+    if (requestedStatus === 'SUBMITTED') {
+      await notifyMarketplaceSubmission({
+        event,
+        vendorUserId: req.user._id,
+        submissionType: 'application',
+        requiresPayment: false,
+      });
+    }
 
     return res.data(
       { marketplaceApplication },
-      'Marketplace application submitted'
+      requestedStatus === 'SUBMITTED'
+        ? 'Marketplace application submitted'
+        : 'Marketplace application saved'
     );
   } catch (e) {
     return next(e);
@@ -2677,6 +3024,201 @@ exports.myApplications = async (req, res, next) => {
       { marketplaceApplicationList },
       'Marketplace applications'
     );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.startVendorAgreementSigning = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only vendors can sign marketplace agreements', 403);
+    }
+
+    const foodTruck = await getVendorMarketplaceFoodTruck(req.user._id);
+    const event = await MarketplaceEventService.getByData(
+      { event_id: req.body.event_id },
+      { singleResult: true }
+    );
+
+    if (!event) {
+      throw buildError('Marketplace event not found', 404);
+    }
+
+    const validAgreement = await getValidVendorAgreement(req.user._id);
+    if (validAgreement) {
+      return res.data(
+        {
+          marketplaceVendorAgreement: validAgreement,
+          already_signed: true,
+        },
+        'Vendor agreements are already signed'
+      );
+    }
+
+    const bid = req.body.bid_id
+      ? await getOwnedBid(req.body.bid_id, req.user._id)
+      : null;
+    const application = req.body.application_id
+      ? await getOwnedApplication(req.body.application_id, req.user._id)
+      : null;
+
+    const existingAgreement = await MarketplaceVendorAgreementService.getByData(
+      {
+        vendor_user_id: req.user._id,
+        event_id: event.event_id,
+        ...(bid ? { bid_id: bid.bid_id } : {}),
+        ...(application ? { application_id: application.application_id } : {}),
+        status: { $in: ['PENDING_SIGNATURE', 'SENT', 'VIEWED'] },
+      },
+      { singleResult: true, sort: { created_at: -1 } }
+    );
+
+    const signer = getVendorSignerInfo(req.user);
+    if (!signer.signerEmail) {
+      throw buildError('Vendor email is required for DocuSign signing', 400);
+    }
+
+    let agreement = existingAgreement;
+    let envelopeId = agreement?.envelope_id;
+
+    try {
+      if (!agreement || !envelopeId) {
+        const envelope = await DocuSignHelper.createVendorMarketplaceSigningEnvelope({
+          vendorName: signer.signerName,
+          vendorEmail: signer.signerEmail,
+          vendorUserId: req.user._id,
+          event,
+          bid,
+          application,
+        });
+        envelopeId = envelope.envelopeId;
+        agreement = await MarketplaceVendorAgreementService.create({
+          vendor_user_id: req.user._id,
+          food_truck_id: foodTruck._id,
+          event_id: event.event_id,
+          bid_id: bid?.bid_id || null,
+          application_id: application?.application_id || null,
+          envelope_id: envelopeId,
+          governance_template_id: docusign.governanceTemplateId,
+          nda_template_id: docusign.ndaTemplateId,
+          governance_version: docusign.governanceVersion,
+          nda_version: docusign.ndaVersion,
+          signer_role: docusign.signerRole,
+          signer_name: signer.signerName,
+          signer_email: signer.signerEmail,
+          status: 'SENT',
+        });
+      }
+
+      await setSubmissionSignatureStatus(agreement, 'PENDING_SIGNATURE');
+
+      const recipientView = await DocuSignHelper.createRecipientView({
+        envelopeId,
+        signerName: signer.signerName,
+        signerEmail: signer.signerEmail,
+        vendorUserId: req.user._id,
+        returnUrl: req.body.return_url || docusign.returnUrl || getVendorAgreementReturnUrl(),
+      });
+
+      return res.data(
+        {
+          marketplaceVendorAgreement: agreement,
+          signing_url: recipientView.url,
+          already_signed: false,
+        },
+        'Vendor agreement signing started'
+      );
+    } catch (error) {
+      await sendDeveloperAlert('DocuSign vendor signing error', error, {
+        vendor_user_id: req.user._id,
+        event_id: event.event_id,
+        bid_id: bid?.bid_id || null,
+        application_id: application?.application_id || null,
+      });
+      if (agreement) {
+        agreement.status = 'ERROR';
+        agreement.error_message = error.message;
+        await agreement.save();
+      }
+      throw error;
+    }
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.vendorAgreementReturn = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only vendors can update marketplace agreements', 403);
+    }
+
+    const agreement = await MarketplaceVendorAgreementService.getByData(
+      {
+        agreement_id: req.params.agreementId,
+        vendor_user_id: req.user._id,
+      },
+      { singleResult: true }
+    );
+
+    if (!agreement) {
+      throw buildError('Marketplace vendor agreement not found', 404);
+    }
+
+    const returnStatus = normalizeDocuSignReturnStatus(req.body.status);
+    agreement.return_status = returnStatus;
+
+    try {
+      if (returnStatus === 'completed') {
+        let envelopeStatus = 'SIGNED';
+        if (agreement.envelope_id) {
+          const envelope = await DocuSignHelper.getEnvelopeStatus(agreement.envelope_id);
+          envelopeStatus = DocuSignHelper.mapEnvelopeStatus(envelope.status);
+          agreement.signed_at = envelope.completedDateTime
+            ? new Date(envelope.completedDateTime)
+            : new Date();
+        } else {
+          agreement.signed_at = new Date();
+        }
+        agreement.status = envelopeStatus === 'SIGNED' ? 'SIGNED' : envelopeStatus;
+        if (agreement.status === 'SIGNED') {
+          agreement.expires_at = getAnnualAgreementExpiry();
+        }
+      } else if (returnStatus === 'cancelled') {
+        agreement.status = 'CANCELLED';
+      } else if (returnStatus === 'declined') {
+        agreement.status = 'DECLINED';
+      } else {
+        agreement.status = 'ERROR';
+        agreement.error_message = 'Vendor returned from DocuSign with an error status.';
+      }
+
+      await agreement.save();
+      await setSubmissionSignatureStatus(agreement, agreement.status);
+
+      if (agreement.status === 'ERROR') {
+        await sendDeveloperAlert('DocuSign vendor return error', agreement.error_message, {
+          agreement_id: agreement.agreement_id,
+          vendor_user_id: req.user._id,
+        });
+      }
+
+      return res.data(
+        { marketplaceVendorAgreement: agreement },
+        'Vendor agreement return recorded'
+      );
+    } catch (error) {
+      agreement.status = 'ERROR';
+      agreement.error_message = error.message;
+      await agreement.save();
+      await setSubmissionSignatureStatus(agreement, 'ERROR');
+      await sendDeveloperAlert('DocuSign vendor return error', error, {
+        agreement_id: agreement.agreement_id,
+        vendor_user_id: req.user._id,
+      });
+      throw error;
+    }
   } catch (e) {
     return next(e);
   }
@@ -2816,6 +3358,12 @@ exports.awardBids = async (req, res, next) => {
     );
     await notifyCoordinatorOfMatchLocked(event);
     await notifyBidAwardOutcomes(event, selectedBidIds);
+    for (const bid of selectedBids) {
+      await sendMarketplaceInformationEmailsIfUnlocked({
+        event,
+        bid,
+      });
+    }
 
     return res.data(
       { awarded_bid_ids: selectedBidIds, marketplaceEvent: event },
@@ -3316,6 +3864,7 @@ exports.addBidAttachment = async (req, res, next) => {
     const bid = await getOwnedBid(req.params.bidId, req.user._id);
     const attachmentType = req.body.attachment_type;
     const config = validateAttachmentFile(req.file, attachmentType);
+    const requirementLabel = normalizeRequirementLabel(req.body.requirement_label);
 
     const { url, key } = await addObjectWithKey(req.file, config.folder);
     fs.unlink(req.file.path, () => {});
@@ -3329,6 +3878,10 @@ exports.addBidAttachment = async (req, res, next) => {
       original_name: req.file.originalname,
       mime_type: req.file.mimetype,
       size_bytes: req.file.size,
+      requirement_label: requirementLabel,
+      requirement_key: requirementLabel
+        ? requirementLabel.toLowerCase().replace(/[^a-z0-9]+/g, '_')
+        : null,
       uploaded_by_user_id: req.user._id,
     });
 
@@ -3342,7 +3895,7 @@ exports.addBidAttachment = async (req, res, next) => {
       bid.image_keys = [...(bid.image_keys || []), key];
     }
 
-    if (attachmentType === 'PERMIT_LICENSE') {
+    if (attachmentType === 'PERMIT_LICENSE' || attachmentType === REQUIREMENT_ATTACHMENT_TYPE) {
       bid.permit_license_urls = [...(bid.permit_license_urls || []), url];
       bid.permit_license_keys = [...(bid.permit_license_keys || []), key];
     }
@@ -3379,6 +3932,7 @@ exports.addApplicationAttachment = async (req, res, next) => {
     );
     const attachmentType = req.body.attachment_type;
     const config = validateAttachmentFile(req.file, attachmentType);
+    const requirementLabel = normalizeRequirementLabel(req.body.requirement_label);
 
     const { url, key } = await addObjectWithKey(req.file, config.folder);
     fs.unlink(req.file.path, () => {});
@@ -3392,6 +3946,10 @@ exports.addApplicationAttachment = async (req, res, next) => {
       original_name: req.file.originalname,
       mime_type: req.file.mimetype,
       size_bytes: req.file.size,
+      requirement_label: requirementLabel,
+      requirement_key: requirementLabel
+        ? requirementLabel.toLowerCase().replace(/[^a-z0-9]+/g, '_')
+        : null,
       uploaded_by_user_id: req.user._id,
     });
 
@@ -3405,7 +3963,7 @@ exports.addApplicationAttachment = async (req, res, next) => {
       application.image_keys = [...(application.image_keys || []), key];
     }
 
-    if (attachmentType === 'PERMIT_LICENSE') {
+    if (attachmentType === 'PERMIT_LICENSE' || attachmentType === REQUIREMENT_ATTACHMENT_TYPE) {
       application.permit_license_urls = [
         ...(application.permit_license_urls || []),
         url,
@@ -3574,7 +4132,10 @@ exports.deleteBidAttachment = async (req, res, next) => {
       );
     }
 
-    if (attachment.attachment_type === 'PERMIT_LICENSE') {
+    if (
+      attachment.attachment_type === 'PERMIT_LICENSE' ||
+      attachment.attachment_type === REQUIREMENT_ATTACHMENT_TYPE
+    ) {
       bid.permit_license_urls = (bid.permit_license_urls || []).filter(
         (url) => url !== attachment.file_url
       );
@@ -3596,6 +4157,93 @@ exports.deleteBidAttachment = async (req, res, next) => {
     return res.data(
       { attachment_id: req.params.attachmentId, marketplaceBid: bid },
       'Marketplace bid attachment deleted'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.deleteApplicationAttachment = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only vendors can delete application attachments', 403);
+    }
+
+    await getVendorMarketplaceFoodTruck(req.user._id);
+    const application = await getOwnedApplication(
+      req.params.applicationId,
+      req.user._id
+    );
+    const attachment = await MarketplaceAttachmentService.getByData(
+      {
+        application_id: application.application_id,
+        attachment_id: req.params.attachmentId,
+        status: 'ACTIVE',
+      },
+      { singleResult: true }
+    );
+
+    if (!attachment) {
+      throw buildError('Marketplace application attachment not found', 404);
+    }
+
+    attachment.status = 'DELETED';
+    attachment.deleted_at = new Date();
+    attachment.deleted_by_user_id = req.user._id;
+    await attachment.save();
+    await createFileAudit(
+      attachment,
+      req,
+      'DELETE',
+      'Deleted from application attachment controls'
+    );
+
+    if (attachment.file_key) {
+      await removeObject(attachment.file_key);
+    }
+
+    if (
+      attachment.attachment_type === 'APPLICATION_MENU_PDF' &&
+      application.menu_pdf_key === attachment.file_key
+    ) {
+      application.menu_pdf_url = null;
+      application.menu_pdf_key = null;
+    }
+
+    if (attachment.attachment_type === 'APPLICATION_IMAGE') {
+      application.image_urls = (application.image_urls || []).filter(
+        (url) => url !== attachment.file_url
+      );
+      application.image_keys = (application.image_keys || []).filter(
+        (key) => key !== attachment.file_key
+      );
+    }
+
+    if (
+      attachment.attachment_type === 'PERMIT_LICENSE' ||
+      attachment.attachment_type === REQUIREMENT_ATTACHMENT_TYPE
+    ) {
+      application.permit_license_urls = (
+        application.permit_license_urls || []
+      ).filter((url) => url !== attachment.file_url);
+      application.permit_license_keys = (
+        application.permit_license_keys || []
+      ).filter((key) => key !== attachment.file_key);
+    }
+
+    if (
+      attachment.attachment_type === 'AGREEMENT_DOCUMENT' &&
+      application.agreement_document_key === attachment.file_key
+    ) {
+      application.agreement_document_url = null;
+      application.agreement_document_key = null;
+    }
+
+    await application.save();
+
+    return res.data(
+      { attachment_id: req.params.attachmentId, marketplaceApplication: application },
+      'Marketplace application attachment deleted'
     );
   } catch (e) {
     return next(e);
@@ -3824,7 +4472,10 @@ exports.updateRepositoryFileStatus = async (req, res, next) => {
           );
         }
 
-        if (attachment.attachment_type === 'PERMIT_LICENSE') {
+        if (
+          attachment.attachment_type === 'PERMIT_LICENSE' ||
+          attachment.attachment_type === REQUIREMENT_ATTACHMENT_TYPE
+        ) {
           bid.permit_license_urls = (bid.permit_license_urls || []).filter(
             (url) => url !== attachment.file_url
           );

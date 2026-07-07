@@ -128,7 +128,7 @@ module.exports = {
       liquor_license_confirmed: Joi.boolean().default(false),
       nda_required: Joi.boolean().default(false),
       nda_acknowledged: Joi.boolean().default(false),
-      bid_status: Joi.string().valid('DRAFT', 'SUBMITTED'),
+      bid_status: Joi.string().valid('DRAFT', 'PENDING_SIGNATURE', 'SUBMITTED'),
     }),
   },
 
@@ -139,9 +139,11 @@ module.exports = {
           'BID_MENU_PDF',
           'BID_IMAGE',
           'PERMIT_LICENSE',
-          'AGREEMENT_DOCUMENT'
+          'AGREEMENT_DOCUMENT',
+          'REQUIREMENT_DOCUMENT'
         )
         .required(),
+      requirement_label: Joi.string().trim().max(100).allow(null, ''),
     }),
   },
 
@@ -159,7 +161,7 @@ module.exports = {
       liquor_license_confirmed: Joi.boolean().default(false),
       nda_required: Joi.boolean().default(false),
       nda_acknowledged: Joi.boolean().default(false),
-      application_status: Joi.string().valid('DRAFT', 'SUBMITTED'),
+      application_status: Joi.string().valid('DRAFT', 'PENDING_SIGNATURE', 'SUBMITTED'),
     }),
   },
 
@@ -170,9 +172,11 @@ module.exports = {
           'APPLICATION_MENU_PDF',
           'APPLICATION_IMAGE',
           'PERMIT_LICENSE',
-          'AGREEMENT_DOCUMENT'
+          'AGREEMENT_DOCUMENT',
+          'REQUIREMENT_DOCUMENT'
         )
         .required(),
+      requirement_label: Joi.string().trim().max(100).allow(null, ''),
     }),
   },
 
@@ -271,6 +275,23 @@ module.exports = {
     body: Joi.object({
       manual_payment_reference: Joi.string().trim().allow(null, ''),
       manual_payment_note: Joi.string().trim().required(),
+    }),
+  },
+
+  startVendorAgreementSigning: {
+    body: Joi.object({
+      event_id: Joi.string().trim().required(),
+      bid_id: Joi.string().trim().allow(null, ''),
+      application_id: Joi.string().trim().allow(null, ''),
+      return_url: Joi.string().trim().allow(null, ''),
+    }),
+  },
+
+  vendorAgreementReturn: {
+    body: Joi.object({
+      status: Joi.string()
+        .valid('completed', 'cancelled', 'declined', 'error')
+        .required(),
     }),
   },
 };

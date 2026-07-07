@@ -33,8 +33,21 @@ const mSchema = mongoose.Schema(
         'APPLICATION_IMAGE',
         'PERMIT_LICENSE',
         'AGREEMENT_DOCUMENT',
+        'REQUIREMENT_DOCUMENT',
       ],
       required: true,
+      index: true,
+    },
+    requirement_label: {
+      type: String,
+      default: null,
+      trim: true,
+      index: true,
+    },
+    requirement_key: {
+      type: String,
+      default: null,
+      trim: true,
       index: true,
     },
     file_url: {
