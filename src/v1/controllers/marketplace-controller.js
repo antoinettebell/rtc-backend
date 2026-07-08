@@ -410,7 +410,7 @@ const assertVendorCanSubmitRound = async (event, vendorUserId) => {
         event_id: event.event_id,
         vendor_user_id: vendorUserId,
         submission_round: currentRound,
-        bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+        bid_status: { $nin: ['DRAFT', 'PENDING_SIGNATURE', 'WITHDRAWN'] },
       },
       { singleResult: true, lean: true }
     ),
@@ -419,7 +419,7 @@ const assertVendorCanSubmitRound = async (event, vendorUserId) => {
         event_id: event.event_id,
         vendor_user_id: vendorUserId,
         submission_round: currentRound,
-        application_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+        application_status: { $nin: ['DRAFT', 'PENDING_SIGNATURE', 'WITHDRAWN'] },
       },
       { singleResult: true, lean: true }
     ),
