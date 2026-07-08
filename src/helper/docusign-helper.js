@@ -3,6 +3,7 @@ const { docusign } = require('../config');
 
 const DS_SCOPE = 'signature impersonation';
 const TOKEN_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
+const VENDOR_SIGNER_RECIPIENT_ID = '1';
 
 const normalizePrivateKey = (key) => {
   if (!key) return null;
@@ -179,6 +180,8 @@ exports.createVendorMarketplaceSigningEnvelope = async ({
       email: vendorEmail,
       name: vendorName,
       roleName: docusign.signerRole,
+      recipientId: VENDOR_SIGNER_RECIPIENT_ID,
+      routingOrder: '1',
       clientUserId,
       tabs: {
         textTabs: [
@@ -265,6 +268,7 @@ exports.createRecipientView = async ({
       authenticationMethod: 'none',
       clientUserId: String(vendorUserId),
       email: signerEmail,
+      recipientId: VENDOR_SIGNER_RECIPIENT_ID,
       userName: signerName,
       returnUrl: returnUrl || docusign.returnUrl,
     }),
