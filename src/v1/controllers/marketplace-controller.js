@@ -2779,13 +2779,6 @@ exports.submitBid = async (req, res, next) => {
     await assertEventOpenForSubmission(event);
     await assertVendorCanSubmitRound(event, req.user._id);
 
-    if (event.alcohol_required && !req.body.liquor_license_confirmed) {
-      throw buildError(
-        'Liquor license confirmation is required for this event',
-        400
-      );
-    }
-
     const existingBid = await MarketplaceBidService.getByData(
       {
         event_id: req.params.eventId,
@@ -2803,6 +2796,16 @@ exports.submitBid = async (req, res, next) => {
     }
 
     const requestedStatus = req.body.bid_status || 'SUBMITTED';
+    if (
+      requestedStatus !== 'DRAFT' &&
+      event.alcohol_required &&
+      !req.body.liquor_license_confirmed
+    ) {
+      throw buildError(
+        'Liquor license confirmation is required for this event',
+        400
+      );
+    }
     assertMarketplaceTextAllowed(req.body.notes, 'Notes');
     if (requestedStatus === 'SUBMITTED') {
       await requireSignedVendorAgreementForSubmission(req.user._id);
@@ -2934,13 +2937,6 @@ exports.submitApplication = async (req, res, next) => {
       throw buildError('This event uses the bid flow, not applications', 400);
     }
 
-    if (event.alcohol_required && !req.body.liquor_license_confirmed) {
-      throw buildError(
-        'Liquor license confirmation is required for this event',
-        400
-      );
-    }
-
     const existingApplication = await MarketplaceApplicationService.getByData(
       {
         event_id: req.params.eventId,
@@ -2960,6 +2956,16 @@ exports.submitApplication = async (req, res, next) => {
     }
 
     const requestedStatus = req.body.application_status || 'SUBMITTED';
+    if (
+      requestedStatus !== 'DRAFT' &&
+      event.alcohol_required &&
+      !req.body.liquor_license_confirmed
+    ) {
+      throw buildError(
+        'Liquor license confirmation is required for this event',
+        400
+      );
+    }
     assertMarketplaceTextAllowed(req.body.notes, 'Notes');
     if (requestedStatus === 'SUBMITTED') {
       await requireSignedVendorAgreementForSubmission(req.user._id);
