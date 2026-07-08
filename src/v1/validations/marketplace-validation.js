@@ -118,7 +118,7 @@ module.exports = {
     body: Joi.object({
       price_per_guest: Joi.number().min(0).allow(null),
       average_price_per_meal: Joi.number().min(0).allow(null),
-      full_bid_amount: Joi.number().min(0).required(),
+      full_bid_amount: Joi.number().min(0).allow(null),
       menu_description: Joi.string().allow(null, ''),
       notes: Joi.string().allow(null, ''),
       menu_pdf_url: Joi.string().uri().allow(null, ''),
@@ -149,10 +149,10 @@ module.exports = {
 
   submitApplication: {
     body: Joi.object({
-      business_name: Joi.string().trim().required(),
-      contact_name: Joi.string().trim().required(),
-      phone: Joi.string().trim().required(),
-      email: Joi.string().trim().email().required(),
+      business_name: Joi.string().trim().allow(null, ''),
+      contact_name: Joi.string().trim().allow(null, ''),
+      phone: Joi.string().trim().allow(null, ''),
+      email: Joi.string().trim().email().allow(null, ''),
       food_type_cuisine: Joi.string().trim().allow(null, ''),
       menu_description: Joi.string().allow(null, ''),
       notes: Joi.string().allow(null, ''),

@@ -43,7 +43,7 @@ const mSchema = mongoose.Schema(
     },
     full_bid_amount: {
       type: Number,
-      required: true,
+      default: null,
       min: 0,
     },
     menu_description: {

@@ -43,6 +43,18 @@ const assertMarketplaceTextAllowed = (value, fieldName = 'Text') => {
   }
 };
 
+const assertRequiredMarketplaceFields = (fields = {}) => {
+  Object.entries(fields).forEach(([label, value]) => {
+    if (
+      value === null ||
+      value === undefined ||
+      (typeof value === 'string' && !value.trim())
+    ) {
+      throw buildError(`${label} is required before submitting.`, 400);
+    }
+  });
+};
+
 const MARKETPLACE_PHONE_NUMBER = '800-410-7053';
 const COORDINATOR_AWARD_FEE_RATE = 0.035;
 const VENDOR_EVENT_PROCESSING_RATE = 0.02;
@@ -2796,6 +2808,11 @@ exports.submitBid = async (req, res, next) => {
     }
 
     const requestedStatus = req.body.bid_status || 'SUBMITTED';
+    if (requestedStatus !== 'DRAFT') {
+      assertRequiredMarketplaceFields({
+        'Full bid amount': req.body.full_bid_amount,
+      });
+    }
     if (
       requestedStatus !== 'DRAFT' &&
       event.alcohol_required &&
@@ -2956,6 +2973,15 @@ exports.submitApplication = async (req, res, next) => {
     }
 
     const requestedStatus = req.body.application_status || 'SUBMITTED';
+    if (requestedStatus !== 'DRAFT') {
+      assertRequiredMarketplaceFields({
+        'Business name': req.body.business_name,
+        'Contact name': req.body.contact_name,
+        Phone: req.body.phone,
+        Email: req.body.email,
+        'Food type / cuisine': req.body.food_type_cuisine,
+      });
+    }
     if (
       requestedStatus !== 'DRAFT' &&
       event.alcohol_required &&

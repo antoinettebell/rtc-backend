@@ -33,19 +33,19 @@ const mSchema = mongoose.Schema(
     },
     business_name: {
       type: String,
-      required: true,
+      default: null,
     },
     contact_name: {
       type: String,
-      required: true,
+      default: null,
     },
     phone: {
       type: String,
-      required: true,
+      default: null,
     },
     email: {
       type: String,
-      required: true,
+      default: null,
     },
     food_type_cuisine: {
       type: String,
