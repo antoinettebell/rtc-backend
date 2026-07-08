@@ -33,6 +33,16 @@ const buildError = (message, code = 400) => {
   return error;
 };
 
+const assertMarketplaceTextAllowed = (value, fieldName = 'Text') => {
+  const moderation = moderateMarketplaceText(value);
+  if (moderation.status === 'BLOCKED') {
+    throw buildError(
+      `${fieldName} cannot include contact info, social handles, payment handles, or requests to connect outside RTC.`,
+      400
+    );
+  }
+};
+
 const MARKETPLACE_PHONE_NUMBER = '800-410-7053';
 const COORDINATOR_AWARD_FEE_RATE = 0.035;
 const VENDOR_EVENT_PROCESSING_RATE = 0.02;
@@ -2793,6 +2803,7 @@ exports.submitBid = async (req, res, next) => {
     }
 
     const requestedStatus = req.body.bid_status || 'SUBMITTED';
+    assertMarketplaceTextAllowed(req.body.notes, 'Notes');
     if (requestedStatus === 'SUBMITTED') {
       await requireSignedVendorAgreementForSubmission(req.user._id);
     }
@@ -2949,6 +2960,7 @@ exports.submitApplication = async (req, res, next) => {
     }
 
     const requestedStatus = req.body.application_status || 'SUBMITTED';
+    assertMarketplaceTextAllowed(req.body.notes, 'Notes');
     if (requestedStatus === 'SUBMITTED') {
       await requireSignedVendorAgreementForSubmission(req.user._id);
     }
