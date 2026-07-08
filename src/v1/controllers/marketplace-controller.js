@@ -403,12 +403,14 @@ const assertEventOpenForSubmission = async (event) => {
 };
 
 const assertVendorCanSubmitRound = async (event, vendorUserId) => {
+  const currentRound = event.current_submission_round || 1;
   const [previousBid, previousApplication] = await Promise.all([
     MarketplaceBidService.getByData(
       {
         event_id: event.event_id,
         vendor_user_id: vendorUserId,
-        bid_status: { $nin: ['WITHDRAWN'] },
+        submission_round: currentRound,
+        bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
       },
       { singleResult: true, lean: true }
     ),
@@ -416,7 +418,8 @@ const assertVendorCanSubmitRound = async (event, vendorUserId) => {
       {
         event_id: event.event_id,
         vendor_user_id: vendorUserId,
-        application_status: { $nin: ['WITHDRAWN'] },
+        submission_round: currentRound,
+        application_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
       },
       { singleResult: true, lean: true }
     ),
@@ -2789,12 +2792,17 @@ exports.submitBid = async (req, res, next) => {
       throw buildError('This event is closed to new submissions.', 410);
     }
     await assertEventOpenForSubmission(event);
-    await assertVendorCanSubmitRound(event, req.user._id);
+    const requestedStatus = req.body.bid_status || 'SUBMITTED';
+    const currentRound = event.current_submission_round || 1;
+    if (requestedStatus !== 'DRAFT') {
+      await assertVendorCanSubmitRound(event, req.user._id);
+    }
 
     const existingBid = await MarketplaceBidService.getByData(
       {
         event_id: req.params.eventId,
         vendor_user_id: req.user._id,
+        submission_round: currentRound,
         bid_status: { $nin: ['WITHDRAWN'] },
       },
       { singleResult: true }
@@ -2807,7 +2815,6 @@ exports.submitBid = async (req, res, next) => {
       throw buildError('A bid has already been submitted for this event', 409);
     }
 
-    const requestedStatus = req.body.bid_status || 'SUBMITTED';
     if (requestedStatus !== 'DRAFT') {
       assertRequiredMarketplaceFields({
         'Full bid amount': req.body.full_bid_amount,
@@ -2835,7 +2842,7 @@ exports.submitBid = async (req, res, next) => {
       event_id: req.params.eventId,
       vendor_user_id: req.user._id,
       food_truck_id: foodTruck._id,
-      submission_round: event.current_submission_round || 1,
+      submission_round: currentRound,
       nda_required: true,
       nda_acknowledged: requestedStatus === 'SUBMITTED',
       nda_acknowledged_at: requestedStatus === 'SUBMITTED' ? new Date() : null,
@@ -2948,7 +2955,11 @@ exports.submitApplication = async (req, res, next) => {
       throw buildError('This event is closed to new submissions.', 410);
     }
     await assertEventOpenForSubmission(event);
-    await assertVendorCanSubmitRound(event, req.user._id);
+    const requestedStatus = req.body.application_status || 'SUBMITTED';
+    const currentRound = event.current_submission_round || 1;
+    if (requestedStatus !== 'DRAFT') {
+      await assertVendorCanSubmitRound(event, req.user._id);
+    }
 
     if (roundMoney(event.vendor_fee || 0) <= 0) {
       throw buildError('This event uses the bid flow, not applications', 400);
@@ -2958,6 +2969,7 @@ exports.submitApplication = async (req, res, next) => {
       {
         event_id: req.params.eventId,
         vendor_user_id: req.user._id,
+        submission_round: currentRound,
         application_status: { $nin: ['WITHDRAWN'] },
       },
       { singleResult: true }
@@ -2972,7 +2984,6 @@ exports.submitApplication = async (req, res, next) => {
       throw buildError('An application has already been submitted for this event', 409);
     }
 
-    const requestedStatus = req.body.application_status || 'SUBMITTED';
     if (requestedStatus !== 'DRAFT') {
       assertRequiredMarketplaceFields({
         'Business name': req.body.business_name,
@@ -3002,7 +3013,7 @@ exports.submitApplication = async (req, res, next) => {
       event_id: req.params.eventId,
       vendor_user_id: req.user._id,
       food_truck_id: foodTruck._id,
-      submission_round: event.current_submission_round || 1,
+      submission_round: currentRound,
       nda_required: true,
       nda_acknowledged: requestedStatus === 'SUBMITTED',
       nda_acknowledged_at: requestedStatus === 'SUBMITTED' ? new Date() : null,
