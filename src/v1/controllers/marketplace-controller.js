@@ -17,7 +17,11 @@ const {
 const {
   canAccessEventMarketplace,
 } = require('../../helper/vendor-plan-helper');
-const { addObjectWithKey, removeObject } = require('../../helper/aws');
+const {
+  addObjectFromBufferWithKey,
+  addObjectWithKey,
+  removeObject,
+} = require('../../helper/aws');
 const PaymentHelper = require('../../helper/payment-helper');
 const DocuSignHelper = require('../../helper/docusign-helper');
 const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
@@ -675,6 +679,71 @@ const normalizeRequirementLabel = (label) => {
   return match || value;
 };
 
+const getRequirementKey = (label) =>
+  label ? label.toLowerCase().replace(/[^a-z0-9]+/g, '_') : null;
+
+const getReplacementAttachmentQuery = ({
+  eventId,
+  bidId = null,
+  applicationId = null,
+  attachmentType,
+  requirementKey = null,
+}) => {
+  if (!['BID_MENU_PDF', 'APPLICATION_MENU_PDF', 'AGREEMENT_DOCUMENT', REQUIREMENT_ATTACHMENT_TYPE].includes(attachmentType)) {
+    return null;
+  }
+
+  return {
+    event_id: eventId,
+    ...(bidId ? { bid_id: bidId } : {}),
+    ...(applicationId ? { application_id: applicationId } : {}),
+    attachment_type: attachmentType,
+    status: 'ACTIVE',
+    ...(attachmentType === REQUIREMENT_ATTACHMENT_TYPE
+      ? { requirement_key: requirementKey }
+      : {}),
+  };
+};
+
+const archiveReplacementAttachments = async ({
+  eventId,
+  bidId = null,
+  applicationId = null,
+  attachmentType,
+  requirementKey = null,
+  actorUserId,
+  reason,
+}) => {
+  const query = getReplacementAttachmentQuery({
+    eventId,
+    bidId,
+    applicationId,
+    attachmentType,
+    requirementKey,
+  });
+  if (!query || (attachmentType === REQUIREMENT_ATTACHMENT_TYPE && !requirementKey)) {
+    return [];
+  }
+
+  const existingAttachments = await MarketplaceAttachmentService.getByData(query, {
+    lean: false,
+  });
+  for (const attachment of existingAttachments) {
+    attachment.status = 'DELETED';
+    attachment.status_reason = reason;
+    attachment.status_updated_at = new Date();
+    attachment.status_updated_by_user_id = actorUserId;
+    attachment.deleted_at = new Date();
+    attachment.deleted_by_user_id = actorUserId;
+    await attachment.save();
+    if (attachment.file_key) {
+      await removeObject(attachment.file_key);
+    }
+  }
+
+  return existingAttachments;
+};
+
 const getAnnualAgreementExpiry = () =>
   new Date(Date.now() + VENDOR_AGREEMENT_VALID_DAYS * 24 * 60 * 60 * 1000);
 
@@ -775,6 +844,82 @@ const setSubmissionSignatureStatus = async (agreement, status) => {
       { getNew: false }
     );
   }
+};
+
+const persistSignedAgreementAttachment = async (agreement) => {
+  if (agreement.status !== 'SIGNED' || !agreement.envelope_id || !agreement.event_id) {
+    return null;
+  }
+
+  const existingAttachment = await MarketplaceAttachmentService.getByData(
+    {
+      event_id: agreement.event_id,
+      bid_id: agreement.bid_id || null,
+      application_id: agreement.application_id || null,
+      attachment_type: 'AGREEMENT_DOCUMENT',
+      status: 'ACTIVE',
+    },
+    { singleResult: true, sort: { created_at: -1 } }
+  );
+
+  if (existingAttachment) {
+    return existingAttachment;
+  }
+
+  const signedDocuments = await DocuSignHelper.downloadEnvelopeDocuments(
+    agreement.envelope_id
+  );
+  const fileName = `RTC-Marketplace-Agreement-${
+    agreement.bid_id || agreement.application_id || agreement.event_id
+  }.pdf`;
+  const { url, key } = await addObjectFromBufferWithKey(
+    {
+      buffer: signedDocuments,
+      originalname: fileName,
+      mimetype: 'application/pdf',
+    },
+    BID_ATTACHMENT_TYPES.AGREEMENT_DOCUMENT.folder
+  );
+
+  const attachment = await MarketplaceAttachmentService.create({
+    event_id: agreement.event_id,
+    bid_id: agreement.bid_id || null,
+    application_id: agreement.application_id || null,
+    attachment_type: 'AGREEMENT_DOCUMENT',
+    file_url: url,
+    file_key: key,
+    original_name: fileName,
+    mime_type: 'application/pdf',
+    size_bytes: signedDocuments.length,
+    uploaded_by_user_id: agreement.vendor_user_id,
+  });
+
+  if (agreement.bid_id) {
+    await MarketplaceBidService.update(
+      { bid_id: agreement.bid_id, vendor_user_id: agreement.vendor_user_id },
+      {
+        agreement_document_url: url,
+        agreement_document_key: key,
+      },
+      { getNew: false }
+    );
+  }
+
+  if (agreement.application_id) {
+    await MarketplaceApplicationService.update(
+      {
+        application_id: agreement.application_id,
+        vendor_user_id: agreement.vendor_user_id,
+      },
+      {
+        agreement_document_url: url,
+        agreement_document_key: key,
+      },
+      { getNew: false }
+    );
+  }
+
+  return attachment;
 };
 
 const redactLockedMarketplaceEvent = (event, unlockState, { fullAccess = false } = {}) => {
@@ -919,16 +1064,26 @@ const filterLockedAttachments = (attachments = [], unlockState, { fullAccess = f
   );
 };
 
-const assertVendorAttachmentUnlocked = async (attachment, bid) => {
+const assertCustomerAttachmentUnlocked = async (attachment, event) => {
   if (!isSensitiveMarketplaceAttachment(attachment)) {
     return;
   }
 
-  const event = await MarketplaceEventService.getByData(
-    { event_id: attachment.event_id },
-    { singleResult: true, lean: true }
-  );
-  const unlockState = getMarketplaceUnlockState({ event, bid });
+  const [bid, application] = await Promise.all([
+    attachment.bid_id
+      ? MarketplaceBidService.getByData(
+          { bid_id: attachment.bid_id },
+          { singleResult: true, lean: true }
+        )
+      : null,
+    attachment.application_id
+      ? MarketplaceApplicationService.getByData(
+          { application_id: attachment.application_id },
+          { singleResult: true, lean: true }
+        )
+      : null,
+  ]);
+  const unlockState = getMarketplaceUnlockState({ event, bid, application });
   if (!unlockState.details_unlocked) {
     throw buildError(
       'Marketplace file unlock requires the required payment or match condition',
@@ -952,16 +1107,21 @@ const getAccessibleAttachment = async (attachmentId, user) => {
   }
 
   if (user.userType === 'CUSTOMER') {
-    await getOwnedEvent(attachment.event_id, user._id);
+    const event = await getOwnedEvent(attachment.event_id, user._id);
+    await assertCustomerAttachmentUnlocked(attachment, event);
     return attachment;
   }
 
   if (user.userType === 'VENDOR') {
-    if (!attachment.bid_id) {
+    if (!attachment.bid_id && !attachment.application_id) {
       throw buildError('Marketplace repository file not found', 404);
     }
-    const bid = await getOwnedBid(attachment.bid_id, user._id);
-    await assertVendorAttachmentUnlocked(attachment, bid);
+    const bid = attachment.bid_id
+      ? await getOwnedBid(attachment.bid_id, user._id)
+      : null;
+    const application = attachment.application_id
+      ? await getOwnedApplication(attachment.application_id, user._id)
+      : null;
     return attachment;
   }
 
@@ -973,8 +1133,11 @@ const decorateRepositoryFiles = async (attachments = []) => {
     ...new Set(attachments.map((item) => item.event_id).filter(Boolean)),
   ];
   const bidIds = [...new Set(attachments.map((item) => item.bid_id).filter(Boolean))];
+  const applicationIds = [
+    ...new Set(attachments.map((item) => item.application_id).filter(Boolean)),
+  ];
 
-  const [events, bids] = await Promise.all([
+  const [events, bids, applications] = await Promise.all([
     eventIds.length
       ? MarketplaceEventService.getByData(
           { event_id: { $in: eventIds } },
@@ -984,6 +1147,12 @@ const decorateRepositoryFiles = async (attachments = []) => {
     bidIds.length
       ? MarketplaceBidService.getByData(
           { bid_id: { $in: bidIds } },
+          { lean: true }
+        )
+      : [],
+    applicationIds.length
+      ? MarketplaceApplicationService.getByData(
+          { application_id: { $in: applicationIds } },
           { lean: true }
         )
       : [],
@@ -997,10 +1166,17 @@ const decorateRepositoryFiles = async (attachments = []) => {
     acc[bid.bid_id] = bid;
     return acc;
   }, {});
+  const applicationById = applications.reduce((acc, application) => {
+    acc[application.application_id] = application;
+    return acc;
+  }, {});
 
   return attachments.map((attachment) => {
     const event = eventById[attachment.event_id] || null;
     const bid = attachment.bid_id ? bidById[attachment.bid_id] || null : null;
+    const application = attachment.application_id
+      ? applicationById[attachment.application_id] || null
+      : null;
     return {
       ...attachment,
       marketplaceEvent: event
@@ -1018,8 +1194,16 @@ const decorateRepositoryFiles = async (attachments = []) => {
             bid_status: bid.bid_status,
           }
         : null,
-      vendor_user_id: bid?.vendor_user_id || null,
-      food_truck_id: bid?.food_truck_id || null,
+      marketplaceApplication: application
+        ? {
+            application_id: application.application_id,
+            vendor_user_id: application.vendor_user_id,
+            food_truck_id: application.food_truck_id,
+            application_status: application.application_status,
+          }
+        : null,
+      vendor_user_id: bid?.vendor_user_id || application?.vendor_user_id || null,
+      food_truck_id: bid?.food_truck_id || application?.food_truck_id || null,
     };
   });
 };
@@ -2929,7 +3113,7 @@ exports.myBids = async (req, res, next) => {
         fullAccess: false,
         redactRecord: false,
       }),
-      { fullAccess: false, redactRecord: false }
+      { fullAccess: true, redactRecord: false }
     );
 
     return res.data({ marketplaceBidList }, 'Marketplace bids');
@@ -3072,7 +3256,7 @@ exports.myApplications = async (req, res, next) => {
         fullAccess: false,
         redactRecord: false,
       }),
-      { fullAccess: false, redactRecord: false }
+      { fullAccess: true, redactRecord: false }
     );
 
     return res.data(
@@ -3100,8 +3284,24 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
       throw buildError('Marketplace event not found', 404);
     }
 
+    const bid = req.body.bid_id
+      ? await getOwnedBid(req.body.bid_id, req.user._id)
+      : null;
+    const application = req.body.application_id
+      ? await getOwnedApplication(req.body.application_id, req.user._id)
+      : null;
+
     const validAgreement = await getValidVendorAgreement(req.user._id);
     if (validAgreement) {
+      await persistSignedAgreementAttachment({
+        status: 'SIGNED',
+        envelope_id: validAgreement.envelope_id,
+        event_id: event.event_id,
+        bid_id: bid?.bid_id || null,
+        application_id: application?.application_id || null,
+        vendor_user_id: req.user._id,
+      });
+
       return res.data(
         {
           marketplaceVendorAgreement: validAgreement,
@@ -3110,13 +3310,6 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
         'Vendor agreements are already signed'
       );
     }
-
-    const bid = req.body.bid_id
-      ? await getOwnedBid(req.body.bid_id, req.user._id)
-      : null;
-    const application = req.body.application_id
-      ? await getOwnedApplication(req.body.application_id, req.user._id)
-      : null;
 
     const existingAgreement = await MarketplaceVendorAgreementService.getByData(
       {
@@ -3251,6 +3444,9 @@ exports.vendorAgreementReturn = async (req, res, next) => {
 
       await agreement.save();
       await setSubmissionSignatureStatus(agreement, agreement.status);
+      if (agreement.status === 'SIGNED') {
+        await persistSignedAgreementAttachment(agreement);
+      }
 
       if (agreement.status === 'ERROR') {
         await sendDeveloperAlert('DocuSign vendor return error', agreement.error_message, {
@@ -3920,6 +4116,34 @@ exports.addBidAttachment = async (req, res, next) => {
     const attachmentType = req.body.attachment_type;
     const config = validateAttachmentFile(req.file, attachmentType);
     const requirementLabel = normalizeRequirementLabel(req.body.requirement_label);
+    const requirementKey = getRequirementKey(requirementLabel);
+
+    const replacedAttachments = await archiveReplacementAttachments({
+      eventId: bid.event_id,
+      bidId: bid.bid_id,
+      attachmentType,
+      requirementKey,
+      actorUserId: req.user._id,
+      reason: 'Replaced by vendor upload',
+    });
+    replacedAttachments.forEach((attachment) => {
+      if (attachment.attachment_type === 'BID_MENU_PDF') {
+        bid.menu_pdf_url = null;
+        bid.menu_pdf_key = null;
+      }
+      if (attachment.attachment_type === REQUIREMENT_ATTACHMENT_TYPE) {
+        bid.permit_license_urls = (bid.permit_license_urls || []).filter(
+          (url) => url !== attachment.file_url
+        );
+        bid.permit_license_keys = (bid.permit_license_keys || []).filter(
+          (key) => key !== attachment.file_key
+        );
+      }
+      if (attachment.attachment_type === 'AGREEMENT_DOCUMENT') {
+        bid.agreement_document_url = null;
+        bid.agreement_document_key = null;
+      }
+    });
 
     const { url, key } = await addObjectWithKey(req.file, config.folder);
     fs.unlink(req.file.path, () => {});
@@ -3934,9 +4158,7 @@ exports.addBidAttachment = async (req, res, next) => {
       mime_type: req.file.mimetype,
       size_bytes: req.file.size,
       requirement_label: requirementLabel,
-      requirement_key: requirementLabel
-        ? requirementLabel.toLowerCase().replace(/[^a-z0-9]+/g, '_')
-        : null,
+      requirement_key: requirementKey,
       uploaded_by_user_id: req.user._id,
     });
 
@@ -3988,6 +4210,34 @@ exports.addApplicationAttachment = async (req, res, next) => {
     const attachmentType = req.body.attachment_type;
     const config = validateAttachmentFile(req.file, attachmentType);
     const requirementLabel = normalizeRequirementLabel(req.body.requirement_label);
+    const requirementKey = getRequirementKey(requirementLabel);
+
+    const replacedAttachments = await archiveReplacementAttachments({
+      eventId: application.event_id,
+      applicationId: application.application_id,
+      attachmentType,
+      requirementKey,
+      actorUserId: req.user._id,
+      reason: 'Replaced by vendor upload',
+    });
+    replacedAttachments.forEach((attachment) => {
+      if (attachment.attachment_type === 'APPLICATION_MENU_PDF') {
+        application.menu_pdf_url = null;
+        application.menu_pdf_key = null;
+      }
+      if (attachment.attachment_type === REQUIREMENT_ATTACHMENT_TYPE) {
+        application.permit_license_urls = (
+          application.permit_license_urls || []
+        ).filter((url) => url !== attachment.file_url);
+        application.permit_license_keys = (
+          application.permit_license_keys || []
+        ).filter((key) => key !== attachment.file_key);
+      }
+      if (attachment.attachment_type === 'AGREEMENT_DOCUMENT') {
+        application.agreement_document_url = null;
+        application.agreement_document_key = null;
+      }
+    });
 
     const { url, key } = await addObjectWithKey(req.file, config.folder);
     fs.unlink(req.file.path, () => {});
@@ -4002,9 +4252,7 @@ exports.addApplicationAttachment = async (req, res, next) => {
       mime_type: req.file.mimetype,
       size_bytes: req.file.size,
       requirement_label: requirementLabel,
-      requirement_key: requirementLabel
-        ? requirementLabel.toLowerCase().replace(/[^a-z0-9]+/g, '_')
-        : null,
+      requirement_key: requirementKey,
       uploaded_by_user_id: req.user._id,
     });
 
@@ -4314,7 +4562,7 @@ exports.repositoryFiles = async (req, res, next) => {
     const page = Number(req.query.page || 1);
     const limit = Number(req.query.limit || 25);
     const query = {};
-    let vendorBidById = {};
+    const andFilters = [];
 
     if (req.query.status) {
       query.status = req.query.status;
@@ -4333,12 +4581,20 @@ exports.repositoryFiles = async (req, res, next) => {
     }
 
     if (req.query.search?.trim()) {
-      query.$or = [
-        { original_name: { $regex: req.query.search.trim(), $options: 'i' } },
-        { event_id: { $regex: req.query.search.trim(), $options: 'i' } },
-        { bid_id: { $regex: req.query.search.trim(), $options: 'i' } },
-        { file_key: { $regex: req.query.search.trim(), $options: 'i' } },
-      ];
+      andFilters.push({
+        $or: [
+          { original_name: { $regex: req.query.search.trim(), $options: 'i' } },
+          { event_id: { $regex: req.query.search.trim(), $options: 'i' } },
+          { bid_id: { $regex: req.query.search.trim(), $options: 'i' } },
+          {
+            application_id: {
+              $regex: req.query.search.trim(),
+              $options: 'i',
+            },
+          },
+          { file_key: { $regex: req.query.search.trim(), $options: 'i' } },
+        ],
+      });
     }
 
     if (req.user.userType === 'CUSTOMER') {
@@ -4360,24 +4616,38 @@ exports.repositoryFiles = async (req, res, next) => {
 
     if (req.user.userType === 'VENDOR') {
       await getVendorMarketplaceFoodTruck(req.user._id);
-      const bids = await MarketplaceBidService.getByData(
-        { vendor_user_id: req.user._id },
-        { lean: true }
-      );
-      vendorBidById = bids.reduce((acc, bid) => {
-        acc[bid.bid_id] = bid;
-        return acc;
-      }, {});
+      const [bids, applications] = await Promise.all([
+        MarketplaceBidService.getByData(
+          { vendor_user_id: req.user._id },
+          { lean: true }
+        ),
+        MarketplaceApplicationService.getByData(
+          { vendor_user_id: req.user._id },
+          { lean: true }
+        ),
+      ]);
       const bidIds = bids.map((bid) => bid.bid_id);
-      if (!bidIds.length) {
+      const applicationIds = applications.map((application) => application.application_id);
+      if (!bidIds.length && !applicationIds.length) {
         return res.data(
           { marketplaceRepositoryFileList: [], total: 0, page, totalPages: 1 },
           'Marketplace repository files'
         );
       }
-      query.bid_id = query.bid_id
-        ? { $in: bidIds.filter((bidId) => bidId === query.bid_id) }
-        : { $in: bidIds };
+      if (query.bid_id) {
+        query.bid_id = { $in: bidIds.filter((bidId) => bidId === query.bid_id) };
+      } else {
+        andFilters.push({
+          $or: [
+            { bid_id: { $in: bidIds } },
+            { application_id: { $in: applicationIds } },
+          ],
+        });
+      }
+    }
+
+    if (andFilters.length) {
+      query.$and = andFilters;
     }
 
     const [attachments, total] = await Promise.all([
@@ -4389,18 +4659,48 @@ exports.repositoryFiles = async (req, res, next) => {
       MarketplaceAttachmentService.getCount(query),
     ]);
     let visibleAttachments = attachments;
-    if (req.user.userType === 'VENDOR') {
+    if (req.user.userType === 'CUSTOMER') {
       const eventIds = [
         ...new Set(attachments.map((item) => item.event_id).filter(Boolean)),
       ];
-      const events = eventIds.length
-        ? await MarketplaceEventService.getByData(
-            { event_id: { $in: eventIds } },
-            { lean: true }
-          )
-        : [];
+      const bidIds = [
+        ...new Set(attachments.map((item) => item.bid_id).filter(Boolean)),
+      ];
+      const applicationIds = [
+        ...new Set(
+          attachments.map((item) => item.application_id).filter(Boolean)
+        ),
+      ];
+      const [events, bids, applications] = await Promise.all([
+        eventIds.length
+          ? MarketplaceEventService.getByData(
+              { event_id: { $in: eventIds } },
+              { lean: true }
+            )
+          : [],
+        bidIds.length
+          ? MarketplaceBidService.getByData(
+              { bid_id: { $in: bidIds } },
+              { lean: true }
+            )
+          : [],
+        applicationIds.length
+          ? MarketplaceApplicationService.getByData(
+              { application_id: { $in: applicationIds } },
+              { lean: true }
+            )
+          : [],
+      ]);
       const eventById = events.reduce((acc, event) => {
         acc[event.event_id] = event;
+        return acc;
+      }, {});
+      const bidById = bids.reduce((acc, bid) => {
+        acc[bid.bid_id] = bid;
+        return acc;
+      }, {});
+      const applicationById = applications.reduce((acc, application) => {
+        acc[application.application_id] = application;
         return acc;
       }, {});
       visibleAttachments = attachments.filter((attachment) => {
@@ -4409,7 +4709,8 @@ exports.repositoryFiles = async (req, res, next) => {
         }
         const unlockState = getMarketplaceUnlockState({
           event: eventById[attachment.event_id],
-          bid: vendorBidById[attachment.bid_id],
+          bid: bidById[attachment.bid_id],
+          application: applicationById[attachment.application_id],
         });
         return unlockState.details_unlocked;
       });

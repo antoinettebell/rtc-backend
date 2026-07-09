@@ -62,6 +62,35 @@ exports.addObjectFromBuffer = (file) =>
     );
   });
 
+exports.addObjectFromBufferWithKey = (file, folder = '') =>
+  new Promise((resolve, reject) => {
+    const extension = String(file.originalname || '')
+      .split('.')
+      .pop();
+    const safeFolder = String(folder || '')
+      .trim()
+      .replace(/^\/+|\/+$/g, '');
+    const key = `${safeFolder ? `${safeFolder}/` : ''}${uuidv4()}.${extension || 'bin'}`;
+    const url = `https://${aws.s3Bucket}.s3.us-east-1.amazonaws.com/${key}`;
+
+    s3.putObject(
+      {
+        Bucket: aws.s3Bucket,
+        Key: key,
+        Body: file.buffer,
+        ContentType: file.mimetype,
+      },
+      (err) => {
+        if (err) {
+          console.error('Error creating file:', err);
+          reject(err);
+        } else {
+          resolve({ url, key });
+        }
+      }
+    );
+  });
+
 exports.addObjectWithKey = (file, folder = '') =>
   new Promise((resolve, reject) => {
     const fileContent = fs.createReadStream(file.path);
