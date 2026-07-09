@@ -9,5 +9,7 @@
 /images
 /uploads
 naturebasket.pem
+id_ed25519
+id_ed25519.pub
 .DS_Store
 *firebase-adminsdk*.json
