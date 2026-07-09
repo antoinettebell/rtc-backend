@@ -76,6 +76,11 @@ const mSchema = mongoose.Schema(
       ref: 'users',
       required: true,
     },
+    docusign_envelope_id: {
+      type: String,
+      default: null,
+      index: true,
+    },
     status: {
       type: String,
       enum: ['ACTIVE', 'ARCHIVED', 'DELETED', 'FLAGGED'],

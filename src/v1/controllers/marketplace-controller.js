@@ -682,6 +682,122 @@ const normalizeRequirementLabel = (label) => {
 const getRequirementKey = (label) =>
   label ? label.toLowerCase().replace(/[^a-z0-9]+/g, '_') : null;
 
+const normalizeVendorDocumentName = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+
+const getVendorDocumentTypeForAttachment = (attachmentType, requirementLabel) => {
+  const label = String(requirementLabel || '').toLowerCase();
+  if (attachmentType === 'AGREEMENT_DOCUMENT') {
+    return 'OTHER';
+  }
+  if (label.includes('insurance')) {
+    return 'INSURANCE';
+  }
+  if (label.includes('license')) {
+    return 'LICENSE';
+  }
+  if (label.includes('permit')) {
+    return 'PERMIT';
+  }
+  return 'OTHER';
+};
+
+const getVendorDocumentTitleForAttachment = (attachment = {}) => {
+  if (attachment.attachment_type === 'AGREEMENT_DOCUMENT') {
+    return 'Signed Marketplace Agreement';
+  }
+  if (attachment.requirement_label) {
+    return attachment.requirement_label;
+  }
+  if (
+    attachment.attachment_type === 'BID_MENU_PDF' ||
+    attachment.attachment_type === 'APPLICATION_MENU_PDF'
+  ) {
+    return 'Marketplace Sample Menu';
+  }
+  return attachment.original_name || 'Marketplace Document';
+};
+
+const syncMarketplaceAttachmentToVendorDocuments = async ({
+  foodTruckId,
+  attachment,
+  uploadedByUserId,
+}) => {
+  if (!foodTruckId || !attachment?.file_url) {
+    return null;
+  }
+
+  if (
+    ![
+      REQUIREMENT_ATTACHMENT_TYPE,
+      'PERMIT_LICENSE',
+      'AGREEMENT_DOCUMENT',
+    ].includes(attachment.attachment_type)
+  ) {
+    return null;
+  }
+
+  const foodTruck = await FoodTruckService.getByData(
+    { _id: foodTruckId },
+    { singleResult: true }
+  );
+  if (!foodTruck) {
+    return null;
+  }
+
+  const title = getVendorDocumentTitleForAttachment(attachment);
+  const normalizedTitle = normalizeVendorDocumentName(title);
+  const activeMatchingDocuments = (foodTruck.documents || []).filter((document) => {
+    const existingTitle = normalizeVendorDocumentName(
+      document.title || document.original_name
+    );
+    return (
+      existingTitle === normalizedTitle &&
+      document.document_status !== 'ARCHIVED'
+    );
+  });
+
+  const alreadyCurrent = activeMatchingDocuments.some(
+    (document) =>
+      (attachment.file_key && document.file_key === attachment.file_key) ||
+      (attachment.file_url && document.file_url === attachment.file_url)
+  );
+  if (alreadyCurrent) {
+    return foodTruck;
+  }
+
+  const archiveDate = new Date();
+  activeMatchingDocuments.forEach((document) => {
+    document.document_status = 'ARCHIVED';
+    document.archived_at = archiveDate;
+    document.archived_reason = 'Replaced by newer marketplace document';
+    document.archived_by_user_id = uploadedByUserId || attachment.uploaded_by_user_id;
+    document.replaced_by_file_key = attachment.file_key || null;
+  });
+
+  foodTruck.documents.push({
+    title,
+    document_type: getVendorDocumentTypeForAttachment(
+      attachment.attachment_type,
+      attachment.requirement_label
+    ),
+    file_url: attachment.file_url,
+    file_key: attachment.file_key,
+    original_name: attachment.original_name,
+    mime_type: attachment.mime_type,
+    size_bytes: attachment.size_bytes,
+    uploaded_by_user_id: uploadedByUserId || attachment.uploaded_by_user_id,
+    uploaded_at: new Date(),
+    document_status: 'ACTIVE',
+  });
+
+  await foodTruck.save();
+  return foodTruck;
+};
+
 const getReplacementAttachmentQuery = ({
   eventId,
   bidId = null,
@@ -729,16 +845,11 @@ const archiveReplacementAttachments = async ({
     lean: false,
   });
   for (const attachment of existingAttachments) {
-    attachment.status = 'DELETED';
+    attachment.status = 'ARCHIVED';
     attachment.status_reason = reason;
     attachment.status_updated_at = new Date();
     attachment.status_updated_by_user_id = actorUserId;
-    attachment.deleted_at = new Date();
-    attachment.deleted_by_user_id = actorUserId;
     await attachment.save();
-    if (attachment.file_key) {
-      await removeObject(attachment.file_key);
-    }
   }
 
   return existingAttachments;
@@ -863,7 +974,74 @@ const persistSignedAgreementAttachment = async (agreement) => {
   );
 
   if (existingAttachment) {
-    return existingAttachment;
+    const sameEnvelope =
+      existingAttachment.docusign_envelope_id &&
+      existingAttachment.docusign_envelope_id === agreement.envelope_id;
+    if (!sameEnvelope && !agreement.reuse_existing_signed_document) {
+      await archiveReplacementAttachments({
+        eventId: agreement.event_id,
+        bidId: agreement.bid_id || null,
+        applicationId: agreement.application_id || null,
+        attachmentType: 'AGREEMENT_DOCUMENT',
+        actorUserId: agreement.vendor_user_id,
+        reason: 'Replaced by newly signed marketplace agreement',
+      });
+    } else {
+      const [bid, application] = await Promise.all([
+        agreement.bid_id
+          ? MarketplaceBidService.getByData(
+              { bid_id: agreement.bid_id },
+              { singleResult: true, lean: true }
+            )
+          : null,
+        agreement.application_id
+          ? MarketplaceApplicationService.getByData(
+              { application_id: agreement.application_id },
+              { singleResult: true, lean: true }
+            )
+          : null,
+      ]);
+      await syncMarketplaceAttachmentToVendorDocuments({
+        foodTruckId: agreement.food_truck_id || bid?.food_truck_id || application?.food_truck_id,
+        attachment: existingAttachment,
+        uploadedByUserId: agreement.vendor_user_id,
+      });
+      return existingAttachment;
+    }
+  }
+
+  const currentAttachment = await MarketplaceAttachmentService.getByData(
+    {
+      event_id: agreement.event_id,
+      bid_id: agreement.bid_id || null,
+      application_id: agreement.application_id || null,
+      attachment_type: 'AGREEMENT_DOCUMENT',
+      status: 'ACTIVE',
+    },
+    { singleResult: true, sort: { created_at: -1 } }
+  );
+
+  if (currentAttachment) {
+    const [bid, application] = await Promise.all([
+      agreement.bid_id
+        ? MarketplaceBidService.getByData(
+            { bid_id: agreement.bid_id },
+            { singleResult: true, lean: true }
+          )
+        : null,
+      agreement.application_id
+        ? MarketplaceApplicationService.getByData(
+            { application_id: agreement.application_id },
+            { singleResult: true, lean: true }
+          )
+        : null,
+    ]);
+    await syncMarketplaceAttachmentToVendorDocuments({
+      foodTruckId: agreement.food_truck_id || bid?.food_truck_id || application?.food_truck_id,
+      attachment: currentAttachment,
+      uploadedByUserId: agreement.vendor_user_id,
+    });
+    return currentAttachment;
   }
 
   const signedDocuments = await DocuSignHelper.downloadEnvelopeDocuments(
@@ -892,6 +1070,7 @@ const persistSignedAgreementAttachment = async (agreement) => {
     mime_type: 'application/pdf',
     size_bytes: signedDocuments.length,
     uploaded_by_user_id: agreement.vendor_user_id,
+    docusign_envelope_id: agreement.envelope_id,
   });
 
   if (agreement.bid_id) {
@@ -918,6 +1097,26 @@ const persistSignedAgreementAttachment = async (agreement) => {
       { getNew: false }
     );
   }
+
+  const [bid, application] = await Promise.all([
+    agreement.bid_id
+      ? MarketplaceBidService.getByData(
+          { bid_id: agreement.bid_id },
+          { singleResult: true, lean: true }
+        )
+      : null,
+    agreement.application_id
+      ? MarketplaceApplicationService.getByData(
+          { application_id: agreement.application_id },
+          { singleResult: true, lean: true }
+        )
+      : null,
+  ]);
+  await syncMarketplaceAttachmentToVendorDocuments({
+    foodTruckId: agreement.food_truck_id || bid?.food_truck_id || application?.food_truck_id,
+    attachment,
+    uploadedByUserId: agreement.vendor_user_id,
+  });
 
   return attachment;
 };
@@ -3291,8 +3490,13 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
       ? await getOwnedApplication(req.body.application_id, req.user._id)
       : null;
 
+    const forceNewAgreement =
+      req.body.force_new === true ||
+      req.body.force_new_agreement === true ||
+      String(req.body.force_new || '').toLowerCase() === 'true' ||
+      String(req.body.force_new_agreement || '').toLowerCase() === 'true';
     const validAgreement = await getValidVendorAgreement(req.user._id);
-    if (validAgreement) {
+    if (validAgreement && !forceNewAgreement) {
       await persistSignedAgreementAttachment({
         status: 'SIGNED',
         envelope_id: validAgreement.envelope_id,
@@ -3300,6 +3504,8 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
         bid_id: bid?.bid_id || null,
         application_id: application?.application_id || null,
         vendor_user_id: req.user._id,
+        food_truck_id: foodTruck._id,
+        reuse_existing_signed_document: true,
       });
 
       return res.data(
@@ -3311,16 +3517,18 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
       );
     }
 
-    const existingAgreement = await MarketplaceVendorAgreementService.getByData(
-      {
-        vendor_user_id: req.user._id,
-        event_id: event.event_id,
-        ...(bid ? { bid_id: bid.bid_id } : {}),
-        ...(application ? { application_id: application.application_id } : {}),
-        status: { $in: ['PENDING_SIGNATURE', 'SENT', 'VIEWED'] },
-      },
-      { singleResult: true, sort: { created_at: -1 } }
-    );
+    const existingAgreement = forceNewAgreement
+      ? null
+      : await MarketplaceVendorAgreementService.getByData(
+          {
+            vendor_user_id: req.user._id,
+            event_id: event.event_id,
+            ...(bid ? { bid_id: bid.bid_id } : {}),
+            ...(application ? { application_id: application.application_id } : {}),
+            status: { $in: ['PENDING_SIGNATURE', 'SENT', 'VIEWED'] },
+          },
+          { singleResult: true, sort: { created_at: -1 } }
+        );
 
     const signer = getVendorSignerInfo(req.user);
     if (!signer.signerEmail) {
@@ -4182,6 +4390,12 @@ exports.addBidAttachment = async (req, res, next) => {
       bid.agreement_document_key = key;
     }
 
+    await syncMarketplaceAttachmentToVendorDocuments({
+      foodTruckId: bid.food_truck_id,
+      attachment: marketplaceAttachment,
+      uploadedByUserId: req.user._id,
+    });
+
     await bid.save();
 
     return res.data(
@@ -4281,6 +4495,12 @@ exports.addApplicationAttachment = async (req, res, next) => {
       application.agreement_document_url = url;
       application.agreement_document_key = key;
     }
+
+    await syncMarketplaceAttachmentToVendorDocuments({
+      foodTruckId: application.food_truck_id,
+      attachment: marketplaceAttachment,
+      uploadedByUserId: req.user._id,
+    });
 
     await application.save();
 

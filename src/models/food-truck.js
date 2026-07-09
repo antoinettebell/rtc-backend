@@ -177,6 +177,28 @@ const mSchema = mongoose.Schema(
           type: Date,
           default: Date.now,
         },
+        document_status: {
+          type: String,
+          enum: ['ACTIVE', 'ARCHIVED'],
+          default: 'ACTIVE',
+        },
+        archived_at: {
+          type: Date,
+          default: null,
+        },
+        archived_reason: {
+          type: String,
+          default: null,
+        },
+        archived_by_user_id: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'users',
+          default: null,
+        },
+        replaced_by_file_key: {
+          type: String,
+          default: null,
+        },
       },
     ],
     cuisine: [

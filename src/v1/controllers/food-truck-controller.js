@@ -913,12 +913,17 @@ exports.addDocument = async (req, res, next) => {
 
     const documentTitle = String(title || req.file.originalname || 'Document').trim();
     const documentName = normalizeDocumentName(documentTitle || req.file.originalname);
-    const duplicateDocument = (item.documents || []).find((document) => {
+    const duplicateDocuments = (item.documents || []).filter((document) => {
       const existingName = normalizeDocumentName(
         document.title || document.original_name
       );
-      return existingName && existingName === documentName;
+      return (
+        existingName &&
+        existingName === documentName &&
+        document.document_status !== 'ARCHIVED'
+      );
     });
+    const duplicateDocument = duplicateDocuments[0];
     const shouldReplaceExisting =
       replace_existing === true ||
       String(replace_existing || '').toLowerCase() === 'true';
@@ -936,9 +941,15 @@ exports.addDocument = async (req, res, next) => {
     );
     fs.unlink(req.file.path, () => {});
 
-    const replacedFileKey = duplicateDocument?.file_key;
     if (duplicateDocument && shouldReplaceExisting) {
-      item.documents.pull({ _id: duplicateDocument._id });
+      const archiveDate = new Date();
+      duplicateDocuments.forEach((document) => {
+        document.document_status = 'ARCHIVED';
+        document.archived_at = archiveDate;
+        document.archived_reason = 'Replaced by newer vendor document';
+        document.archived_by_user_id = user._id;
+        document.replaced_by_file_key = key;
+      });
     }
 
     const document = {
@@ -951,14 +962,11 @@ exports.addDocument = async (req, res, next) => {
       size_bytes: req.file.size,
       uploaded_by_user_id: user._id,
       uploaded_at: new Date(),
+      document_status: 'ACTIVE',
     };
 
     item.documents = [...(item.documents || []), document];
     await item.save();
-
-    if (replacedFileKey) {
-      await removeObject(replacedFileKey);
-    }
 
     return res.data(
       { [`${entityName.toLocaleLowerCase()}`]: item },
