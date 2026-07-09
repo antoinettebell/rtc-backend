@@ -67,6 +67,12 @@ const hasDocumentFile = (documents, attachment) =>
       (attachment.file_url && document.file_url === attachment.file_url)
   );
 
+const getAttachmentDate = (attachment) =>
+  new Date(attachment.created_at || attachment.updated_at || 0).getTime();
+
+const isNewerAttachment = (candidate, current) =>
+  getAttachmentDate(candidate.attachment) > getAttachmentDate(current.attachment);
+
 const run = async () => {
   if (!process.env.MONGO_URI) {
     throw new Error('MONGO_URI is required.');
@@ -86,10 +92,12 @@ const run = async () => {
   const stats = {
     scanned: attachments.length,
     added: 0,
+    skippedOlderVersion: 0,
     skippedExisting: 0,
     skippedMissingFoodTruck: 0,
     skippedMissingFoodTruckRecord: 0,
   };
+  const latestByFoodTruckAndTitle = new Map();
 
   for (const attachment of attachments) {
     const foodTruckId = await findFoodTruckIdForAttachment(attachment);
@@ -98,6 +106,21 @@ const run = async () => {
       continue;
     }
 
+    const title = documentTitleForAttachment(attachment);
+    const key = `${foodTruckId}:${normalizeName(title)}`;
+    const candidate = { attachment, foodTruckId, title };
+    const current = latestByFoodTruckAndTitle.get(key);
+    if (!current || isNewerAttachment(candidate, current)) {
+      latestByFoodTruckAndTitle.set(key, candidate);
+    }
+  }
+
+  stats.skippedOlderVersion =
+    stats.scanned -
+    latestByFoodTruckAndTitle.size -
+    stats.skippedMissingFoodTruck;
+
+  for (const { attachment, foodTruckId, title } of latestByFoodTruckAndTitle.values()) {
     const foodTruck = await FoodTruckModel.findById(foodTruckId);
     if (!foodTruck) {
       stats.skippedMissingFoodTruckRecord += 1;
@@ -110,7 +133,7 @@ const run = async () => {
     }
 
     const document = {
-      title: documentTitleForAttachment(attachment),
+      title,
       document_type: documentTypeForAttachment(attachment),
       file_url: attachment.file_url,
       file_key: attachment.file_key || null,
