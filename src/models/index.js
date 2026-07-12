@@ -121,6 +121,12 @@ exports.MarketplaceAgreementAuditModel = require('./marketplace-agreement-audit'
 /** Define marketplace vendor agreement model */
 exports.MarketplaceVendorAgreementModel = require('./marketplace-vendor-agreement');
 
+/** Define vendor compliance document model */
+exports.VendorComplianceDocumentModel = require('./vendor-compliance-document');
+
+/** Define vendor compliance audit model */
+exports.VendorComplianceAuditModel = require('./vendor-compliance-audit');
+
 /** Define admin-notification model */
 exports.AdminNotificationModel = require('./admin-notification');
 

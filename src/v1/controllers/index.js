@@ -61,5 +61,8 @@ exports.AddOnsController = require('./add-ons-controller');
 /** Define marketplace controller */
 exports.MarketplaceController = require('./marketplace-controller');
 
+/** Define vendor compliance controller */
+exports.VendorComplianceController = require('./vendor-compliance-controller');
+
 /** Define webhook controller */
 exports.WebhookController = require('./webhook-controller');

@@ -17,6 +17,7 @@ const {
 const {
   canAccessEventMarketplace,
 } = require('../../helper/vendor-plan-helper');
+const VendorComplianceService = require('../services/vendor-compliance-service');
 const {
   addObjectFromBufferWithKey,
   addObjectWithKey,
@@ -3338,6 +3339,10 @@ exports.submitBid = async (req, res, next) => {
     const requestedStatus = req.body.bid_status || 'SUBMITTED';
     const currentRound = event.current_submission_round || 1;
     if (requestedStatus !== 'DRAFT') {
+      await VendorComplianceService.assertEligible(
+        foodTruck,
+        'submit marketplace bids'
+      );
       await assertVendorCanSubmitRound(event, req.user._id);
     }
 
@@ -3501,6 +3506,10 @@ exports.submitApplication = async (req, res, next) => {
     const requestedStatus = req.body.application_status || 'SUBMITTED';
     const currentRound = event.current_submission_round || 1;
     if (requestedStatus !== 'DRAFT') {
+      await VendorComplianceService.assertEligible(
+        foodTruck,
+        'submit marketplace applications'
+      );
       await assertVendorCanSubmitRound(event, req.user._id);
     }
 
