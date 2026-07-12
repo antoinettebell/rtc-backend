@@ -4,6 +4,7 @@ const {
   MarketplaceBidModel,
   MarketplaceApplicationModel,
   MarketplaceAttachmentModel,
+  MarketplaceEventQuestionModel,
 } = require('../../models');
 const { BaseService } = require('../../common-services');
 
@@ -137,6 +138,72 @@ class MarketplaceEventService extends BaseService {
       { $match: { event_id: { $in: eventIds } } },
       { $group: { _id: '$event_id', total: { $sum: 1 } } },
     ]);
+    const unseenBidCounts = await MarketplaceBidModel.aggregate([
+      {
+        $match: {
+          event_id: { $in: eventIds },
+          bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+        },
+      },
+      {
+        $lookup: {
+          from: Model.collection.name,
+          localField: 'event_id',
+          foreignField: 'event_id',
+          as: 'event',
+        },
+      },
+      { $unwind: '$event' },
+      {
+        $match: {
+          $expr: {
+            $gt: [
+              '$created_at',
+              { $ifNull: ['$event.submissions_seen_at', new Date(0)] },
+            ],
+          },
+        },
+      },
+      { $group: { _id: '$event_id', total: { $sum: 1 } } },
+    ]);
+    const unseenApplicationCounts = await MarketplaceApplicationModel.aggregate([
+      {
+        $match: {
+          event_id: { $in: eventIds },
+          application_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+        },
+      },
+      {
+        $lookup: {
+          from: Model.collection.name,
+          localField: 'event_id',
+          foreignField: 'event_id',
+          as: 'event',
+        },
+      },
+      { $unwind: '$event' },
+      {
+        $match: {
+          $expr: {
+            $gt: [
+              '$created_at',
+              { $ifNull: ['$event.submissions_seen_at', new Date(0)] },
+            ],
+          },
+        },
+      },
+      { $group: { _id: '$event_id', total: { $sum: 1 } } },
+    ]);
+    const unreadMessageCounts = await MarketplaceEventQuestionModel.aggregate([
+      {
+        $match: {
+          event_id: { $in: eventIds },
+          status: { $in: ['PENDING', 'PUBLISHED'] },
+          coordinator_read_at: null,
+        },
+      },
+      { $group: { _id: '$event_id', total: { $sum: 1 } } },
+    ]);
     const awardedBids = await MarketplaceBidModel.find({
       event_id: { $in: eventIds },
       bid_status: 'AWARDED',
@@ -162,6 +229,18 @@ class MarketplaceEventService extends BaseService {
       acc[item._id] = item.total;
       return acc;
     }, {});
+    const unseenBidCountByEventId = unseenBidCounts.reduce((acc, item) => {
+      acc[item._id] = item.total;
+      return acc;
+    }, {});
+    const unseenApplicationCountByEventId = unseenApplicationCounts.reduce((acc, item) => {
+      acc[item._id] = item.total;
+      return acc;
+    }, {});
+    const unreadMessageCountByEventId = unreadMessageCounts.reduce((acc, item) => {
+      acc[item._id] = item.total;
+      return acc;
+    }, {});
     const attachmentsByBidId = attachments.reduce((acc, attachment) => {
       acc[attachment.bid_id] = acc[attachment.bid_id] || [];
       acc[attachment.bid_id].push(attachment);
@@ -183,6 +262,13 @@ class MarketplaceEventService extends BaseService {
       submission_count:
         (countByEventId[event.event_id] || 0) +
         (applicationCountByEventId[event.event_id] || 0),
+      unseen_bid_count: unseenBidCountByEventId[event.event_id] || 0,
+      unseen_application_count:
+        unseenApplicationCountByEventId[event.event_id] || 0,
+      unseen_submission_count:
+        (unseenBidCountByEventId[event.event_id] || 0) +
+        (unseenApplicationCountByEventId[event.event_id] || 0),
+      unread_message_count: unreadMessageCountByEventId[event.event_id] || 0,
       awarded_bids: awardedBidsByEventId[event.event_id] || [],
     }));
   }

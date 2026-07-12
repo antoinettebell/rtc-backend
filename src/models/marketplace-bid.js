@@ -187,6 +187,15 @@ const mSchema = mongoose.Schema(
       type: Date,
       default: null,
     },
+    archived_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    archived_reason: {
+      type: String,
+      default: null,
+    },
   },
   {
     timestamps: {

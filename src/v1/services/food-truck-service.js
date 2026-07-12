@@ -996,9 +996,11 @@ class FoodTruckService extends BaseService {
               availability: 1,
               cuisine: 1,
               logo: 1,
-              photos: 1,
-              currentLocation: 1,
-              featured: 1,
+	              photos: 1,
+	              currentLocation: 1,
+	              locations: 1,
+	              truck_units: 1,
+	              featured: 1,
 	              'menu._id': 1,
 	              'menu.name': 1,
 	              'menu.description': 1,
@@ -1008,14 +1010,18 @@ class FoodTruckService extends BaseService {
 	              'matchedMenuItems.description': 1,
 	              'matchedMenuItems.imgUrls': 1,
 	              'user.firstName': 1,
-              'user.lastName': 1,
-              'menu.diet': 1,
-              'diets._id': 1,
-              'diets.name': 1,
-              location: '$matchedLocation',
-              distanceInMeters: '$distance',
-            },
-          },
+	              'user.lastName': 1,
+	              'user.addressCity': 1,
+	              'user.addressState': 1,
+	              'user.addressPostal': 1,
+	              'menu.diet': 1,
+	              'diets._id': 1,
+	              'diets.name': 1,
+	              location: '$matchedLocation',
+	              distanceInMeters: '$distance',
+	              locationSource: '$locationSource',
+	            },
+	          },
   
           {
             $facet: {
@@ -1238,14 +1244,14 @@ class FoodTruckService extends BaseService {
           },
         },
       },
-      {
-        $addFields: {
-          locationsComputed: {
-            $cond: [
-              '$locationIdExists',
-              [], // if locationId exists, we don't care
-              {
-                $map: {
+	      {
+	        $addFields: {
+	          locationsComputed: {
+	            $cond: [
+	              '$matchedLocation',
+	              [],
+	              {
+	                $map: {
                   input: '$locations',
                   as: 'loc',
                   in: {
@@ -1393,27 +1399,64 @@ class FoodTruckService extends BaseService {
           },
         },
       },
-      {
-        $addFields: {
-          fallbackLocationData: {
-            $cond: [
-              '$locationIdExists',
-              null,
-              { $arrayElemAt: ['$locationsComputed', -1] },
-            ],
-          },
-        },
-      },
-      {
-        $addFields: {
-          distance: {
-            $ifNull: ['$distance', '$fallbackLocationData.distance'],
-          },
-          matchedLocation: {
-            $ifNull: ['$matchedLocation', '$fallbackLocationData.location'],
-          },
-        },
-      },
+	      {
+	        $addFields: {
+	          fallbackLocationData: {
+	            $cond: [
+	              '$matchedLocation',
+	              null,
+	              {
+	                $reduce: {
+	                  input: '$locationsComputed',
+	                  initialValue: null,
+	                  in: {
+	                    $cond: [
+	                      { $eq: ['$$this.distance', null] },
+	                      '$$value',
+	                      {
+	                        $cond: [
+	                          { $eq: ['$$value', null] },
+	                          '$$this',
+	                          {
+	                            $cond: [
+	                              { $lt: ['$$this.distance', '$$value.distance'] },
+	                              '$$this',
+	                              '$$value',
+	                            ],
+	                          },
+	                        ],
+	                      },
+	                    ],
+	                  },
+	                },
+	              },
+	            ],
+	          },
+	        },
+	      },
+	      {
+	        $addFields: {
+	          distance: {
+	            $ifNull: ['$distance', '$fallbackLocationData.distance'],
+	          },
+	          matchedLocation: {
+	            $ifNull: ['$matchedLocation', '$fallbackLocationData.location'],
+	          },
+	          locationSource: {
+	            $cond: [
+	              { $ne: ['$fallbackLocationData', null] },
+	              'SAVED_LOCATION',
+	              {
+	                $cond: [
+	                  '$locationIdExists',
+	                  'CURRENT_LOCATION',
+	                  'MAILING_ADDRESS',
+	                ],
+	              },
+	            ],
+	          },
+	        },
+	      },
     ];
   }
 }

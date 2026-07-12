@@ -176,7 +176,7 @@ const normalizeMarketplaceVendorCount = (body) => {
     return Math.max(1, Math.ceil(Number(body.number_of_guests || 0) / 100));
   }
 
-  return null;
+  return Math.max(1, Number(body.number_of_vendors_needed || 1));
 };
 
 const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = {}) => {
@@ -407,13 +407,11 @@ const assertEventOpenForSubmission = async (event) => {
 };
 
 const assertVendorCanSubmitRound = async (event, vendorUserId) => {
-  const currentRound = event.current_submission_round || 1;
   const [previousBid, previousApplication] = await Promise.all([
     MarketplaceBidService.getByData(
       {
         event_id: event.event_id,
         vendor_user_id: vendorUserId,
-        submission_round: currentRound,
         bid_status: { $nin: ['DRAFT', 'PENDING_SIGNATURE', 'WITHDRAWN'] },
       },
       { singleResult: true, lean: true }
@@ -422,7 +420,6 @@ const assertVendorCanSubmitRound = async (event, vendorUserId) => {
       {
         event_id: event.event_id,
         vendor_user_id: vendorUserId,
-        submission_round: currentRound,
         application_status: { $nin: ['DRAFT', 'PENDING_SIGNATURE', 'WITHDRAWN'] },
       },
       { singleResult: true, lean: true }
@@ -431,6 +428,23 @@ const assertVendorCanSubmitRound = async (event, vendorUserId) => {
   if (previousBid || previousApplication) {
     throw buildError('You already submitted for this event and cannot submit again after reopen.', 409);
   }
+};
+
+const hasMarketplaceAwards = async (eventId) => {
+  const [awardedBid, awardedApplication] = await Promise.all([
+    MarketplaceBidService.getByData(
+      { event_id: eventId, bid_status: 'AWARDED' },
+      { singleResult: true, lean: true }
+    ),
+    MarketplaceApplicationService.getByData(
+      {
+        event_id: eventId,
+        application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
+      },
+      { singleResult: true, lean: true }
+    ),
+  ]);
+  return !!(awardedBid || awardedApplication);
 };
 
 const normalizeOpaquePaymentData = (paymentData) => {
@@ -1566,7 +1580,35 @@ const getQuestionForEvent = async (eventId, questionId) => {
   return question;
 };
 
-const sanitizeMarketplaceQuestion = (question, { includeBlocked = false } = {}) => {
+const getQuestionUnreadState = (plainQuestion, viewer) => {
+  if (!viewer) {
+    return false;
+  }
+
+  if (viewer.userType === 'CUSTOMER' || viewer.userType === 'SUPER_ADMIN') {
+    return !plainQuestion.coordinator_read_at;
+  }
+
+  if (viewer.userType === 'VENDOR') {
+    if (String(plainQuestion.vendor_user_id) !== String(viewer._id)) {
+      return false;
+    }
+    if (!plainQuestion.answered_at) {
+      return false;
+    }
+    return (
+      !plainQuestion.vendor_read_at ||
+      new Date(plainQuestion.vendor_read_at) < new Date(plainQuestion.answered_at)
+    );
+  }
+
+  return false;
+};
+
+const sanitizeMarketplaceQuestion = (
+  question,
+  { includeBlocked = false, viewer = null } = {}
+) => {
   const plainQuestion = toPlainObject(question);
   const isBlocked = plainQuestion.status === 'BLOCKED';
 
@@ -1586,9 +1628,42 @@ const sanitizeMarketplaceQuestion = (question, { includeBlocked = false } = {}) 
     moderation_status: plainQuestion.question_moderation_status,
     moderation_reasons:
       includeBlocked && isBlocked ? plainQuestion.question_moderation_reasons : [],
+    unread: getQuestionUnreadState(plainQuestion, viewer),
+    coordinator_read_at: plainQuestion.coordinator_read_at,
+    vendor_read_at: plainQuestion.vendor_read_at,
     created_at: plainQuestion.created_at,
     answered_at: plainQuestion.answered_at,
   };
+};
+
+const markMarketplaceQuestionsRead = async (eventId, user) => {
+  if (!eventId || !user) {
+    return;
+  }
+
+  if (user.userType === 'CUSTOMER' || user.userType === 'SUPER_ADMIN') {
+    await MarketplaceEventQuestionService.updateMany(
+      {
+        event_id: eventId,
+        status: { $in: ['PENDING', 'PUBLISHED'] },
+        coordinator_read_at: null,
+      },
+      { coordinator_read_at: new Date() }
+    );
+    return;
+  }
+
+  if (user.userType === 'VENDOR') {
+    await MarketplaceEventQuestionService.updateMany(
+      {
+        event_id: eventId,
+        vendor_user_id: user._id,
+        status: { $in: ['PUBLISHED'] },
+        answer_text_public: { $nin: [null, ''] },
+      },
+      { vendor_read_at: new Date() }
+    );
+  }
 };
 
 const notifyCoordinatorOfMarketplaceQuestion = async (event) => {
@@ -2064,6 +2139,58 @@ const notifyVendorsOfEventCancellation = async (event) => {
   );
 };
 
+const notifyVendorsOfEventReopen = async (event) => {
+  const vendorIds = await getEventParticipantVendorIds(event.event_id);
+  if (!vendorIds.length) {
+    return;
+  }
+
+  await MarketplaceCommunications.sendMarketplaceCommunications(
+    vendorIds.map((userId) => ({
+      userId,
+      title: 'Marketplace event reopened',
+      body: `${event.event_name || 'An event'} was reopened for new vendor submissions. Your previous submission remains visible to the coordinator, but previous submitters cannot submit again.`,
+      data: {
+        notificationType: 'MARKETPLACE_EVENT_REOPENED',
+        eventId: event.event_id,
+      },
+      channels: ['push', 'email'],
+      metadata: { eventId: event.event_id },
+    }))
+  );
+};
+
+const archiveMarketplaceSubmissionsForReopen = async (eventId, now = new Date()) => {
+  await Promise.all([
+    MarketplaceBidService.getModel().updateMany(
+      {
+        event_id: eventId,
+        bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+        archived_at: null,
+      },
+      {
+        $set: {
+          archived_at: now,
+          archived_reason: 'Event reopened after close window',
+        },
+      }
+    ),
+    MarketplaceApplicationService.getModel().updateMany(
+      {
+        event_id: eventId,
+        application_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+        archived_at: null,
+      },
+      {
+        $set: {
+          archived_at: now,
+          archived_reason: 'Event reopened after close window',
+        },
+      }
+    ),
+  ]);
+};
+
 const notifyClosedWithoutAward = async (event) => {
   const [bids, applications, awardedBids, awardedApplications] = await Promise.all([
     MarketplaceBidService.getByData(
@@ -2358,12 +2485,12 @@ const completeSignedAward = async (payment) => {
   const alreadyAwarded = existingEvent?.status === 'AWARDED';
 
   await MarketplaceBidService.getModel().updateMany(
-    { event_id: payment.event_id, bid_id: { $in: selectedBidIds } },
+    { event_id: payment.event_id, bid_id: { $in: selectedBidIds }, archived_at: null },
     { $set: { bid_status: 'AWARDED' } }
   );
 
   await MarketplaceBidService.getModel().updateMany(
-    { event_id: payment.event_id, bid_id: { $nin: selectedBidIds } },
+    { event_id: payment.event_id, bid_id: { $nin: selectedBidIds }, archived_at: null },
     { $set: { bid_status: 'NOT_AWARDED' } }
   );
 
@@ -2640,36 +2767,56 @@ exports.reopenEvent = async (req, res, next) => {
       throw buildError('Only customers can reopen marketplace events', 403);
     }
     const event = await getOwnedEvent(req.params.eventId, req.user._id);
-    if ((event.reopen_count || 0) >= 2) {
-      throw buildError('This event has already been reopened two times.', 400);
-    }
-    if (event.status === 'AWARDED') {
-      throw buildError('Awarded events cannot be reopened.', 400);
-    }
-    const normalizedEvent = normalizeMarketplaceEventPayload(
-      {
-        ...toPlainObject(event),
-        ...req.body,
+	    if ((event.reopen_count || 0) >= 2) {
+	      throw buildError('This event has already been reopened two times.', 400);
+	    }
+	    if (event.status !== 'CLOSED') {
+	      throw buildError('Only closed events can be reopened.', 400);
+	    }
+	    if (event.status === 'AWARDED' || await hasMarketplaceAwards(event.event_id)) {
+	      throw buildError('Events with awarded vendors cannot be reopened.', 400);
+	    }
+	    const eventStartDate = event.event_date ? new Date(event.event_date) : null;
+	    const requestedEventDate = req.body.event_date ? new Date(req.body.event_date) : null;
+	    if (
+	      eventStartDate &&
+	      eventStartDate <= new Date() &&
+	      (!requestedEventDate || requestedEventDate <= new Date())
+	    ) {
+	      throw buildError(
+	        'The event date has passed. Update the event to a future date before reopening.',
+	        400
+	      );
+	    }
+	    const normalizedEvent = normalizeMarketplaceEventPayload(
+	      {
+	        ...toPlainObject(event),
+	        ...req.body,
         status: 'REOPENED',
       },
       { existingEvent: event }
-    );
-    const marketplaceEvent = await MarketplaceEventService.update(
-      { event_id: req.params.eventId, customer_user_id: req.user._id },
-      {
-        $set: {
-          ...normalizedEvent,
-          status: 'REOPENED',
-          closed_at: null,
-          close_notification_sent_at: null,
-          current_submission_round: (event.current_submission_round || 1) + 1,
-        },
-        $inc: { reopen_count: 1 },
+	    );
+	    const reopenedAt = new Date();
+	    await archiveMarketplaceSubmissionsForReopen(event.event_id, reopenedAt);
+	    const marketplaceEvent = await MarketplaceEventService.update(
+	      { event_id: req.params.eventId, customer_user_id: req.user._id },
+	      {
+	        $set: {
+	          ...normalizedEvent,
+	          status: 'REOPENED',
+	          closed_at: null,
+	          archived_at: null,
+	          close_notification_sent_at: null,
+	          submissions_seen_at: null,
+	          current_submission_round: (event.current_submission_round || 1) + 1,
+	        },
+	        $inc: { reopen_count: 1 },
       },
-      { getNew: true, directApply: true }
-    );
+	      { getNew: true, directApply: true }
+	    );
+	    await notifyVendorsOfEventReopen(marketplaceEvent);
 
-    return res.data({ marketplaceEvent }, 'Marketplace event reopened');
+	    return res.data({ marketplaceEvent }, 'Marketplace event reopened');
   } catch (e) {
     return next(e);
   }
@@ -2931,18 +3078,25 @@ exports.getEventQuestions = async (req, res, next) => {
       };
     }
 
+    if (req.query.markRead === 'true') {
+      await markMarketplaceQuestionsRead(req.params.eventId, req.user);
+    }
+
     const questions = await MarketplaceEventQuestionService.getByData(query, {
       sort: { created_at: 1 },
       lean: true,
     });
 
+    const marketplaceQuestionList = questions.map((question) =>
+      sanitizeMarketplaceQuestion(question, {
+        includeBlocked: req.user.userType === 'SUPER_ADMIN',
+        viewer: req.user,
+      })
+    );
+
     return res.data(
       {
-        marketplaceQuestionList: questions.map((question) =>
-          sanitizeMarketplaceQuestion(question, {
-            includeBlocked: req.user.userType === 'SUPER_ADMIN',
-          })
-        ),
+        marketplaceQuestionList,
         qa_archived: qaArchived,
       },
       'Marketplace event questions'
@@ -3029,6 +3183,7 @@ exports.answerEventQuestion = async (req, res, next) => {
     question.answered_by_user_id = req.user._id;
     question.answered_by_role = req.user.userType;
     question.answered_at = new Date();
+    question.vendor_read_at = null;
     question.acted_by_admin_user_id =
       req.user.userType === 'SUPER_ADMIN' ? req.user._id : null;
     question.acted_on_behalf_of_user_id =
@@ -3143,6 +3298,11 @@ exports.getEventBids = async (req, res, next) => {
         };
       }),
       { fullAccess: false }
+    );
+
+    await MarketplaceEventService.update(
+      { event_id: req.params.eventId, customer_user_id: req.user._id },
+      { submissions_seen_at: new Date() }
     );
 
     return res.data(
@@ -3718,9 +3878,10 @@ exports.awardBids = async (req, res, next) => {
       throw buildError('At least one bid is required to award vendors', 400);
     }
 
-    if (selectedBidIds.length > event.number_of_vendors_needed) {
+    const vendorAwardLimit = Math.max(1, Number(event.number_of_vendors_needed || 1));
+    if (selectedBidIds.length > vendorAwardLimit) {
       throw buildError(
-        `You can only award up to ${event.number_of_vendors_needed} vendor(s) for this event.`,
+        `You can only award up to ${vendorAwardLimit} vendor(s) for this event.`,
         400
       );
     }
@@ -3729,6 +3890,7 @@ exports.awardBids = async (req, res, next) => {
       event_id: req.params.eventId,
       bid_id: { $in: selectedBidIds },
       bid_status: { $in: ['SUBMITTED', 'UNDER_REVIEW'] },
+      archived_at: null,
     });
 
     if (selectedBids.length !== selectedBidIds.length) {
@@ -3797,12 +3959,12 @@ exports.awardBids = async (req, res, next) => {
     }
 
     await MarketplaceBidService.getModel().updateMany(
-      { event_id: req.params.eventId, bid_id: { $in: selectedBidIds } },
+      { event_id: req.params.eventId, bid_id: { $in: selectedBidIds }, archived_at: null },
       { $set: { bid_status: 'AWARDED' } }
     );
 
     await MarketplaceBidService.getModel().updateMany(
-      { event_id: req.params.eventId, bid_id: { $nin: selectedBidIds } },
+      { event_id: req.params.eventId, bid_id: { $nin: selectedBidIds }, archived_at: null },
       { $set: { bid_status: 'NOT_AWARDED' } }
     );
 

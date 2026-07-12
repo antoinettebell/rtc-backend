@@ -98,6 +98,16 @@ const mSchema = mongoose.Schema(
       type: Date,
       default: null,
     },
+    coordinator_read_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    vendor_read_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
     archived_at: {
       type: Date,
       default: null,

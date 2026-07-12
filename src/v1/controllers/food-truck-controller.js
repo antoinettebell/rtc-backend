@@ -89,30 +89,117 @@ const getFoodPreview = (truck, matchedMenuItem) =>
   truck.cuisine?.map((item) => item.name).filter(Boolean).join(', ') ||
   truck.name;
 
-const normalizeNearMeFood = (truck) => {
+const getClosestOpenTruckLocation = (truck, userLat, userLong) => {
+  if (userLat === null || userLong === null) {
+    return null;
+  }
+
+  const locationById = (truck.locations || []).reduce((acc, location) => {
+    if (location?._id) {
+      acc[location._id.toString()] = location;
+    }
+    return acc;
+  }, {});
+
+  const candidates = [];
+  (truck.truck_units || []).forEach((unit) => {
+    if (unit.is_archived) return;
+    (unit.open_locations || []).forEach((openLocation) => {
+      if (!openLocation?.isOrderingOpen) return;
+      const locationId =
+        openLocation.locationId?.toString() ||
+        openLocation.location_id?.toString() ||
+        openLocation._id?.toString();
+      const location = locationById[locationId];
+      const latitude = toNumberOrNull(location?.lat);
+      const longitude = toNumberOrNull(location?.long);
+      if (latitude === null || longitude === null) return;
+      candidates.push({
+        location,
+        truck_unit_id: unit._id,
+        truck_unit_name: unit.name,
+        distanceInMeters: Utils.getDistanceInMeters(
+          userLat,
+          userLong,
+          latitude,
+          longitude
+        ),
+      });
+    });
+  });
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  return candidates.sort(
+    (a, b) => a.distanceInMeters - b.distanceInMeters
+  )[0];
+};
+
+const normalizeNearMeFood = (truck, userLat = null, userLong = null) => {
   const matchedMenuItem = truck.matchedMenuItems?.[0] || truck.menu?.[0] || null;
   const imageUrl =
     matchedMenuItem?.imgUrls?.[0] || truck.logo || truck.photos?.[0] || null;
-  const location = truck.location || null;
+  const closestOpenLocation = getClosestOpenTruckLocation(truck, userLat, userLong);
+  const location = closestOpenLocation?.location || truck.location || null;
+  const vendorUser = Array.isArray(truck.user) ? truck.user[0] : truck.user;
+  const mailingAddress = [
+    vendorUser?.addressCity && vendorUser.addressCity !== 'NA'
+      ? vendorUser.addressCity
+      : null,
+    vendorUser?.addressState && vendorUser.addressState !== 'NA'
+      ? vendorUser.addressState
+      : null,
+    vendorUser?.addressPostal && vendorUser.addressPostal !== 'NA'
+      ? vendorUser.addressPostal
+      : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+  const distanceInMeters =
+    closestOpenLocation?.distanceInMeters ?? truck.distanceInMeters ?? null;
+  const locationId = location?._id?.toString() || truck.currentLocation || '';
+  const locationSource =
+    closestOpenLocation
+      ? 'OPEN_TRUCK_UNIT'
+      : location
+        ? truck.locationSource || 'SAVED_LOCATION'
+        : 'MAILING_ADDRESS';
 
   return {
     type: 'FOOD',
     marker_type: 'TRUCK',
-    id: matchedMenuItem?._id?.toString() || truck._id?.toString(),
+    id: [
+      matchedMenuItem?._id?.toString() || truck._id?.toString(),
+      locationId,
+      closestOpenLocation?.truck_unit_id?.toString() || '',
+    ]
+      .filter(Boolean)
+      .join('-'),
     food_truck_id: truck._id,
     menu_item_id: matchedMenuItem?._id || null,
+    truck_unit_id: closestOpenLocation?.truck_unit_id || null,
+    truck_unit_name: closestOpenLocation?.truck_unit_name || null,
     title: matchedMenuItem?.name || truck.name,
     name: matchedMenuItem?.name || truck.name,
     food_truck_name: truck.name,
     description: getFoodPreview(truck, matchedMenuItem),
     preview: getFoodPreview(truck, matchedMenuItem),
     location,
-    address: location?.address || location?.title || '',
+    address: location?.address || location?.title || mailingAddress || '',
     latitude: toNumberOrNull(location?.lat),
     longitude: toNumberOrNull(location?.long),
+    location_source: locationSource,
+    location_label:
+      locationSource === 'MAILING_ADDRESS'
+        ? 'Mailing address'
+        : locationSource === 'SAVED_LOCATION'
+          ? 'Saved location'
+          : 'Open location',
     image_url: imageUrl,
-    distance: truck.distanceInMeters ?? null,
-    distanceInMeters: truck.distanceInMeters ?? null,
+    distance: distanceInMeters,
+    distanceInMeters,
     raw: truck,
   };
 };
@@ -1570,11 +1657,11 @@ exports.nearMe = async (req, res, next) => {
             userLong,
             numericLimit,
             numericPage,
-            search,
-            distanceInMeters,
-            true,
-            null
-          )
+	            search,
+	            distanceInMeters,
+	            false,
+	            null
+	          )
         : { data: [], total: 0 },
       includeEvents
         ? MarketplaceEventService.getByData(
@@ -1601,7 +1688,7 @@ exports.nearMe = async (req, res, next) => {
     }, {});
 
     const foodItems = (foodResult?.data || [])
-      .map(normalizeNearMeFood)
+      .map((truck) => normalizeNearMeFood(truck, numericUserLat, numericUserLong))
       .filter((item) =>
         matchesFoodCuisineFilters(item, selectedCuisineIds, selectedCuisines)
       );

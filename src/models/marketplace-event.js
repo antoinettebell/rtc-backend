@@ -295,6 +295,11 @@ const mSchema = mongoose.Schema(
       type: Date,
       default: null,
     },
+    submissions_seen_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
     draft_expires_at: {
       type: Date,
       default: null,

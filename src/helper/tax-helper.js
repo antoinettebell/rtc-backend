@@ -66,6 +66,8 @@ const toMoney = (value) => {
   return Number.isFinite(amount) ? Number(Math.max(0, amount).toFixed(2)) : 0;
 };
 
+const LOW_VALUE_AVALARA_THRESHOLD = 0.1;
+
 const getToday = () => new Date().toISOString().split('T')[0];
 
 const normalizeCountry = (value) => {
@@ -261,12 +263,30 @@ exports.calculateMarketplaceFoodDeliveryTax = async ({
   purchaseOrderNo,
 }) => {
   const lines = buildMarketplaceLines({ foodAmount, deliveryFee, serviceFee });
+  const taxableTotal = toMoney(
+    lines.reduce((total, line) => total + Number(line.amount || 0), 0)
+  );
 
   if (lines.length === 0) {
     return {
       success: true,
       totalTax: 0,
       payload: null,
+      data: null,
+    };
+  }
+
+  if (taxableTotal <= LOW_VALUE_AVALARA_THRESHOLD) {
+    return {
+      success: true,
+      totalTax: 0,
+      payload: {
+        skipped: true,
+        reason: 'LOW_VALUE_TRANSACTION',
+        threshold: LOW_VALUE_AVALARA_THRESHOLD,
+        taxableTotal,
+        lines,
+      },
       data: null,
     };
   }
