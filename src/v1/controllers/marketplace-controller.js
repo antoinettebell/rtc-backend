@@ -100,7 +100,7 @@ const getVendorDisplayId = (foodTruckId) => {
   return `Vendor RTC - ${suffix || 'MASKED'}`;
 };
 
-const QA_ARCHIVED_EVENT_STATUSES = ['AWARDED', 'CLOSED', 'CANCELLED', 'ARCHIVED'];
+const QA_ARCHIVED_EVENT_STATUSES = ['AWARDED', 'CANCELLED', 'ARCHIVED'];
 
 const isQuestionBoardArchived = (event = {}) =>
   QA_ARCHIVED_EVENT_STATUSES.includes(event.status);
@@ -1625,6 +1625,9 @@ const sanitizeMarketplaceQuestion = (
   return {
     question_id: plainQuestion.question_id,
     event_id: plainQuestion.event_id,
+    initiated_by_role: plainQuestion.initiated_by_role || 'VENDOR',
+    bid_id: plainQuestion.bid_id || null,
+    application_id: plainQuestion.application_id || null,
     vendor_display_id: plainQuestion.vendor_display_id,
     question_text:
       isBlocked && !includeBlocked
@@ -1753,6 +1756,31 @@ const notifyVendorsOfMarketplaceAnswer = async (event, question) => {
   }
 };
 
+const notifyVendorOfCoordinatorMarketplaceMessage = async (event, question) => {
+  try {
+    await MarketplaceCommunications.sendMarketplaceCommunications([
+      {
+        userId: question.vendor_user_id,
+        title: 'Marketplace coordinator message',
+        body: `${event.event_name || 'An event'} has a coordinator message for your submission.`,
+        data: {
+          notificationType: 'MARKETPLACE_COORDINATOR_MESSAGE',
+          eventId: event.event_id,
+          questionId: question.question_id,
+        },
+        channels: ['push', 'email'],
+        metadata: { eventId: event.event_id, questionId: question.question_id },
+      },
+    ]);
+  } catch (error) {
+    console.error('Marketplace coordinator message notification failed', {
+      eventId: event.event_id,
+      questionId: question.question_id,
+      message: error.message,
+    });
+  }
+};
+
 const IMPORTANT_EVENT_CHANGE_FIELDS = {
   event_start_date: 'Date/time',
   event_date: 'Date/time',
@@ -1762,17 +1790,21 @@ const IMPORTANT_EVENT_CHANGE_FIELDS = {
   event_close_date: 'Close date/time',
   event_close_time: 'Close date/time',
   address: 'Address/location',
+  event_address: 'Address/location',
   formatted_address: 'Address/location',
   location: 'Address/location',
   latitude: 'Address/location',
   longitude: 'Address/location',
   guest_count: 'Guest count',
+  number_of_guests: 'Guest count',
   budgeted_amount: 'Budget/vendor fee setup',
   vendor_fee: 'Budget/vendor fee setup',
   payment_responsibility: 'Budget/vendor fee setup',
   primary_service_style: 'Service type/style',
   service_type: 'Service type/style',
   service_types: 'Service type/style',
+  event_style: 'Service type/style',
+  service_styles: 'Service type/style',
   equipment_needs: 'Equipment needs',
   alcohol_requirements: 'Alcohol requirements',
 };
@@ -1782,10 +1814,27 @@ const URGENT_EVENT_CHANGE_FIELDS = new Set([
   'event_date',
   'event_time',
   'address',
+  'event_address',
   'formatted_address',
   'location',
   'latitude',
   'longitude',
+]);
+
+const BID_REVISION_EVENT_CHANGE_FIELDS = new Set([
+  'address',
+  'event_address',
+  'formatted_address',
+  'location',
+  'latitude',
+  'longitude',
+  'guest_count',
+  'number_of_guests',
+  'primary_service_style',
+  'service_type',
+  'service_types',
+  'event_style',
+  'service_styles',
 ]);
 
 const normalizeCompareValue = (value) => {
@@ -1816,6 +1865,67 @@ const getImportantEventChanges = (beforeEvent, afterEvent) => {
       label: IMPORTANT_EVENT_CHANGE_FIELDS[field],
       urgent: URGENT_EVENT_CHANGE_FIELDS.has(field),
     }));
+};
+
+const hasOpenBidRevisionRequest = (bid = {}) => {
+  if (!bid?.revision_requested_at) {
+    return false;
+  }
+  if (!bid.revision_submitted_at) {
+    return true;
+  }
+  return new Date(bid.revision_requested_at) > new Date(bid.revision_submitted_at);
+};
+
+const hasOpenApplicationRevisionRequest = (application = {}) => {
+  if (!application?.revision_requested_at) {
+    return false;
+  }
+  if (!application.revision_submitted_at) {
+    return true;
+  }
+  return new Date(application.revision_requested_at) > new Date(application.revision_submitted_at);
+};
+
+const requestBidRevisionsForEventChanges = async (event, changes = []) => {
+  const revisionFields = [
+    ...new Set(
+      changes
+        .filter((change) => BID_REVISION_EVENT_CHANGE_FIELDS.has(change.field))
+        .map((change) => change.field)
+    ),
+  ];
+
+  if (!revisionFields.length) {
+    return;
+  }
+
+  await MarketplaceBidService.getModel().updateMany(
+    {
+      event_id: event.event_id,
+      bid_status: { $in: ['SUBMITTED', 'UNDER_REVIEW'] },
+      archived_at: null,
+    },
+    {
+      $set: {
+        revision_requested_at: new Date(),
+        revision_requested_fields: revisionFields,
+      },
+    }
+  );
+  await MarketplaceApplicationService.getModel().updateMany(
+    {
+      event_id: event.event_id,
+      application_status: { $in: ['SUBMITTED', 'UNDER_REVIEW'] },
+      archived_at: null,
+    },
+    {
+      $set: {
+        revision_requested_at: new Date(),
+        revision_requested_fields: revisionFields,
+      },
+    }
+  );
 };
 
 const getEventParticipantVendorIds = async (eventId) => {
@@ -2736,9 +2846,11 @@ exports.updateEvent = async (req, res, next) => {
     if (event.status !== 'CANCELLED' && marketplaceEvent.status === 'CANCELLED') {
       await notifyVendorsOfEventCancellation(marketplaceEvent);
     } else {
+      const importantChanges = getImportantEventChanges(event, marketplaceEvent);
+      await requestBidRevisionsForEventChanges(marketplaceEvent, importantChanges);
       await notifyVendorsOfEventChanges(
         marketplaceEvent,
-        getImportantEventChanges(event, marketplaceEvent)
+        importantChanges
       );
     }
 
@@ -3074,13 +3186,37 @@ exports.getEventQuestions = async (req, res, next) => {
   try {
     const event = await getQuestionEventForUser(req.params.eventId, req.user);
     const qaArchived = isQuestionBoardArchived(event);
+    const coordinatorVisibleStatuses = qaArchived
+      ? ['PENDING', 'PUBLISHED', 'ARCHIVED']
+      : ['PENDING', 'PUBLISHED'];
     let query = {
       event_id: req.params.eventId,
-      status: { $in: ['PENDING', 'PUBLISHED'] },
+      status: { $in: coordinatorVisibleStatuses },
     };
 
     if (req.user.userType === 'VENDOR') {
-      query = { event_id: req.params.eventId, status: 'PUBLISHED' };
+      query = qaArchived
+        ? {
+            event_id: req.params.eventId,
+            $or: [
+              { status: 'PUBLISHED', initiated_by_role: { $ne: 'CUSTOMER' } },
+              { status: 'PUBLISHED', vendor_user_id: req.user._id },
+              { status: 'ARCHIVED', vendor_user_id: req.user._id },
+              {
+                status: 'ARCHIVED',
+                initiated_by_role: { $ne: 'CUSTOMER' },
+                answer_text_public: { $ne: null },
+              },
+            ],
+          }
+        : {
+            event_id: req.params.eventId,
+            status: 'PUBLISHED',
+            $or: [
+              { initiated_by_role: { $ne: 'CUSTOMER' } },
+              { vendor_user_id: req.user._id },
+            ],
+          };
     } else if (req.user.userType === 'SUPER_ADMIN') {
       query = {
         event_id: req.params.eventId,
@@ -3118,34 +3254,109 @@ exports.getEventQuestions = async (req, res, next) => {
 
 exports.askEventQuestion = async (req, res, next) => {
   try {
-    if (req.user.userType !== 'VENDOR') {
-      throw buildError('Only vendors can ask marketplace event questions', 403);
-    }
-
-    const foodTruck = await getVendorMarketplaceFoodTruck(req.user._id);
     const event = await getEventForUser(req.params.eventId, req.user);
 
-    if (isQuestionBoardArchived(event) || !ACTIVE_EVENT_STATUSES.includes(event.status)) {
+    if (isQuestionBoardArchived(event)) {
       throw buildError('This event message board is archived.', 410);
     }
 
     const questionText = String(req.body.question_text || '').trim();
     const moderation = moderateMarketplaceText(questionText);
     const isBlocked = moderation.status === 'BLOCKED';
+    let vendorUserId = req.user._id;
+    let foodTruckId = null;
+    let bidId = null;
+    let applicationId = null;
+    let initiatedByRole = 'VENDOR';
+
+    if (req.user.userType === 'VENDOR') {
+      const foodTruck = await getVendorMarketplaceFoodTruck(req.user._id);
+      foodTruckId = foodTruck._id;
+    } else if (req.user.userType === 'CUSTOMER') {
+      const targetBid = req.body.bid_id
+        ? await MarketplaceBidService.getByData(
+            {
+              event_id: event.event_id,
+              bid_id: req.body.bid_id,
+              bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+            },
+            { singleResult: true }
+          )
+        : null;
+      const targetApplication = req.body.application_id
+        ? await MarketplaceApplicationService.getByData(
+            {
+              event_id: event.event_id,
+              application_id: req.body.application_id,
+              application_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+            },
+            { singleResult: true }
+          )
+        : null;
+      const targetVendorUserId =
+        targetBid?.vendor_user_id ||
+        targetApplication?.vendor_user_id ||
+        req.body.vendor_user_id;
+
+      if (!targetVendorUserId) {
+        throw buildError('Select a submitted vendor to message.', 400);
+      }
+
+      const [targetVendorBid, targetVendorApplication] = await Promise.all([
+        MarketplaceBidService.getByData(
+          {
+            event_id: event.event_id,
+            vendor_user_id: targetVendorUserId,
+            bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+          },
+          { singleResult: true }
+        ),
+        MarketplaceApplicationService.getByData(
+          {
+            event_id: event.event_id,
+            vendor_user_id: targetVendorUserId,
+            application_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+          },
+          { singleResult: true }
+        ),
+      ]);
+
+      const targetSubmission = targetBid || targetApplication || targetVendorBid || targetVendorApplication;
+      if (!targetSubmission) {
+        throw buildError('Vendor submission not found for this event.', 404);
+      }
+
+      vendorUserId = targetSubmission.vendor_user_id;
+      foodTruckId = targetSubmission.food_truck_id;
+      bidId = targetSubmission.bid_id || null;
+      applicationId = targetSubmission.application_id || null;
+      initiatedByRole = 'CUSTOMER';
+    } else {
+      throw buildError('Only vendors and coordinators can send marketplace messages', 403);
+    }
+
     const marketplaceQuestion = await MarketplaceEventQuestionService.create({
       event_id: event.event_id,
-      vendor_user_id: req.user._id,
-      food_truck_id: foodTruck._id,
-      vendor_display_id: getVendorDisplayId(foodTruck._id),
+      vendor_user_id: vendorUserId,
+      food_truck_id: foodTruckId,
+      vendor_display_id: getVendorDisplayId(foodTruckId),
+      initiated_by_role: initiatedByRole,
+      bid_id: bidId,
+      application_id: applicationId,
       question_text_raw: questionText,
       question_text_public: isBlocked ? null : questionText,
-      status: isBlocked ? 'BLOCKED' : 'PENDING',
+      status: isBlocked ? 'BLOCKED' : initiatedByRole === 'CUSTOMER' ? 'PUBLISHED' : 'PENDING',
       question_moderation_status: moderation.status,
       question_moderation_reasons: moderation.reasons,
+      coordinator_read_at: initiatedByRole === 'CUSTOMER' ? new Date() : null,
     });
 
     if (!isBlocked) {
-      await notifyCoordinatorOfMarketplaceQuestion(event);
+      if (initiatedByRole === 'CUSTOMER') {
+        await notifyVendorOfCoordinatorMarketplaceMessage(event, marketplaceQuestion);
+      } else {
+        await notifyCoordinatorOfMarketplaceQuestion(event);
+      }
     }
 
     return res.data(
@@ -3155,7 +3366,9 @@ exports.askEventQuestion = async (req, res, next) => {
       },
       isBlocked
         ? 'Question blocked by marketplace moderation'
-        : 'Marketplace question submitted'
+        : initiatedByRole === 'CUSTOMER'
+          ? 'Marketplace message sent'
+          : 'Marketplace question submitted'
     );
   } catch (e) {
     return next(e);
@@ -3347,9 +3560,6 @@ exports.submitBid = async (req, res, next) => {
     await assertEventOpenForSubmission(event);
     const requestedStatus = req.body.bid_status || 'SUBMITTED';
     const currentRound = event.current_submission_round || 1;
-    if (requestedStatus !== 'DRAFT') {
-      await assertVendorCanSubmitRound(event, req.user._id);
-    }
 
     const existingBid = await MarketplaceBidService.getByData(
       {
@@ -3360,12 +3570,21 @@ exports.submitBid = async (req, res, next) => {
       },
       { singleResult: true }
     );
+    const isBidRevision = existingBid && hasOpenBidRevisionRequest(existingBid);
+
+    if (requestedStatus !== 'DRAFT' && !isBidRevision) {
+      await assertVendorCanSubmitRound(event, req.user._id);
+    }
 
     if (
       existingBid &&
-      !['DRAFT', 'PENDING_SIGNATURE'].includes(existingBid.bid_status)
+      !['DRAFT', 'PENDING_SIGNATURE'].includes(existingBid.bid_status) &&
+      !isBidRevision
     ) {
       throw buildError('A bid has already been submitted for this event', 409);
+    }
+    if (isBidRevision && requestedStatus !== 'SUBMITTED') {
+      throw buildError('Submit the revised bid to update your response.', 400);
     }
 
     if (requestedStatus !== 'DRAFT') {
@@ -3389,7 +3608,9 @@ exports.submitBid = async (req, res, next) => {
     }
 
     const vendorFee = roundMoney(event.vendor_fee || 0);
-    const requiresPayment = vendorFee > 0;
+    const requiresPayment = vendorFee > 0 && !isBidRevision;
+    const submittedAt =
+      requestedStatus === 'SUBMITTED' && !requiresPayment ? new Date() : null;
     const bidPayload = {
       ...req.body,
       event_id: req.params.eventId,
@@ -3406,9 +3627,16 @@ exports.submitBid = async (req, res, next) => {
         requestedStatus === 'SUBMITTED' && requiresPayment
           ? 'DRAFT'
           : requestedStatus,
-      payment_status: requiresPayment ? 'PENDING' : 'NOT_REQUIRED',
-      submitted_at:
-        requestedStatus === 'SUBMITTED' && !requiresPayment ? new Date() : null,
+      payment_id: isBidRevision ? existingBid.payment_id : undefined,
+      payment_status: isBidRevision
+        ? existingBid.payment_status
+        : requiresPayment
+          ? 'PENDING'
+          : 'NOT_REQUIRED',
+      submitted_at: submittedAt || existingBid?.submitted_at || null,
+      revision_submitted_at: isBidRevision ? submittedAt : existingBid?.revision_submitted_at || null,
+      revision_requested_fields: isBidRevision ? [] : existingBid?.revision_requested_fields || [],
+      revision_count: isBidRevision ? Number(existingBid.revision_count || 0) + 1 : existingBid?.revision_count || 0,
     };
     const marketplaceBid = existingBid
       ? await MarketplaceBidService.update(
@@ -3510,9 +3738,6 @@ exports.submitApplication = async (req, res, next) => {
     await assertEventOpenForSubmission(event);
     const requestedStatus = req.body.application_status || 'SUBMITTED';
     const currentRound = event.current_submission_round || 1;
-    if (requestedStatus !== 'DRAFT') {
-      await assertVendorCanSubmitRound(event, req.user._id);
-    }
 
     if (roundMoney(event.vendor_fee || 0) <= 0) {
       throw buildError('This event uses the bid flow, not applications', 400);
@@ -3527,14 +3752,24 @@ exports.submitApplication = async (req, res, next) => {
       },
       { singleResult: true }
     );
+    const isApplicationRevision =
+      existingApplication && hasOpenApplicationRevisionRequest(existingApplication);
+
+    if (requestedStatus !== 'DRAFT' && !isApplicationRevision) {
+      await assertVendorCanSubmitRound(event, req.user._id);
+    }
 
     if (
       existingApplication &&
       !['DRAFT', 'PENDING_SIGNATURE'].includes(
         existingApplication.application_status
-      )
+      ) &&
+      !isApplicationRevision
     ) {
       throw buildError('An application has already been submitted for this event', 409);
+    }
+    if (isApplicationRevision && requestedStatus !== 'SUBMITTED') {
+      throw buildError('Submit the revised application to update your response.', 400);
     }
 
     if (requestedStatus !== 'DRAFT') {
@@ -3561,6 +3796,8 @@ exports.submitApplication = async (req, res, next) => {
       await requireSignedVendorAgreementForSubmission(req.user._id);
     }
 
+    const submittedAt =
+      requestedStatus === 'SUBMITTED' ? new Date() : null;
     const applicationPayload = {
       ...req.body,
       event_id: req.params.eventId,
@@ -3574,11 +3811,17 @@ exports.submitApplication = async (req, res, next) => {
       agreement_status:
         requestedStatus === 'SUBMITTED' ? 'SIGNED' : 'PENDING_SIGNATURE',
       application_status: requestedStatus,
-      payment_status: 'NOT_REQUIRED',
-      submitted_at:
-        requestedStatus === 'SUBMITTED'
-          ? new Date()
-          : null,
+      payment_status: existingApplication?.payment_status || 'NOT_REQUIRED',
+      submitted_at: submittedAt || existingApplication?.submitted_at || null,
+      revision_submitted_at: isApplicationRevision
+        ? submittedAt
+        : existingApplication?.revision_submitted_at || null,
+      revision_requested_fields: isApplicationRevision
+        ? []
+        : existingApplication?.revision_requested_fields || [],
+      revision_count: isApplicationRevision
+        ? Number(existingApplication.revision_count || 0) + 1
+        : existingApplication?.revision_count || 0,
     };
     const marketplaceApplication = existingApplication
       ? await MarketplaceApplicationService.update(

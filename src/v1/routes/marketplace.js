@@ -133,7 +133,7 @@ router.get(
 
 router.post(
   '/events/:eventId/questions',
-  allowedTo(['VENDOR']),
+  allowedTo(['CUSTOMER', 'VENDOR']),
   validate(Validation.askEventQuestion),
   Controller.askEventQuestion
 );

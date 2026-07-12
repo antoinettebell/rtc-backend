@@ -29,6 +29,22 @@ const mSchema = mongoose.Schema(
       type: String,
       required: true,
     },
+    initiated_by_role: {
+      type: String,
+      enum: ['VENDOR', 'CUSTOMER', 'SUPER_ADMIN'],
+      default: 'VENDOR',
+      index: true,
+    },
+    bid_id: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    application_id: {
+      type: String,
+      default: null,
+      index: true,
+    },
     question_text_raw: {
       type: String,
       required: true,

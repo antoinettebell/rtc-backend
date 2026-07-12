@@ -147,6 +147,23 @@ const mSchema = mongoose.Schema(
       type: Date,
       default: null,
     },
+    revision_requested_at: {
+      type: Date,
+      default: null,
+    },
+    revision_requested_fields: {
+      type: [String],
+      default: [],
+    },
+    revision_submitted_at: {
+      type: Date,
+      default: null,
+    },
+    revision_count: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     paid_at: {
       type: Date,
       default: null,
