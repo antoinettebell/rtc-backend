@@ -1527,16 +1527,26 @@ const getEventForUser = async (eventId, user) => {
       return event;
     }
 
-    const vendorBid = await MarketplaceBidService.getByData(
-      {
-        event_id: eventId,
-        vendor_user_id: user._id,
-        bid_status: { $nin: ['WITHDRAWN'] },
-      },
-      { singleResult: true }
-    );
+    const [vendorBid, vendorApplication] = await Promise.all([
+      MarketplaceBidService.getByData(
+        {
+          event_id: eventId,
+          vendor_user_id: user._id,
+          bid_status: { $nin: ['WITHDRAWN'] },
+        },
+        { singleResult: true }
+      ),
+      MarketplaceApplicationService.getByData(
+        {
+          event_id: eventId,
+          vendor_user_id: user._id,
+          application_status: { $nin: ['WITHDRAWN'] },
+        },
+        { singleResult: true }
+      ),
+    ]);
 
-    if (!vendorBid) {
+    if (!vendorBid && !vendorApplication) {
       throw buildError('Marketplace event not found', 404);
     }
 
