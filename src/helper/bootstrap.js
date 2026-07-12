@@ -193,17 +193,25 @@ const dietsExistfNotExist = async () => {
   }
 };
 
-// const addAddOns = async () => {
-//   await AddOnsModel.create({
-//     name: 'Social Media Promotion: $125/month',
-//   });
-//   await AddOnsModel.create({
-//     name: 'Order Print Setup: $50 one-time fee',
-//   });
-//   await AddOnsModel.create({
-//     name: 'Accept Event Bookings / Event Marketplace Access: $25.00/month',
-//   });
-// };
+const addAddOns = async () => {
+  const defaultAddOns = [
+    {
+      match: /ad\s*space|advertis|banner|social\s*media|social\s*promotion|social\s*management/i,
+      name: 'Ad Space: $125/month',
+    },
+    {
+      match: /printer|printing|print\s*setup|order\s*print/i,
+      name: 'Printer: $50 one-time fee',
+    },
+  ];
+
+  for (const addOn of defaultAddOns) {
+    const exists = await AddOnsModel.findOne({ name: addOn.match, deletedAt: null });
+    if (!exists) {
+      await AddOnsModel.create({ name: addOn.name });
+    }
+  }
+};
 
 // const addPlans = async () => {
 //   await PlanModel.create({
@@ -308,5 +316,5 @@ exports.init = () => {
   void seedMeatWellness();
   void dietsExistfNotExist();
   // void addPlans();
-  // void addAddOns();
+  void addAddOns();
 };

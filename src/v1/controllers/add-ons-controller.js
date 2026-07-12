@@ -9,6 +9,11 @@ const isAdSpaceAddOn = (name = '') =>
     name
   );
 
+const isPrinterAddOn = (name = '') =>
+  /printer|printing|print\s*setup|order\s*print/i.test(name);
+
+const isPublicAddOn = (name = '') => isAdSpaceAddOn(name) || isPrinterAddOn(name);
+
 const normalizeAddOn = (addOn) => {
   if (!addOn) {
     return addOn;
@@ -23,6 +28,15 @@ const normalizeAddOn = (addOn) => {
       name: 'Ad Space',
       priceLabel: source.priceLabel || '$125/month',
       description: 'Monthly advertising placement for RTC ad inventory.',
+    };
+  }
+
+  if (isPrinterAddOn(name)) {
+    return {
+      ...source,
+      name: 'Printer',
+      priceLabel: source.priceLabel || '$50 one-time fee',
+      description: 'Printer setup add-on for vendor order ticket printing.',
     };
   }
 
@@ -79,7 +93,7 @@ exports.list = async (req, res, next) => {
       { paging: { limit, page }, lean: true }
     );
     const data = records
-      .filter((item) => isAdSpaceAddOn(item?.name || ''))
+      .filter((item) => isPublicAddOn(item?.name || ''))
       .map(normalizeAddOn);
 
     const total = data.length;
