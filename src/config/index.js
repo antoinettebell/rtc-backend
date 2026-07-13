@@ -67,7 +67,7 @@ module.exports = {
 
       // client production account
       API_LOGIN_ID: "48TQ8Zt2pmjP",
-      TRANSACTION_KEY: "2G26GAuuQv22s4K6",
+      TRANSACTION_KEY: "364vh9ZFC3B46VvJ",
       PAYMENT_MODE: "prod",
     },
     docusign: {
