@@ -160,6 +160,8 @@ const normalizeNearMeFood = (truck, userLat = null, userLong = null) => {
   const distanceInMeters =
     closestOpenLocation?.distanceInMeters ?? truck.distanceInMeters ?? null;
   const locationId = location?._id?.toString() || truck.currentLocation || '';
+  const truckUnitName = closestOpenLocation?.truck_unit_name || null;
+  const displayName = truckUnitName || truck.name;
   const locationSource =
     closestOpenLocation
       ? 'OPEN_TRUCK_UNIT'
@@ -180,10 +182,11 @@ const normalizeNearMeFood = (truck, userLat = null, userLong = null) => {
     food_truck_id: truck._id,
     menu_item_id: matchedMenuItem?._id || null,
     truck_unit_id: closestOpenLocation?.truck_unit_id || null,
-    truck_unit_name: closestOpenLocation?.truck_unit_name || null,
-    title: matchedMenuItem?.name || truck.name,
-    name: matchedMenuItem?.name || truck.name,
+    truck_unit_name: truckUnitName,
+    title: displayName,
+    name: displayName,
     food_truck_name: truck.name,
+    menu_item_name: matchedMenuItem?.name || null,
     description: getFoodPreview(truck, matchedMenuItem),
     preview: getFoodPreview(truck, matchedMenuItem),
     location,
