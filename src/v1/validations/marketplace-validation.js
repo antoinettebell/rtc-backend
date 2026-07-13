@@ -197,7 +197,10 @@ module.exports = {
   askEventQuestion: {
     body: Joi.object({
       question_text: Joi.string().trim().min(3).max(1000).required(),
-      vendor_user_id: Joi.string().allow(null, ''),
+      vendor_user_id: Joi.alternatives().try(
+        Joi.string().allow(null, ''),
+        Joi.object().unknown(true).allow(null)
+      ),
       bid_id: Joi.string().allow(null, ''),
       application_id: Joi.string().allow(null, ''),
     }),

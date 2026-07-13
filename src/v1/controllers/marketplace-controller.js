@@ -37,6 +37,68 @@ const buildError = (message, code = 400) => {
   return error;
 };
 
+const normalizeMarketplaceVendorIdentifier = (value) => {
+  if (!value) return '';
+  if (typeof value === 'object') {
+    const nestedValue =
+      value._id ||
+        value.id ||
+        value.vendor_user_id ||
+        value.vendor_display_id ||
+        value.display_id;
+    return String(nestedValue || value.toString?.() || '').trim();
+  }
+  return String(value).trim();
+};
+
+const vendorIdentifierMatchesSubmission = (submission, rawIdentifier) => {
+  const identifier = normalizeMarketplaceVendorIdentifier(rawIdentifier);
+  if (!submission || !identifier) return false;
+
+  const candidateIds = [
+    submission.vendor_user_id,
+    submission.vendor_display_id,
+    submission.food_truck_id,
+    submission.food_truck_id?._id,
+    submission.food_truck_id?.display_id,
+  ]
+    .map(normalizeMarketplaceVendorIdentifier)
+    .filter(Boolean);
+
+  return candidateIds.some(
+    (candidate) =>
+      candidate === identifier ||
+      (identifier.length === 6 && candidate.slice(-6) === identifier) ||
+      (candidate.length === 6 && identifier.slice(-6) === candidate)
+  );
+};
+
+const findMarketplaceSubmissionForVendorIdentifier = async (eventId, rawIdentifier) => {
+  const [bids, applications] = await Promise.all([
+    MarketplaceBidService.getByData({
+      event_id: eventId,
+      bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+    }),
+    MarketplaceApplicationService.getByData({
+      event_id: eventId,
+      application_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+    }),
+  ]);
+
+  const matches = [...(bids || []), ...(applications || [])].filter(
+    (submission) => vendorIdentifierMatchesSubmission(submission, rawIdentifier)
+  );
+
+  if (matches.length > 1) {
+    throw buildError(
+      'Multiple vendor submissions match that vendor identifier. Open the exact bid/application and try again.',
+      409
+    );
+  }
+
+  return matches[0] || null;
+};
+
 const assertMarketplaceTextAllowed = (value, fieldName = 'Text') => {
   const moderation = moderateMarketplaceText(value);
   if (moderation.status === 'BLOCKED') {
@@ -3296,32 +3358,44 @@ exports.askEventQuestion = async (req, res, next) => {
       const targetVendorUserId =
         targetBid?.vendor_user_id ||
         targetApplication?.vendor_user_id ||
-        req.body.vendor_user_id;
+        normalizeMarketplaceVendorIdentifier(req.body.vendor_user_id);
 
       if (!targetVendorUserId) {
         throw buildError('Select a submitted vendor to message.', 400);
       }
 
-      const [targetVendorBid, targetVendorApplication] = await Promise.all([
-        MarketplaceBidService.getByData(
-          {
-            event_id: event.event_id,
-            vendor_user_id: targetVendorUserId,
-            bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
-          },
-          { singleResult: true }
-        ),
-        MarketplaceApplicationService.getByData(
-          {
-            event_id: event.event_id,
-            vendor_user_id: targetVendorUserId,
-            application_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
-          },
-          { singleResult: true }
-        ),
-      ]);
+      const [targetVendorBid, targetVendorApplication, matchedSubmission] =
+        await Promise.all([
+          MarketplaceBidService.getByData(
+            {
+              event_id: event.event_id,
+              vendor_user_id: targetVendorUserId,
+              bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+            },
+            { singleResult: true }
+          ),
+          MarketplaceApplicationService.getByData(
+            {
+              event_id: event.event_id,
+              vendor_user_id: targetVendorUserId,
+              application_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+            },
+            { singleResult: true }
+          ),
+          targetBid || targetApplication
+            ? null
+            : findMarketplaceSubmissionForVendorIdentifier(
+                event.event_id,
+                targetVendorUserId
+              ),
+        ]);
 
-      const targetSubmission = targetBid || targetApplication || targetVendorBid || targetVendorApplication;
+      const targetSubmission =
+        targetBid ||
+        targetApplication ||
+        targetVendorBid ||
+        targetVendorApplication ||
+        matchedSubmission;
       if (!targetSubmission) {
         throw buildError('Vendor submission not found for this event.', 404);
       }
