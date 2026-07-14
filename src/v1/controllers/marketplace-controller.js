@@ -4549,9 +4549,6 @@ exports.updateEventStatus = async (req, res, next) => {
   }
 };
 
-// TODO Phase 12 payment: add reopen bidding $25 checkout before REOPENED is
-// exposed as an active app flow.
-
 exports.getPayment = async (req, res, next) => {
   try {
     const marketplacePayment = await getPaymentForUser(

@@ -274,8 +274,7 @@ module.exports = {
       ),
       payment_type: Joi.string().valid(
         'COORDINATOR_AWARD_FEE',
-        'VENDOR_EVENT_FEE',
-        'REOPEN_BIDDING_FEE'
+        'VENDOR_EVENT_FEE'
       ),
     }),
   },

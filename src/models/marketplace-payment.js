@@ -50,7 +50,6 @@ const mSchema = mongoose.Schema(
       enum: [
         'COORDINATOR_AWARD_FEE',
         'VENDOR_EVENT_FEE',
-        'REOPEN_BIDDING_FEE',
       ],
       required: true,
       index: true,
