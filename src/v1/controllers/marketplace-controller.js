@@ -13,10 +13,12 @@ const {
   MarketplacePaymentService,
   MarketplaceVendorAgreementService,
   UserService,
+  VendorComplianceDocumentService,
 } = require('../services');
 const {
   canAccessEventMarketplace,
 } = require('../../helper/vendor-plan-helper');
+const VendorComplianceService = require('../services/vendor-compliance-service');
 const {
   addObjectFromBufferWithKey,
   addObjectWithKey,
@@ -143,6 +145,12 @@ const DEFAULT_REQUIREMENT_LABELS = [
   'Food Handler Permit',
   'Other',
 ];
+
+const COMPLIANCE_DOCUMENT_LABELS = {
+  HEALTH_PERMIT: 'Health Permit',
+  BUSINESS_LICENSE: 'Business License',
+  COI: 'Insurance',
+};
 
 const asArray = (value) => {
   if (Array.isArray(value)) {
@@ -1523,9 +1531,15 @@ const decorateRepositoryFiles = async (attachments = []) => {
   });
 };
 
-const getVendorMarketplaceFoodTruck = async (userId) => {
+const getVendorMarketplaceFoodTruck = async (userId, options = {}) => {
+  const { enforceCompliance = true } = options;
   const vendorUser = await UserService.getById(userId);
-  if (!vendorUser || vendorUser.inactive || vendorUser.verified === false) {
+  if (
+    !vendorUser ||
+    vendorUser.inactive ||
+    vendorUser.verified === false ||
+    vendorUser.requestStatus !== 'APPROVED'
+  ) {
     throw buildError('Verification Pending or Action Required.', 403);
   }
 
@@ -1549,7 +1563,114 @@ const getVendorMarketplaceFoodTruck = async (userId) => {
     );
   }
 
+  if (enforceCompliance) {
+    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
+    if (Number(summary.score || 0) < 100 || !summary.eligible) {
+      const error = buildError('Please update your compliance paperwork.', 409);
+      error.compliance = summary;
+      throw error;
+    }
+  }
+
   return foodTruck;
+};
+
+const attachVerifiedComplianceDocumentsToSubmission = async ({
+  eventId,
+  foodTruck,
+  submission,
+  submissionType,
+  uploadedByUserId,
+}) => {
+  if (!eventId || !foodTruck?._id || !submission) {
+    return submission;
+  }
+
+  const documents = await VendorComplianceDocumentService.getByData(
+    {
+      food_truck_id: foodTruck._id,
+      document_type: { $in: Object.keys(COMPLIANCE_DOCUMENT_LABELS) },
+      review_status: 'verified',
+      archived_at: null,
+    },
+    { lean: true, sort: { created_at: -1 } }
+  );
+
+  const latestByType = documents.reduce((acc, document) => {
+    if (!acc[document.document_type]) {
+      acc[document.document_type] = document;
+    }
+    return acc;
+  }, {});
+
+  let changed = false;
+  const existingUrls = new Set(submission.permit_license_urls || []);
+  const existingKeys = new Set((submission.permit_license_keys || []).filter(Boolean));
+
+  for (const [documentType, requirementLabel] of Object.entries(
+    COMPLIANCE_DOCUMENT_LABELS
+  )) {
+    const document = latestByType[documentType];
+    if (!document?.file_url) {
+      continue;
+    }
+
+    const requirementKey = getRequirementKey(requirementLabel);
+    const duplicateQuery = {
+      event_id: eventId,
+      attachment_type: REQUIREMENT_ATTACHMENT_TYPE,
+      requirement_key: requirementKey,
+      status: 'ACTIVE',
+      ...(submissionType === 'bid'
+        ? { bid_id: submission.bid_id }
+        : { application_id: submission.application_id }),
+    };
+    const existingAttachment = await MarketplaceAttachmentService.getByData(
+      duplicateQuery,
+      { singleResult: true, lean: true }
+    );
+
+    if (!existingAttachment) {
+      await MarketplaceAttachmentService.create({
+        event_id: eventId,
+        bid_id: submissionType === 'bid' ? submission.bid_id : null,
+        application_id:
+          submissionType === 'application' ? submission.application_id : null,
+        attachment_type: REQUIREMENT_ATTACHMENT_TYPE,
+        requirement_label: requirementLabel,
+        requirement_key: requirementKey,
+        file_url: document.file_url,
+        file_key: document.file_key,
+        original_name: document.original_name || document.title || requirementLabel,
+        mime_type: document.mime_type,
+        size_bytes: document.size_bytes,
+        uploaded_by_user_id: uploadedByUserId,
+      });
+    }
+
+    if (!existingUrls.has(document.file_url)) {
+      submission.permit_license_urls = [
+        ...(submission.permit_license_urls || []),
+        document.file_url,
+      ];
+      existingUrls.add(document.file_url);
+      changed = true;
+    }
+    if (document.file_key && !existingKeys.has(document.file_key)) {
+      submission.permit_license_keys = [
+        ...(submission.permit_license_keys || []),
+        document.file_key,
+      ];
+      existingKeys.add(document.file_key);
+      changed = true;
+    }
+  }
+
+  if (changed && typeof submission.save === 'function') {
+    await submission.save();
+  }
+
+  return submission;
 };
 
 const assertCustomerEventCoordinator = async (userId) => {
@@ -3766,6 +3887,16 @@ exports.submitBid = async (req, res, next) => {
         )
       : await MarketplaceBidService.create(bidPayload);
 
+    if (requestedStatus === 'SUBMITTED') {
+      await attachVerifiedComplianceDocumentsToSubmission({
+        eventId: event.event_id,
+        foodTruck,
+        submission: marketplaceBid,
+        submissionType: 'bid',
+        uploadedByUserId: req.user._id,
+      });
+    }
+
     let marketplacePayment = null;
     if (requiresPayment && requestedStatus === 'SUBMITTED') {
       marketplacePayment = await MarketplacePaymentService.create({
@@ -3950,6 +4081,16 @@ exports.submitApplication = async (req, res, next) => {
           { getNew: true }
         )
       : await MarketplaceApplicationService.create(applicationPayload);
+
+    if (requestedStatus === 'SUBMITTED') {
+      await attachVerifiedComplianceDocumentsToSubmission({
+        eventId: event.event_id,
+        foodTruck,
+        submission: marketplaceApplication,
+        submissionType: 'application',
+        uploadedByUserId: req.user._id,
+      });
+    }
 
     if (requestedStatus === 'SUBMITTED') {
       await notifyMarketplaceSubmission({

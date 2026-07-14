@@ -14,7 +14,7 @@ exports.handler = (err, req, res, next) => {
     error: err.error,
     message: err.message,
     stack: err.stack,
-    data: null,
+    data: err.data || (err.compliance ? { compliance: err.compliance } : null),
   };
 
   if (DELETE_STACK) {
@@ -55,6 +55,7 @@ exports.converter = (err, req, res, next) => {
       message: err.message,
       stack: err.stack,
       status: err.status || err.code,
+      data: err.data || (err.compliance ? { compliance: err.compliance } : null),
     });
   }
 

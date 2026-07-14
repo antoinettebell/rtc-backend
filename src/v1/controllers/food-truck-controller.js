@@ -19,6 +19,7 @@ const {
   canUseMultipleTruckUnits,
   normalizeVendorPlan,
 } = require('../../helper/vendor-plan-helper');
+const VendorComplianceService = require('../services/vendor-compliance-service');
 const { addObjectWithKey, removeObject } = require('../../helper/aws');
 const fs = require('fs');
 const entityName = 'FoodTruck';
@@ -1237,6 +1238,10 @@ exports.toggleLocationOrdering = async (req, res, next) => {
     }
 
     if (isOrderingOpen) {
+      if (user.userType === 'VENDOR') {
+        await VendorComplianceService.assertEligible(item, 'open and accept orders');
+      }
+
       const menuItemsCount = await MenuItemService.getCount({
         userId: item.userId,
         deletedAt: null,

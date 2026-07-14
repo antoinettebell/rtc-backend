@@ -2,13 +2,14 @@
  * @extends Error
  */
 class ExtendableError extends Error {
-  constructor({ message, error, status, isPublic, stack }) {
+  constructor({ message, error, status, isPublic, stack, data }) {
     super(message);
     this.name = this.constructor.name;
     this.message = message;
     this.error = error;
     this.status = status;
     this.isPublic = isPublic;
+    this.data = data;
     // This is required since bluebird 4 doesn't append it anymore.
     this.isOperational = true;
     this.stack = stack;
@@ -26,8 +27,9 @@ class ApiError extends ExtendableError {
    * @param {number} status - HTTP status code of error.
    * @param {boolean} isPublic - Whether the message should be visible to user or not.
    */
-  constructor({ message, error, stack, status = 500, isPublic = false }) {
+  constructor({ message, error, stack, status = 500, isPublic = false, data = null }) {
     super({
+      data,
       error,
       isPublic,
       message,

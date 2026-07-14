@@ -59,7 +59,7 @@ const REVIEW_STATUSES = [
   'archived',
 ];
 
-const REMINDER_DAYS = [60, 30, 14, 7, 1, 0];
+const REMINDER_DAYS = [90, 60, 30, 10];
 
 const normalizeComplianceDocumentType = (value = '') => {
   const key = String(value || '')

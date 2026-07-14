@@ -194,6 +194,22 @@ exports.vendorComplianceOcrResult = async (req, res) => {
   }
 };
 
+exports.vendorComplianceMaintenance = async (req, res) => {
+  if (!authorizeBackendWebhook(req, res)) {
+    return;
+  }
+
+  try {
+    const result = await VendorComplianceService.runComplianceMaintenance();
+    return res.data(result, 'Vendor compliance maintenance processed');
+  } catch (error) {
+    return res.status(error.code || 500).json({
+      success: false,
+      message: error.message || 'Vendor compliance maintenance failed',
+    });
+  }
+};
+
 exports.docusign = async (req, res) => {
   const timestamp = new Date().toISOString();
   const signature = verifySignature({

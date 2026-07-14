@@ -382,6 +382,17 @@ const archiveExpiredDocuments = async () => {
         action: 'EXPIRE',
         notes: 'Document expired automatically',
       });
+      await CustomNotification.sendNotificationToUsers({
+        [document.vendor_user_id.toString()]: {
+          title: 'Compliance paperwork required',
+          body: 'Please update your compliance paperwork.',
+          data: {
+            activityType: 'VENDOR_COMPLIANCE_REQUIRED',
+            documentId: document.document_id,
+            documentType: document.document_type,
+          },
+        },
+      });
     })
   );
 
@@ -422,6 +433,7 @@ const sendExpirationReminders = async () => {
           activityType: 'VENDOR_COMPLIANCE_EXPIRATION',
           documentId: document.document_id,
           documentType: document.document_type,
+          daysUntilExpiration: String(daysUntilExpiration),
         },
       },
     });
