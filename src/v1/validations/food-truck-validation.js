@@ -140,7 +140,7 @@ module.exports = {
             _id: Joi.string(),
             title: Joi.string().trim().allow(null, ''),
             document_type: Joi.string()
-              .valid('PERMIT', 'LICENSE', 'INSURANCE', 'OTHER')
+              .valid('PERMIT', 'LICENSE', 'INSURANCE', 'EIN', 'W9', 'OTHER')
               .default('OTHER'),
             file_url: Joi.string().uri().required(),
             file_key: Joi.string().allow(null, ''),

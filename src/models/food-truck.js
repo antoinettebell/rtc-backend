@@ -144,7 +144,7 @@ const mSchema = mongoose.Schema(
         },
         document_type: {
           type: String,
-          enum: ['PERMIT', 'LICENSE', 'INSURANCE', 'OTHER'],
+          enum: ['PERMIT', 'LICENSE', 'INSURANCE', 'EIN', 'W9', 'OTHER'],
           default: 'OTHER',
         },
         file_url: {

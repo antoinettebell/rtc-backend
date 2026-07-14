@@ -35,7 +35,7 @@ const parseCsvParam = (value) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
-const DOCUMENT_TYPES = new Set(['PERMIT', 'LICENSE', 'INSURANCE', 'OTHER']);
+const DOCUMENT_TYPES = new Set(['PERMIT', 'LICENSE', 'INSURANCE', 'EIN', 'W9', 'OTHER']);
 
 const normalizeDocumentType = (value) => {
   const normalized = String(value || 'OTHER')
