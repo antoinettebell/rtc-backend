@@ -50,6 +50,7 @@ const mSchema = mongoose.Schema(
       enum: [
         'COORDINATOR_AWARD_FEE',
         'VENDOR_EVENT_FEE',
+        'FINAL_EVENT_PAYMENT',
       ],
       required: true,
       index: true,
@@ -69,6 +70,11 @@ const mSchema = mongoose.Schema(
       required: true,
       min: 0,
     },
+    tip_amount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     total_amount: {
       type: Number,
       required: true,
@@ -81,7 +87,7 @@ const mSchema = mongoose.Schema(
     },
     payment_method: {
       type: String,
-      enum: ['APPLE_PAY', 'GOOGLE_PAY', 'ADMIN_MANUAL'],
+      enum: ['APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY', 'ADMIN_MANUAL'],
       default: null,
     },
     payment_status: {

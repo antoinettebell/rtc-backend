@@ -189,6 +189,14 @@ module.exports = {
     }),
   },
 
+  createFinalEventPayment: {
+    body: Joi.object({
+      bid_id: Joi.string().trim().allow(null, ''),
+      application_id: Joi.string().trim().allow(null, ''),
+      tip_amount: Joi.number().min(0).default(0),
+    }),
+  },
+
   updateEventStatus: {
     body: Joi.object({
       status: Joi.string()
@@ -254,7 +262,9 @@ module.exports = {
 
   checkoutPayment: {
     body: Joi.object({
-      payment_method: Joi.string().valid('APPLE_PAY', 'GOOGLE_PAY').required(),
+      payment_method: Joi.string()
+        .valid('APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY')
+        .required(),
       payment_data: Joi.alternatives()
         .try(Joi.object().unknown(true), Joi.string())
         .required(),
@@ -274,7 +284,8 @@ module.exports = {
       ),
       payment_type: Joi.string().valid(
         'COORDINATOR_AWARD_FEE',
-        'VENDOR_EVENT_FEE'
+        'VENDOR_EVENT_FEE',
+        'FINAL_EVENT_PAYMENT'
       ),
     }),
   },

@@ -1558,7 +1558,7 @@ const getVendorMarketplaceFoodTruck = async (userId, options = {}) => {
 
   if (!canAccessEventMarketplace(foodTruck)) {
     throw buildError(
-      'Accept Event Bookings is required to access Event Marketplace.',
+      'Elite plan is required to access Event Marketplace.',
       403
     );
   }
@@ -2737,6 +2737,95 @@ const findActiveMarketplacePayment = async (query) =>
     { singleResult: true }
   );
 
+const getFinalEventPaymentRecords = async (event) => {
+  const [awardedBids, awardedApplications] = await Promise.all([
+    MarketplaceBidService.getByData(
+      { event_id: event.event_id, bid_status: 'AWARDED', archived_at: null },
+      { lean: true }
+    ),
+    MarketplaceApplicationService.getByData(
+      {
+        event_id: event.event_id,
+        application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
+        archived_at: null,
+      },
+      { lean: true }
+    ),
+  ]);
+
+  return { awardedBids, awardedApplications };
+};
+
+const getFinalEventPaymentAggregateStatus = async (eventId) => {
+  const awardedBids = await MarketplaceBidService.getByData(
+    { event_id: eventId, bid_status: 'AWARDED', archived_at: null },
+    { lean: true }
+  );
+  const awardedApplications = await MarketplaceApplicationService.getByData(
+    {
+      event_id: eventId,
+      application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
+      archived_at: null,
+    },
+    { lean: true }
+  );
+  const targetQueries = [
+    ...awardedBids.map((bid) => ({ bid_id: bid.bid_id })),
+    ...awardedApplications.map((application) => ({
+      application_id: application.application_id,
+    })),
+  ];
+
+  if (!targetQueries.length) {
+    return 'NOT_REQUIRED';
+  }
+
+	  const finalPayments = await MarketplacePaymentService.getByData(
+	    {
+	      event_id: eventId,
+	      payment_type: 'FINAL_EVENT_PAYMENT',
+	      payment_status: { $in: ['PENDING', 'PAID', 'FAILED'] },
+	      $or: targetQueries,
+	    },
+	    { lean: true }
+	  );
+
+  const isTargetPaid = (query) =>
+    finalPayments.some(
+      (payment) =>
+        payment.payment_status === 'PAID' &&
+        (!query.bid_id || payment.bid_id === query.bid_id) &&
+        (!query.application_id || payment.application_id === query.application_id)
+    );
+
+  if (targetQueries.every(isTargetPaid)) {
+    return 'PAID';
+  }
+
+  return finalPayments.length ? 'PENDING' : 'NOT_REQUIRED';
+};
+
+const sendFinalEventPaymentReceipt = async ({ payment, event }) => {
+  const coordinator = await UserService.getById(event.customer_user_id);
+  if (!coordinator?.email) {
+    return;
+  }
+
+  await MailHelper.sendMail(
+    coordinator.email,
+    'Round The Corner event payment receipt',
+    `
+      <p>Your event payment has been received.</p>
+      <p><strong>Event:</strong> ${event.event_name || event.event_id}</p>
+      <p><strong>Award amount:</strong> $${Number(payment.base_amount || 0).toFixed(2)}</p>
+      <p><strong>Tip:</strong> $${Number(payment.tip_amount || 0).toFixed(2)}</p>
+      <p><strong>Total paid:</strong> $${Number(payment.total_amount || 0).toFixed(2)}</p>
+      <p><strong>Payment method:</strong> ${payment.payment_method || 'Not provided'}</p>
+      <p><strong>Transaction:</strong> ${payment.processor_transaction_id || 'Pending'}</p>
+    `
+  );
+};
+
 const finalizePaidVendorPayment = async (payment) => {
   if (payment.payment_type !== 'VENDOR_EVENT_FEE') {
     return null;
@@ -2994,6 +3083,35 @@ const finalizePaidAwardPayment = async (payment) => {
   return completeSignedAward(payment);
 };
 
+const finalizePaidFinalEventPayment = async (payment) => {
+  if (payment.payment_type !== 'FINAL_EVENT_PAYMENT') {
+    return null;
+  }
+
+  const existingEvent = await MarketplaceEventService.getByData(
+    { event_id: payment.event_id },
+    { singleResult: true }
+  );
+  const shouldSendReceipt = existingEvent?.final_payment_status !== 'PAID';
+
+  const marketplaceEvent = await MarketplaceEventService.update(
+    { event_id: payment.event_id },
+    {
+      final_payment_id: payment.payment_id,
+      final_payment_food_truck_id: payment.food_truck_id || null,
+      final_payment_status: await getFinalEventPaymentAggregateStatus(payment.event_id),
+      closed_at: new Date(),
+    },
+    { getNew: true }
+  );
+
+  if (marketplaceEvent && shouldSendReceipt) {
+    await sendFinalEventPaymentReceipt({ payment, event: marketplaceEvent });
+  }
+
+  return { marketplaceEvent };
+};
+
 const finalizePaidMarketplacePayment = async (payment) => {
   if (payment.payment_type === 'VENDOR_EVENT_FEE') {
     return finalizePaidVendorPayment(payment);
@@ -3001,6 +3119,10 @@ const finalizePaidMarketplacePayment = async (payment) => {
 
   if (payment.payment_type === 'COORDINATOR_AWARD_FEE') {
     return finalizePaidAwardPayment(payment);
+  }
+
+  if (payment.payment_type === 'FINAL_EVENT_PAYMENT') {
+    return finalizePaidFinalEventPayment(payment);
   }
 
   return null;
@@ -3018,6 +3140,20 @@ const getPaymentForUser = async (paymentId, user) => {
 
   if (user.userType === 'SUPER_ADMIN') {
     return payment;
+  }
+
+  if (
+    user.userType === 'VENDOR' &&
+    payment.payment_type === 'FINAL_EVENT_PAYMENT' &&
+    payment.food_truck_id
+  ) {
+    const foodTruck = await FoodTruckService.getByData(
+      { userId: user._id },
+      { singleResult: true, lean: true }
+    );
+    if (foodTruck && String(foodTruck._id) === String(payment.food_truck_id)) {
+      return payment;
+    }
   }
 
   if (String(payment.payer_user_id) !== String(user._id)) {
@@ -4549,6 +4685,119 @@ exports.updateEventStatus = async (req, res, next) => {
   }
 };
 
+exports.createFinalEventPayment = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'CUSTOMER') {
+      throw buildError('Only event coordinators can close events for payment', 403);
+    }
+
+    const event = await getOwnedEvent(req.params.eventId, req.user._id);
+    if (event.status !== 'AWARDED') {
+      throw buildError('Final event payment is only available for awarded events.', 400);
+    }
+
+    const bidId = String(req.body.bid_id || '').trim();
+    const applicationId = String(req.body.application_id || '').trim();
+    if ((bidId && applicationId) || (!bidId && !applicationId)) {
+      throw buildError('Select exactly one awarded bid or application for final payment.', 400);
+    }
+
+    const awardedBid = bidId
+      ? await MarketplaceBidService.getByData(
+          {
+            event_id: event.event_id,
+            bid_id: bidId,
+            bid_status: 'AWARDED',
+            archived_at: null,
+          },
+          { singleResult: true, lean: true }
+        )
+      : null;
+    const awardedApplication = applicationId
+      ? await MarketplaceApplicationService.getByData(
+          {
+            event_id: event.event_id,
+            application_id: applicationId,
+            application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
+            archived_at: null,
+          },
+          { singleResult: true, lean: true }
+        )
+      : null;
+
+    if (!awardedBid && !awardedApplication) {
+      throw buildError('Selected awarded vendor is not available for final payment.', 400);
+    }
+
+    const baseAmount = awardedBid
+      ? roundMoney(awardedBid.full_bid_amount || 0)
+      : roundMoney(event.budgeted_amount || 0);
+    if (baseAmount <= 0) {
+      throw buildError('Award amount is required before closing event for payment.', 400);
+    }
+
+    const tipAmount = roundMoney(req.body.tip_amount || 0);
+    const totalAmount = roundMoney(baseAmount + tipAmount);
+    const foodTruckId = awardedBid?.food_truck_id || awardedApplication?.food_truck_id || null;
+
+    let marketplacePayment = await findActiveMarketplacePayment({
+      event_id: event.event_id,
+      payer_user_id: req.user._id,
+      payment_type: 'FINAL_EVENT_PAYMENT',
+      ...(awardedBid ? { bid_id: awardedBid.bid_id } : {}),
+      ...(awardedApplication ? { application_id: awardedApplication.application_id } : {}),
+    });
+
+    if (!marketplacePayment) {
+      marketplacePayment = await MarketplacePaymentService.create({
+        event_id: event.event_id,
+        bid_id: awardedBid?.bid_id || null,
+        application_id: awardedApplication?.application_id || null,
+        selected_bid_ids: awardedBid ? [awardedBid.bid_id] : [],
+        payer_user_id: req.user._id,
+        payer_type: 'CUSTOMER',
+        food_truck_id: foodTruckId,
+        payment_type: 'FINAL_EVENT_PAYMENT',
+        base_amount: baseAmount,
+        fee_rate: null,
+        fee_amount: 0,
+        tip_amount: tipAmount,
+        total_amount: totalAmount,
+        coordinator_payout_amount: totalAmount,
+        payment_status: 'PENDING',
+      });
+      await createPaymentAudit(marketplacePayment, req, 'CREATE');
+    } else if (marketplacePayment.payment_status === 'PENDING') {
+      marketplacePayment.bid_id = awardedBid?.bid_id || null;
+      marketplacePayment.application_id = awardedApplication?.application_id || null;
+      marketplacePayment.selected_bid_ids = awardedBid ? [awardedBid.bid_id] : [];
+      marketplacePayment.food_truck_id = foodTruckId;
+      marketplacePayment.base_amount = baseAmount;
+      marketplacePayment.fee_amount = 0;
+      marketplacePayment.tip_amount = tipAmount;
+      marketplacePayment.total_amount = totalAmount;
+      marketplacePayment.coordinator_payout_amount = totalAmount;
+      await marketplacePayment.save();
+    }
+
+    event.final_payment_id = marketplacePayment.payment_id;
+    event.final_payment_food_truck_id = foodTruckId;
+    event.final_payment_status = await getFinalEventPaymentAggregateStatus(event.event_id);
+    await event.save();
+
+    return res.data(
+      {
+        marketplaceEvent: event,
+        marketplacePayment,
+        requires_payment: marketplacePayment.payment_status !== 'PAID',
+      },
+      'Final event payment created'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
 exports.getPayment = async (req, res, next) => {
   try {
     const marketplacePayment = await getPaymentForUser(
@@ -4612,15 +4861,28 @@ exports.checkoutPayment = async (req, res, next) => {
     }
 
     const paymentMethod = req.body.payment_method;
-    if (!['APPLE_PAY', 'GOOGLE_PAY'].includes(paymentMethod)) {
-      throw buildError('Marketplace checkout only supports Apple Pay or Google Pay', 400);
+    if (!['APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY'].includes(paymentMethod)) {
+      throw buildError('Marketplace checkout only supports wallet or Tap to Pay payments', 400);
+    }
+    if (
+      paymentMethod === 'TAP_TO_PAY' &&
+      marketplacePayment.payment_type !== 'FINAL_EVENT_PAYMENT'
+    ) {
+      throw buildError('Tap to Pay is only available for final event payment.', 400);
+    }
+    if (paymentMethod === 'TAP_TO_PAY' && req.user.userType !== 'VENDOR') {
+      throw buildError('Tap to Pay final event payment must be accepted by the awarded vendor.', 403);
     }
 
     const opaquePaymentData = normalizeOpaquePaymentData(req.body.payment_data);
     const opaqueToken =
       paymentMethod === 'APPLE_PAY'
         ? Buffer.from(JSON.stringify(req.body.payment_data)).toString('base64')
-        : Buffer.from(req.body.payment_data).toString('base64');
+        : Buffer.from(
+            typeof req.body.payment_data === 'string'
+              ? req.body.payment_data
+              : JSON.stringify(req.body.payment_data)
+          ).toString('base64');
 
     if (!opaqueToken) {
       throw buildError('Payment token missing', 400);

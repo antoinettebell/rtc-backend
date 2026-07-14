@@ -34,6 +34,10 @@ const getDaysUntil = (date, now = new Date()) => {
   return Math.ceil((parsed.getTime() - now.getTime()) / MS_PER_DAY);
 };
 
+const taxDigits = (value) => String(value || '').replace(/\D/g, '');
+
+const hasValidTaxIdentifier = (value) => taxDigits(value).length === 9;
+
 const getScoreBand = ({ score, eligible, hasPendingReview }) => {
   if (!eligible || score < 50) {
     return {
@@ -109,6 +113,9 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   const now = new Date();
   const documents = await getCurrentDocuments(foodTruck._id);
   const latestByType = selectLatestByType(documents);
+  const hasSsnOnProfile = hasValidTaxIdentifier(foodTruck.ssn);
+  const hasEinOnProfile = hasValidTaxIdentifier(foodTruck.ein);
+  const taxIdRequirementType = hasSsnOnProfile ? 'SSN' : 'EIN';
   let score = 0;
   const missingRequirements = [];
   const expiringRequirements = [];
@@ -120,22 +127,36 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     const days_until_expiration = getDaysUntil(document?.expiration_date, now);
     const verified = isVerifiedActiveDocument(document, now);
     const expired = days_until_expiration !== null && days_until_expiration < 0;
+    const isOptionalDocument = !requirement.required && requirement.scoreWeight === 0;
+    const isEinDocument = requirement.type === 'EIN';
     let status = 'missing';
 
-    if (verified) {
+    if (isEinDocument && taxIdRequirementType === 'SSN') {
+      status = 'not_required';
+    } else if (verified) {
       status = 'verified';
       score += requirement.scoreWeight;
     } else if (document?.review_status === 'pending_review') {
       status = 'pending_review';
-      pendingRequirements.push(requirement.type);
+      if (!isOptionalDocument) {
+        pendingRequirements.push(requirement.type);
+      }
     } else if (document?.review_status === 'rejected') {
       status = 'rejected';
-      rejectedRequirements.push(requirement.type);
+      if (!isOptionalDocument) {
+        rejectedRequirements.push(requirement.type);
+      }
     } else if (document?.review_status === 'expired' || expired) {
       status = 'expired';
+    } else if (isOptionalDocument) {
+      status = document ? 'uploaded' : 'optional';
     }
 
-    if (!document || !verified) {
+    if (
+      !isOptionalDocument &&
+      !(isEinDocument && taxIdRequirementType === 'SSN') &&
+      (!document || !verified)
+    ) {
       missingRequirements.push(requirement.type);
     }
 
@@ -150,6 +171,12 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
       days_until_expiration,
     };
   });
+
+  if (taxIdRequirementType === 'SSN') {
+    score += 50;
+  } else if (!hasEinOnProfile) {
+    missingRequirements.push('EIN_PROFILE');
+  }
 
   score = Math.min(100, score);
   const eligible = missingRequirements.length === 0 && rejectedRequirements.length === 0;

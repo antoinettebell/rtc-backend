@@ -4,22 +4,22 @@ const DOCUMENT_TYPES = {
   HEALTH_PERMIT: {
     type: 'HEALTH_PERMIT',
     label: 'Health Permit',
-    required: true,
-    scoreWeight: 34,
+    required: false,
+    scoreWeight: 0,
     ocrFields: ['permit_number', 'issuing_authority', 'issue_date', 'expiration_date'],
   },
   BUSINESS_LICENSE: {
     type: 'BUSINESS_LICENSE',
     label: 'Business License',
-    required: true,
-    scoreWeight: 33,
+    required: false,
+    scoreWeight: 0,
     ocrFields: ['license_number', 'business_name', 'issuing_authority', 'expiration_date'],
   },
   COI: {
     type: 'COI',
     label: 'Certificate of Insurance',
-    required: true,
-    scoreWeight: 33,
+    required: false,
+    scoreWeight: 0,
     ocrFields: [
       'policy_number',
       'insured_name',
@@ -27,6 +27,20 @@ const DOCUMENT_TYPES = {
       'liability_limit',
       'expiration_date',
     ],
+  },
+  EIN: {
+    type: 'EIN',
+    label: 'EIN',
+    required: false,
+    scoreWeight: 50,
+    ocrFields: ['ein', 'business_name', 'issuing_authority'],
+  },
+  W9: {
+    type: 'W9',
+    label: 'W-9',
+    required: true,
+    scoreWeight: 50,
+    ocrFields: ['ein', 'business_name', 'tax_classification', 'signature_date'],
   },
 };
 
@@ -40,6 +54,12 @@ const DOCUMENT_TYPE_ALIASES = {
   COI: 'COI',
   INSURANCE: 'COI',
   CERTIFICATE_OF_INSURANCE: 'COI',
+  EIN: 'EIN',
+  TAX_ID: 'EIN',
+  W9: 'W9',
+  W_9: 'W9',
+  FORM_W9: 'W9',
+  FORM_W_9: 'W9',
 };
 
 const OCR_STATUSES = [

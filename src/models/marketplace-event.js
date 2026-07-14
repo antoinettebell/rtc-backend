@@ -359,6 +359,23 @@ const mSchema = mongoose.Schema(
       default: 'NOT_REQUIRED',
       index: true,
     },
+    final_payment_id: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    final_payment_food_truck_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'food-trucks',
+      default: null,
+      index: true,
+    },
+    final_payment_status: {
+      type: String,
+      enum: ['NOT_REQUIRED', 'PENDING', 'PAID', 'FAILED', 'CANCELLED', 'REFUNDED'],
+      default: 'NOT_REQUIRED',
+      index: true,
+    },
     agreement_provider: {
       type: String,
       enum: ['NONE', 'DOCUSIGN'],

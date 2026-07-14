@@ -40,18 +40,7 @@ const normalizeAddOn = (addOn) => {
     };
   }
 
-  const isEventAddOn = /event/i.test(source.name || '');
-
-  if (!isEventAddOn) {
-    return source;
-  }
-
-  return {
-    ...source,
-    name: 'Accept Event Bookings / Event Marketplace Access',
-    priceLabel: '$25/month',
-    description: 'Required add-on for Event Marketplace access.',
-  };
+  return source;
 };
 
 /**

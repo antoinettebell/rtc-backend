@@ -5,6 +5,7 @@ const {
   MarketplaceApplicationModel,
   MarketplaceAttachmentModel,
   MarketplaceEventQuestionModel,
+  MarketplacePaymentModel,
 } = require('../../models');
 const { BaseService } = require('../../common-services');
 
@@ -52,18 +53,28 @@ class MarketplaceEventService extends BaseService {
       const applicationIds = awarded_applications
         .map((application) => application.application_id)
         .filter(Boolean);
-      const attachmentQuery = [
+      const awardRecordQuery = [
         ...(bidIds.length ? [{ bid_id: { $in: bidIds } }] : []),
         ...(applicationIds.length
           ? [{ application_id: { $in: applicationIds } }]
           : []),
       ];
-      const attachments = attachmentQuery.length
+      const attachments = awardRecordQuery.length
         ? await MarketplaceAttachmentModel.find({
             status: 'ACTIVE',
-            $or: attachmentQuery,
+            $or: awardRecordQuery,
           })
             .sort({ created_at: 1 })
+            .lean()
+        : [];
+      const finalPayments = awardRecordQuery.length
+        ? await MarketplacePaymentModel.find({
+            event_id,
+            payment_type: 'FINAL_EVENT_PAYMENT',
+            payment_status: { $in: ['PENDING', 'PAID', 'FAILED'] },
+            $or: awardRecordQuery,
+          })
+            .sort({ updated_at: -1 })
             .lean()
         : [];
 
@@ -78,6 +89,18 @@ class MarketplaceEventService extends BaseService {
         if (attachment.application_id) {
           acc[attachment.application_id] = acc[attachment.application_id] || [];
           acc[attachment.application_id].push(attachment);
+	        }
+	        return acc;
+      }, {});
+      const finalPaymentByBidId = finalPayments.reduce((acc, payment) => {
+        if (payment.bid_id && !acc[payment.bid_id]) {
+          acc[payment.bid_id] = payment;
+        }
+        return acc;
+      }, {});
+      const finalPaymentByApplicationId = finalPayments.reduce((acc, payment) => {
+        if (payment.application_id && !acc[payment.application_id]) {
+          acc[payment.application_id] = payment;
         }
         return acc;
       }, {});
@@ -85,10 +108,26 @@ class MarketplaceEventService extends BaseService {
       awarded_bids = awarded_bids.map((bid) => ({
         ...bid,
         attachments: attachmentsByBidId[bid.bid_id] || [],
+        final_payment_id: finalPaymentByBidId[bid.bid_id]?.payment_id || null,
+        final_payment_status:
+          finalPaymentByBidId[bid.bid_id]?.payment_status || 'NOT_REQUIRED',
+        final_payment_total_amount:
+          finalPaymentByBidId[bid.bid_id]?.total_amount || null,
+        final_payment_tip_amount:
+          finalPaymentByBidId[bid.bid_id]?.tip_amount || 0,
       }));
       awarded_applications = awarded_applications.map((application) => ({
         ...application,
         attachments: attachmentsByApplicationId[application.application_id] || [],
+        final_payment_id:
+          finalPaymentByApplicationId[application.application_id]?.payment_id || null,
+        final_payment_status:
+          finalPaymentByApplicationId[application.application_id]?.payment_status ||
+          'NOT_REQUIRED',
+        final_payment_total_amount:
+          finalPaymentByApplicationId[application.application_id]?.total_amount || null,
+        final_payment_tip_amount:
+          finalPaymentByApplicationId[application.application_id]?.tip_amount || 0,
       }));
     }
 

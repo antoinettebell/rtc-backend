@@ -179,6 +179,13 @@ router.post(
   Controller.awardBids
 );
 
+router.post(
+  '/events/:eventId/final-payment',
+  allowedTo(['CUSTOMER']),
+  validate(Validation.createFinalEventPayment),
+  Controller.createFinalEventPayment
+);
+
 router.patch(
   '/events/:eventId/status',
   allowedTo(['SUPER_ADMIN']),

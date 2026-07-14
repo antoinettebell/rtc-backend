@@ -11,11 +11,14 @@ const VENDOR_PLAN_TIERS = {
       'QR ordering',
       'Printing',
       'Basic reporting',
-      '1 media link and 1 social/website link',
+      '1 media/social link',
       '3-day payouts',
-      'No employee login',
-      'No walk-up POS',
+      'No Employee Login/Cashier Mode',
+      'No Walk-up POS for Cash Payments Only',
       'No Tap to Pay',
+      'No Multiple food trucks',
+      'No Ability to highlight dishes',
+      'No Event marketplace',
     ],
     capabilities: {
       payoutTiming: 'THREE_DAY',
@@ -36,14 +39,20 @@ const VENDOR_PLAN_TIERS = {
     rateType: '',
     payoutTimingLabel: '2-day payout',
     details: [
-      'All Basic features',
+      'Marketplace ordering',
+      'Delivery acceptance',
+      'Preorder ordering',
+      'QR ordering',
+      'Printing',
+      'Advanced reporting',
+      '2 media/social links',
+      '2-day payouts',
       'Employee Login/Cashier Mode',
       'Walk-up POS for Cash Payments Only',
-      '2-day payouts',
-      'Advanced reporting',
-      '2 media links and 2 social/website links',
-      'No highlight new dishes',
       'No Tap to Pay',
+      'No Multiple food trucks',
+      'No Ability to highlight dishes',
+      'No Event marketplace',
     ],
     capabilities: {
       payoutTiming: 'TWO_DAY',
@@ -64,12 +73,20 @@ const VENDOR_PLAN_TIERS = {
     rateType: '',
     payoutTimingLabel: 'Daily payout',
     details: [
-      'All Platinum features',
-      'Ability to highlight dishes',
-      'Tap to Pay enabled',
-      'Event Marketplace Access included',
+      'Marketplace ordering',
+      'Delivery acceptance',
+      'Preorder ordering',
+      'QR ordering',
+      'Printing',
       'Customizable reporting',
-      '4 media/social/website links',
+      '4 media/social links',
+      'Daily payouts',
+      'Employee Login/Cashier Mode',
+      'Walk-up POS for Cash Payments Only',
+      'Tap to Pay',
+      'Multiple food trucks',
+      'Ability to highlight dishes',
+      'Event marketplace',
     ],
     capabilities: {
       payoutTiming: 'DAILY',
@@ -127,10 +144,6 @@ const canUseMultipleTruckUnits = (foodTruckOrPlan) =>
     foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan
   ).multipleTruckUnits;
 
-const hasEventMarketplaceAddOn = (foodTruck) =>
-  Array.isArray(foodTruck?.addOns) &&
-  foodTruck.addOns.some((addOn) => /event/i.test(addOn?.name || ''));
-
 const canAccessEventMarketplace = (foodTruckOrPlan) => {
   const plan = foodTruckOrPlan?.plan || foodTruckOrPlan?.planId || foodTruckOrPlan;
   const tier = getVendorPlanTier(plan);
@@ -140,8 +153,7 @@ const canAccessEventMarketplace = (foodTruckOrPlan) => {
     tier?.capabilities?.eventMarketplace ||
     tier?.rate === 5.5 ||
     /elite/i.test(planText) ||
-    Number(source?.rate) === 5.5 ||
-    hasEventMarketplaceAddOn(foodTruckOrPlan)
+    Number(source?.rate) === 5.5
   );
 };
 
@@ -239,7 +251,6 @@ module.exports = {
   canUseWalkupPOS,
   getPayoutSpeed,
   getVendorPlanCapabilities,
-  hasEventMarketplaceAddOn,
   normalizeVendorPlan,
   assertNewDishHighlightAllowed,
   assertSocialMediaLinksAllowed,
