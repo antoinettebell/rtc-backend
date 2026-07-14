@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { docusign } = require('../../config');
 const { FoodTruckModel, UserModel } = require('../../models');
 const CustomNotification = require('../../helper/custom-notification');
+const VendorComplianceService = require('../services/vendor-compliance-service');
 
 const acceptedStatuses = new Set([
   'completed',
@@ -166,6 +167,31 @@ exports.vendorDailyLocationCheckReminders = async (req, res) => {
     },
     'Vendor daily location check reminders sent'
   );
+};
+
+exports.vendorComplianceOcrResult = async (req, res) => {
+  if (!authorizeBackendWebhook(req, res)) {
+    return;
+  }
+
+  try {
+    const document = await VendorComplianceService.applyOcrResult({
+      documentId: req.params.documentId,
+      ocrStatus: req.body?.ocr_status,
+      extractedFields: req.body?.extracted_fields,
+      errorMessage: req.body?.ocr_error_message,
+    });
+
+    return res.data(
+      { complianceDocument: document },
+      'Compliance OCR result processed'
+    );
+  } catch (error) {
+    return res.status(error.code || 500).json({
+      success: false,
+      message: error.message || 'Compliance OCR result failed',
+    });
+  }
 };
 
 exports.docusign = async (req, res) => {

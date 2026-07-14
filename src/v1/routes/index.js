@@ -22,6 +22,7 @@ const taxRatesRoutes = require('./tax-rates');
 const meatRoutes = require('./meat');
 const marketplaceRoutes = require('./marketplace');
 const webhookRoutes = require('./webhooks');
+const vendorComplianceRoutes = require('./vendor-compliance');
 const authenticate = require('../../middleware/authenticate');
 const router = express.Router();
 
@@ -96,6 +97,9 @@ router.use('/meat', meatRoutes);
 
 /** marketplace routes */
 router.use('/marketplace', marketplaceRoutes);
+
+/** vendor compliance routes */
+router.use('/vendor-compliance', vendorComplianceRoutes);
 
 /** Exports default route */
 module.exports = router;

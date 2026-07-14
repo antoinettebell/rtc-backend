@@ -1,0 +1,279 @@
+const fs = require('fs');
+const { addObjectWithKey } = require('../../helper/aws');
+const {
+  FoodTruckService,
+  VendorComplianceDocumentService,
+  VendorComplianceAuditService,
+} = require('../services');
+const VendorComplianceService = require('../services/vendor-compliance-service');
+const {
+  getComplianceRequirements,
+  normalizeComplianceDocumentType,
+} = require('../../helper/vendor-compliance-config');
+
+const getVendorFoodTruck = async (user, foodTruckId = null) => {
+  const query = {
+    ...(foodTruckId ? { _id: foodTruckId } : {}),
+    ...(user.userType === 'VENDOR' ? { userId: user._id } : {}),
+  };
+
+  const foodTruck = await FoodTruckService.getByData(query, {
+    singleResult: true,
+    populate: ['cuisine', 'planId'],
+  });
+
+  if (!foodTruck) {
+    const error = new Error('Food truck not found');
+    error.code = 404;
+    throw error;
+  }
+
+  return foodTruck;
+};
+
+const handleError = (error, next) => next(error);
+
+exports.requirements = async (req, res, next) => {
+  try {
+    return res.data(
+      {
+        requirements: getComplianceRequirements(),
+      },
+      'Vendor compliance requirements'
+    );
+  } catch (e) {
+    return handleError(e, next);
+  }
+};
+
+exports.mySummary = async (req, res, next) => {
+  try {
+    const foodTruck = await getVendorFoodTruck(req.user, req.query.food_truck_id);
+    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
+    return res.data({ compliance: summary }, 'Vendor compliance summary');
+  } catch (e) {
+    return handleError(e, next);
+  }
+};
+
+exports.foodTruckSummary = async (req, res, next) => {
+  try {
+    const foodTruck = await getVendorFoodTruck(req.user, req.params.foodTruckId);
+    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
+    return res.data({ compliance: summary }, 'Vendor compliance summary');
+  } catch (e) {
+    return handleError(e, next);
+  }
+};
+
+exports.uploadDocument = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded!' });
+    }
+
+    const foodTruck = await getVendorFoodTruck(req.user, req.params.foodTruckId);
+    const documentType = normalizeComplianceDocumentType(req.body.document_type);
+    const { url, key } = await addObjectWithKey(
+      req.file,
+      `vendor-compliance/${foodTruck._id}/${documentType}`
+    );
+
+    const document = await VendorComplianceService.uploadComplianceDocument({
+      foodTruck,
+      file: req.file,
+      body: req.body,
+      user: req.user,
+      fileUrl: url,
+      fileKey: key,
+    });
+
+    foodTruck.documents = [
+      ...(foodTruck.documents || []),
+      {
+        title: req.body.title || document.title,
+        document_type: documentType === 'COI' ? 'INSURANCE' : 'LICENSE',
+        file_url: url,
+        file_key: key,
+        original_name: req.file.originalname,
+        mime_type: req.file.mimetype,
+        size_bytes: req.file.size,
+        uploaded_by_user_id: req.user._id,
+        uploaded_at: new Date(),
+        document_status: 'ACTIVE',
+      },
+    ];
+    await foodTruck.save();
+
+    fs.unlink(req.file.path, () => {});
+
+    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
+    return res.data(
+      { complianceDocument: document, compliance: summary },
+      'Compliance document uploaded'
+    );
+  } catch (e) {
+    if (req.file?.path) {
+      fs.unlink(req.file.path, () => {});
+    }
+    return handleError(e, next);
+  }
+};
+
+exports.history = async (req, res, next) => {
+  try {
+    const foodTruck = await getVendorFoodTruck(req.user, req.params.foodTruckId);
+    const query = {
+      food_truck_id: foodTruck._id,
+      ...(req.query.document_type
+        ? { document_type: normalizeComplianceDocumentType(req.query.document_type) }
+        : {}),
+    };
+    const [documents, audits] = await Promise.all([
+      VendorComplianceDocumentService.getByData(query, {
+        sort: { created_at: -1 },
+        lean: true,
+      }),
+      VendorComplianceAuditService.getByData(
+        { food_truck_id: foodTruck._id },
+        { sort: { created_at: -1 }, lean: true }
+      ),
+    ]);
+
+    return res.data(
+      { complianceDocumentList: documents, complianceAuditList: audits },
+      'Compliance history'
+    );
+  } catch (e) {
+    return handleError(e, next);
+  }
+};
+
+exports.adminList = async (req, res, next) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      review_status,
+      document_type,
+      food_truck_id,
+    } = req.query;
+    const query = {
+      ...(review_status ? { review_status } : {}),
+      ...(document_type
+        ? { document_type: normalizeComplianceDocumentType(document_type) }
+        : {}),
+      ...(food_truck_id ? { food_truck_id } : {}),
+    };
+
+    const documents = await VendorComplianceDocumentService.getByData(query, {
+      paging: { page, limit },
+      sort: { created_at: -1 },
+      populate: ['food_truck_id', 'vendor_user_id', 'reviewed_by_user_id'],
+      lean: true,
+    });
+    const total = await VendorComplianceDocumentService.getCount(query);
+
+    return res.data(
+      {
+        complianceDocumentList: documents,
+        total,
+        page,
+        totalPages: total < limit ? 1 : Math.ceil(total / limit),
+      },
+      'Admin compliance documents'
+    );
+  } catch (e) {
+    return handleError(e, next);
+  }
+};
+
+exports.adminDashboard = async (req, res, next) => {
+  try {
+    const documents = await VendorComplianceDocumentService.getByData(
+      { review_status: { $ne: 'archived' } },
+      { sort: { created_at: -1 }, populate: ['food_truck_id'], lean: true }
+    );
+    const byReviewStatus = documents.reduce((acc, document) => {
+      acc[document.review_status] = (acc[document.review_status] || 0) + 1;
+      return acc;
+    }, {});
+    const byDocumentType = documents.reduce((acc, document) => {
+      acc[document.document_type] = (acc[document.document_type] || 0) + 1;
+      return acc;
+    }, {});
+    const expiringSoonCount = documents.filter((document) => {
+      if (!document.expiration_date) return false;
+      const days =
+        (new Date(document.expiration_date).getTime() - Date.now()) /
+        (24 * 60 * 60 * 1000);
+      return days >= 0 && days <= 30;
+    }).length;
+
+    return res.data(
+      {
+        dashboard: {
+          total_documents: documents.length,
+          pending_review: byReviewStatus.pending_review || 0,
+          verified: byReviewStatus.verified || 0,
+          rejected: byReviewStatus.rejected || 0,
+          expired: byReviewStatus.expired || 0,
+          expiring_soon: expiringSoonCount,
+          by_review_status: byReviewStatus,
+          by_document_type: byDocumentType,
+        },
+      },
+      'Admin compliance dashboard'
+    );
+  } catch (e) {
+    return handleError(e, next);
+  }
+};
+
+exports.adminReview = async (req, res, next) => {
+  try {
+    const document = await VendorComplianceService.reviewComplianceDocument({
+      documentId: req.params.documentId,
+      reviewStatus: req.body.review_status,
+      reviewNotes: req.body.review_notes,
+      expirationDate: req.body.expiration_date,
+      issueDate: req.body.issue_date,
+      extractedFields: req.body.extracted_fields,
+      user: req.user,
+    });
+    const summary = await VendorComplianceService.calculateComplianceSummary(
+      document.food_truck_id
+    );
+
+    return res.data(
+      { complianceDocument: document, compliance: summary },
+      'Compliance document reviewed'
+    );
+  } catch (e) {
+    return handleError(e, next);
+  }
+};
+
+exports.ocrResult = async (req, res, next) => {
+  try {
+    const document = await VendorComplianceService.applyOcrResult({
+      documentId: req.params.documentId,
+      ocrStatus: req.body.ocr_status,
+      extractedFields: req.body.extracted_fields,
+      errorMessage: req.body.ocr_error_message,
+    });
+
+    return res.data({ complianceDocument: document }, 'Compliance OCR result saved');
+  } catch (e) {
+    return handleError(e, next);
+  }
+};
+
+exports.runExpirationSweep = async (req, res, next) => {
+  try {
+    const result = await VendorComplianceService.runComplianceMaintenance();
+    return res.data(result, 'Compliance expiration sweep complete');
+  } catch (e) {
+    return handleError(e, next);
+  }
+};

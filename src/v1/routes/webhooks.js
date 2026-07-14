@@ -12,4 +12,10 @@ router.post(
   WebhookController.vendorDailyLocationCheckReminders
 );
 
+/** [POST] /api/v1/webhooks/vendor-compliance/documents/:documentId/ocr-result */
+router.post(
+  '/vendor-compliance/documents/:documentId/ocr-result',
+  WebhookController.vendorComplianceOcrResult
+);
+
 module.exports = router;
