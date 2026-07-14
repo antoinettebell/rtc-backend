@@ -156,6 +156,34 @@ exports.sendOrderStatusNotification = async (user, orderId, status) => {
   }
 };
 
+exports.sendVendorDailyLocationCheckNotification = async (
+  vendor,
+  foodTruck,
+  location
+) => {
+  try {
+    const locationLabel =
+      location?.title || location?.address || foodTruck?.name || 'your saved location';
+    const noteData = {
+      [vendor._id.toString()]: {
+        title: 'Confirm your location',
+        body: `Are you located at ${locationLabel} today?`,
+        data: {
+          activityType: 'VENDOR_DAILY_LOCATION_CHECK',
+          foodTruckId: foodTruck?._id?.toString() || '',
+          locationId: location?._id?.toString() || '',
+          locationTitle: location?.title || '',
+          locationAddress: location?.address || '',
+        },
+      },
+    };
+
+    await this.sendNotificationToUsers(noteData);
+  } catch (e) {
+    console.log('========Error in sendVendorDailyLocationCheckNotification', e);
+  }
+};
+
 exports.sendStatusNotificationToVendor = async (vendor, status) => {
   try {
     const title = 'Request status';

@@ -241,6 +241,27 @@ const mSchema = mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    free_food_offered: {
+      type: Boolean,
+      default: null,
+      required: function requiredFreeFoodOffered() {
+        return this.status !== 'DRAFT';
+      },
+    },
+    free_food_provider: {
+      type: String,
+      default: null,
+      required: function requiredFreeFoodProvider() {
+        return this.status !== 'DRAFT' && this.free_food_offered === true;
+      },
+    },
+    vendors_required_to_giveaway_food: {
+      type: Boolean,
+      default: null,
+      required: function requiredVendorGiveawayFood() {
+        return this.status !== 'DRAFT' && this.free_food_offered === true;
+      },
+    },
     cuisine_preferences: {
       type: [String],
       default: [],

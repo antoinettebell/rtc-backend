@@ -1,5 +1,7 @@
 const crypto = require('crypto');
 const { docusign } = require('../../config');
+const { FoodTruckModel, UserModel } = require('../../models');
+const CustomNotification = require('../../helper/custom-notification');
 
 const acceptedStatuses = new Set([
   'completed',
@@ -75,6 +77,95 @@ const getStatus = (payload) => {
     .trim()
     .toLowerCase();
   return statusAliases[rawStatus] || rawStatus;
+};
+
+const authorizeBackendWebhook = (req, res) => {
+  const apiKey = getHeader(req.headers || {}, 'x-api-key');
+  if (!process.env.BACKEND_API_KEY) {
+    res.status(500).json({
+      success: false,
+      message: 'BACKEND_API_KEY is not configured',
+    });
+    return false;
+  }
+  if (apiKey !== process.env.BACKEND_API_KEY) {
+    res.status(401).json({
+      success: false,
+      message: 'Invalid API key',
+    });
+    return false;
+  }
+  return true;
+};
+
+const getDailyPromptLocation = (foodTruck) => {
+  const locations = foodTruck?.locations || [];
+  const currentLocationId = foodTruck?.currentLocation?.toString();
+  return (
+    locations.find((location) => location._id?.toString() === currentLocationId) ||
+    locations.find((location) => location.isOrderingOpen) ||
+    locations[locations.length - 1] ||
+    locations[0] ||
+    null
+  );
+};
+
+exports.vendorDailyLocationCheckReminders = async (req, res) => {
+  if (!authorizeBackendWebhook(req, res)) {
+    return;
+  }
+
+  const vendors = await UserModel.find(
+    {
+      userType: 'VENDOR',
+      requestStatus: 'APPROVED',
+      inactive: false,
+      verified: true,
+      'fcmTokens.0': { $exists: true },
+    },
+    { _id: 1, firstName: 1, lastName: 1, fcmTokens: 1 }
+  ).lean();
+
+  const foodTrucks = await FoodTruckModel.find(
+    {
+      userId: { $in: vendors.map((vendor) => vendor._id) },
+      inactive: false,
+      verified: true,
+    },
+    { _id: 1, userId: 1, name: 1, locations: 1, currentLocation: 1 }
+  ).lean();
+
+  const foodTruckByVendorId = new Map(
+    foodTrucks.map((foodTruck) => [foodTruck.userId?.toString(), foodTruck])
+  );
+
+  let sent = 0;
+  let skippedNoLocation = 0;
+
+  for (const vendor of vendors) {
+    const foodTruck = foodTruckByVendorId.get(vendor._id.toString());
+    const location = getDailyPromptLocation(foodTruck);
+    if (!foodTruck || !location) {
+      skippedNoLocation += 1;
+      continue;
+    }
+
+    await CustomNotification.sendVendorDailyLocationCheckNotification(
+      vendor,
+      foodTruck,
+      location
+    );
+    sent += 1;
+  }
+
+  return res.data(
+    {
+      sent,
+      skippedNoLocation,
+      totalVendors: vendors.length,
+    },
+    'Vendor daily location check reminders sent'
+  );
 };
 
 exports.docusign = async (req, res) => {

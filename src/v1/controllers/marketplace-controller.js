@@ -30,6 +30,9 @@ const { docusign } = require('../../config');
 const {
   moderateMarketplaceText,
 } = require('../../helper/marketplace-content-moderation');
+const {
+  assertMarketplaceEventImageHasNoContactInfo,
+} = require('../../helper/marketplace-image-contact-moderation');
 
 const buildError = (message, code = 400) => {
   const error = new Error(message);
@@ -285,6 +288,20 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   const normalizedEventTime = normalizeTime(body.event_time);
   const normalizedCloseTime = normalizeTime(body.event_close_time);
   const eventCloseDate = combineDateAndTime(body.event_close_date, normalizedCloseTime);
+  const freeFoodOffered =
+    body.free_food_offered === true || body.free_food_offered === false
+      ? body.free_food_offered
+      : null;
+  const freeFoodProvider = freeFoodOffered
+    ? String(body.free_food_provider || '').trim()
+    : null;
+  const vendorsRequiredToGiveawayFood =
+    freeFoodOffered === true
+      ? body.vendors_required_to_giveaway_food === true ||
+        body.vendors_required_to_giveaway_food === false
+        ? body.vendors_required_to_giveaway_food
+        : null
+      : null;
   const rawEventDurationHours = Number(body.event_duration_hours || 0);
   const rawEventDurationMinutes = Number(body.event_duration_minutes || 0);
   const eventDurationHours = Number.isFinite(rawEventDurationHours)
@@ -318,6 +335,9 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     event_duration_minutes: totalEventDurationMinutes,
     event_close_time: normalizedCloseTime,
     event_close_date: eventCloseDate,
+    free_food_offered: freeFoodOffered,
+    free_food_provider: freeFoodProvider,
+    vendors_required_to_giveaway_food: vendorsRequiredToGiveawayFood,
     draft_expires_at:
       isDraft && !existingEvent?.draft_expires_at
         ? new Date(Date.now() + DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000)
@@ -362,6 +382,26 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
 
   if (normalized.event_type === 'Other' && !hasText(normalized.event_type_other)) {
     throw buildError('Other event type details are required.', 400);
+  }
+  if (
+    normalized.free_food_offered !== true &&
+    normalized.free_food_offered !== false
+  ) {
+    throw buildError('Please answer whether free food will be offered.', 400);
+  }
+  if (normalized.free_food_offered === true) {
+    if (!hasText(normalized.free_food_provider)) {
+      throw buildError('Please enter which company/vendor will offer free food.', 400);
+    }
+    if (
+      normalized.vendors_required_to_giveaway_food !== true &&
+      normalized.vendors_required_to_giveaway_food !== false
+    ) {
+      throw buildError(
+        'Please answer whether vendors are required to give away food.',
+        400
+      );
+    }
   }
   if (serviceTypes.includes('Food Truck') && ['Plated', 'Formal'].includes(primaryServiceStyle)) {
     throw buildError('Food Truck cannot use Plated/Formal Service as its primary style.', 400);
@@ -1869,6 +1909,9 @@ const IMPORTANT_EVENT_CHANGE_FIELDS = {
   service_styles: 'Service type/style',
   equipment_needs: 'Equipment needs',
   alcohol_requirements: 'Alcohol requirements',
+  free_food_offered: 'Free food requirements',
+  free_food_provider: 'Free food requirements',
+  vendors_required_to_giveaway_food: 'Free food requirements',
 };
 
 const URGENT_EVENT_CHANGE_FIELDS = new Set([
@@ -1897,6 +1940,9 @@ const BID_REVISION_EVENT_CHANGE_FIELDS = new Set([
   'service_types',
   'event_style',
   'service_styles',
+  'free_food_offered',
+  'free_food_provider',
+  'vendors_required_to_giveaway_food',
 ]);
 
 const normalizeCompareValue = (value) => {
@@ -4684,6 +4730,8 @@ exports.addEventImage = async (req, res, next) => {
     if (!isImageMimeType(req.file.mimetype)) {
       throw buildError('Only image files are allowed for event images', 400);
     }
+
+    await assertMarketplaceEventImageHasNoContactInfo(req.file);
 
     const { url, key } = await addObjectWithKey(
       req.file,
