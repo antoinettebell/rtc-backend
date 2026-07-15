@@ -1838,6 +1838,69 @@ const getQuestionUnreadState = (plainQuestion, viewer) => {
   return false;
 };
 
+const toNotificationEventLabel = (event) =>
+  event?.event_name || event?.name || 'Marketplace event';
+
+const toNotificationEventDate = (event) =>
+  event?.event_date || event?.start_date || event?.event_start_date || null;
+
+const buildVendorSubmissionNotification = ({
+  id,
+  type,
+  event,
+  status,
+  title,
+  subtitle,
+  bidId = null,
+  applicationId = null,
+}) => ({
+  id,
+  type,
+  event_id: event?.event_id || null,
+  event_name: toNotificationEventLabel(event),
+  event_date: toNotificationEventDate(event),
+  title,
+  subtitle,
+  status,
+  bid_id: bidId,
+  application_id: applicationId,
+});
+
+const getVendorSubmissionNotificationCopy = (status, submissionType) => {
+  const normalizedStatus = String(status || '').toUpperCase();
+  const label = submissionType === 'application' ? 'application' : 'bid';
+
+  if (['AWARDED', 'ACCEPTED', 'CONFIRMED'].includes(normalizedStatus)) {
+    return {
+      title: `Event ${label} accepted`,
+      subtitle: 'Open the event to review next steps.',
+    };
+  }
+
+  if (['PAYMENT_DUE', 'PENDING_PAYMENT'].includes(normalizedStatus)) {
+    return {
+      title: 'Payment/action required',
+      subtitle: 'Complete the required marketplace payment to continue.',
+    };
+  }
+
+  if (['NOT_AWARDED', 'DECLINED', 'NOT_SELECTED'].includes(normalizedStatus)) {
+    return {
+      title: `Event ${label} not selected`,
+      subtitle: 'Open the event to review the update.',
+    };
+  }
+
+  if (['REVISION_REQUESTED', 'UPDATE_REQUESTED'].includes(normalizedStatus)) {
+    return {
+      title: `${label === 'bid' ? 'Bid' : 'Application'} revision requested`,
+      subtitle: 'Open the event to revise your submission.',
+    };
+  }
+
+  return null;
+};
+
 const sanitizeMarketplaceQuestion = (
   question,
   { includeBlocked = false, viewer = null } = {}
@@ -4101,6 +4164,161 @@ exports.myBids = async (req, res, next) => {
     );
 
     return res.data({ marketplaceBidList }, 'Marketplace bids');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.vendorNotificationSummary = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only vendors can view marketplace notifications', 403);
+    }
+
+    await getVendorMarketplaceFoodTruck(req.user._id, {
+      enforceCompliance: false,
+    });
+
+    const [questions, bids, applications] = await Promise.all([
+      MarketplaceEventQuestionService.getByData(
+        {
+          vendor_user_id: req.user._id,
+          status: { $in: ['PUBLISHED'] },
+          answer_text_public: { $nin: [null, ''] },
+        },
+        { sort: { answered_at: -1, created_at: -1 }, lean: true }
+      ),
+      MarketplaceBidService.getByData(
+        {
+          vendor_user_id: req.user._id,
+          bid_status: {
+            $in: [
+              'AWARDED',
+              'NOT_AWARDED',
+              'DECLINED',
+              'NOT_SELECTED',
+              'PAYMENT_DUE',
+              'PENDING_PAYMENT',
+              'REVISION_REQUESTED',
+              'UPDATE_REQUESTED',
+            ],
+          },
+        },
+        { sort: { updated_at: -1, submitted_at: -1, created_at: -1 }, lean: true }
+      ),
+      MarketplaceApplicationService.getByData(
+        {
+          vendor_user_id: req.user._id,
+          application_status: {
+            $in: [
+              'ACCEPTED',
+              'CONFIRMED',
+              'PAYMENT_DUE',
+              'PENDING_PAYMENT',
+              'DECLINED',
+              'NOT_SELECTED',
+              'REVISION_REQUESTED',
+              'UPDATE_REQUESTED',
+            ],
+          },
+        },
+        { sort: { updated_at: -1, submitted_at: -1, created_at: -1 }, lean: true }
+      ),
+    ]);
+
+    const unreadQuestions = questions.filter((question) =>
+      getQuestionUnreadState(question, req.user)
+    );
+    const eventIds = [
+      ...new Set(
+        [
+          ...unreadQuestions.map((question) => question.event_id),
+          ...bids.map((bid) => bid.event_id),
+          ...applications.map((application) => application.event_id),
+        ]
+          .map((eventId) => String(eventId || '').trim())
+          .filter(Boolean)
+      ),
+    ];
+    const events = eventIds.length
+      ? await MarketplaceEventService.getByData(
+          { event_id: { $in: eventIds } },
+          { lean: true }
+        )
+      : [];
+    const eventById = events.reduce((acc, event) => {
+      acc[String(event.event_id)] = event;
+      return acc;
+    }, {});
+
+    const messageNotifications = unreadQuestions.map((question) => {
+      const event = eventById[String(question.event_id)] || {};
+      return {
+        id: `marketplace-message-${question.question_id}`,
+        type: 'MARKETPLACE_MESSAGE',
+        event_id: question.event_id,
+        event_name: toNotificationEventLabel(event),
+        event_date: toNotificationEventDate(event),
+        title:
+          question.initiated_by_role === 'CUSTOMER'
+            ? 'New coordinator message'
+            : 'Marketplace question answered',
+        subtitle: 'Open event messages to review and reply.',
+        question_id: question.question_id,
+      };
+    });
+
+    const bidNotifications = bids
+      .map((bid) => {
+        const copy = getVendorSubmissionNotificationCopy(bid.bid_status, 'bid');
+        if (!copy) return null;
+        return buildVendorSubmissionNotification({
+          id: `marketplace-bid-${bid.bid_id}-${bid.bid_status}`,
+          type: 'MARKETPLACE_BID',
+          event: eventById[String(bid.event_id)] || {},
+          status: bid.bid_status,
+          title: copy.title,
+          subtitle: copy.subtitle,
+          bidId: bid.bid_id,
+        });
+      })
+      .filter(Boolean);
+
+    const applicationNotifications = applications
+      .map((application) => {
+        const copy = getVendorSubmissionNotificationCopy(
+          application.application_status,
+          'application'
+        );
+        if (!copy) return null;
+        return buildVendorSubmissionNotification({
+          id: `marketplace-application-${application.application_id}-${application.application_status}`,
+          type: 'MARKETPLACE_APPLICATION',
+          event: eventById[String(application.event_id)] || {},
+          status: application.application_status,
+          title: copy.title,
+          subtitle: copy.subtitle,
+          applicationId: application.application_id,
+        });
+      })
+      .filter(Boolean);
+
+    const marketplaceNotificationList = [
+      ...messageNotifications,
+      ...bidNotifications,
+      ...applicationNotifications,
+    ].slice(0, 50);
+
+    return res.data(
+      {
+        marketplaceNotificationList,
+        unread_message_count: messageNotifications.length,
+        action_required_count:
+          bidNotifications.length + applicationNotifications.length,
+        total_count: marketplaceNotificationList.length,
+      },
+      'Vendor marketplace notifications'
+    );
   } catch (e) {
     return next(e);
   }

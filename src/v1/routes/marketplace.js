@@ -53,6 +53,12 @@ router.get(
 );
 
 router.get(
+  '/notifications/summary',
+  allowedTo(['VENDOR']),
+  Controller.vendorNotificationSummary
+);
+
+router.get(
   '/repository/files',
   allowedTo(['CUSTOMER', 'VENDOR', 'SUPER_ADMIN']),
   validate(Validation.repositoryFiles),
