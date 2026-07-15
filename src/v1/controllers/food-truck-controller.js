@@ -90,9 +90,9 @@ const getFoodPreview = (truck, matchedMenuItem) =>
   truck.cuisine?.map((item) => item.name).filter(Boolean).join(', ') ||
   truck.name;
 
-const getClosestOpenTruckLocation = (truck, userLat, userLong) => {
+const getOpenTruckLocationCandidates = (truck, userLat, userLong) => {
   if (userLat === null || userLong === null) {
-    return null;
+    return [];
   }
 
   const locationById = (truck.locations || []).reduce((acc, location) => {
@@ -129,20 +129,26 @@ const getClosestOpenTruckLocation = (truck, userLat, userLong) => {
     });
   });
 
-  if (!candidates.length) {
-    return null;
-  }
-
-  return candidates.sort(
-    (a, b) => a.distanceInMeters - b.distanceInMeters
-  )[0];
+  return candidates.sort((a, b) => a.distanceInMeters - b.distanceInMeters);
 };
 
-const normalizeNearMeFood = (truck, userLat = null, userLong = null) => {
+const getClosestOpenTruckLocation = (truck, userLat, userLong) => {
+  return getOpenTruckLocationCandidates(truck, userLat, userLong)[0] || null;
+};
+
+const normalizeNearMeFood = (
+  truck,
+  userLat = null,
+  userLong = null,
+  openLocationCandidate = undefined
+) => {
   const matchedMenuItem = truck.matchedMenuItems?.[0] || truck.menu?.[0] || null;
   const imageUrl =
     matchedMenuItem?.imgUrls?.[0] || truck.logo || truck.photos?.[0] || null;
-  const closestOpenLocation = getClosestOpenTruckLocation(truck, userLat, userLong);
+  const closestOpenLocation =
+    openLocationCandidate === undefined
+      ? getClosestOpenTruckLocation(truck, userLat, userLong)
+      : openLocationCandidate;
   const location = closestOpenLocation?.location || truck.location || null;
   const vendorUser = Array.isArray(truck.user) ? truck.user[0] : truck.user;
   const mailingAddress = [
@@ -1696,7 +1702,26 @@ exports.nearMe = async (req, res, next) => {
     }, {});
 
     const foodItems = (foodResult?.data || [])
-      .map((truck) => normalizeNearMeFood(truck, numericUserLat, numericUserLong))
+      .flatMap((truck) => {
+        const openLocations = getOpenTruckLocationCandidates(
+          truck,
+          numericUserLat,
+          numericUserLong
+        );
+
+        if (!openLocations.length) {
+          return [normalizeNearMeFood(truck, numericUserLat, numericUserLong)];
+        }
+
+        return openLocations.map((openLocation) =>
+          normalizeNearMeFood(
+            truck,
+            numericUserLat,
+            numericUserLong,
+            openLocation
+          )
+        );
+      })
       .filter((item) =>
         matchesFoodCuisineFilters(item, selectedCuisineIds, selectedCuisines)
       );
