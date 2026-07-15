@@ -33,6 +33,15 @@ const getVendorFoodTruck = async (user, foodTruckId = null) => {
 
 const handleError = (error, next) => next(error);
 
+const getFoodTruckDocumentTypeFromComplianceType = (documentType) => {
+  if (documentType === 'HEALTH_PERMIT') return 'PERMIT';
+  if (documentType === 'BUSINESS_LICENSE') return 'LICENSE';
+  if (documentType === 'COI') return 'INSURANCE';
+  if (documentType === 'EIN') return 'EIN';
+  if (documentType === 'W9') return 'W9';
+  return 'OTHER';
+};
+
 exports.requirements = async (req, res, next) => {
   try {
     return res.data(
@@ -92,7 +101,7 @@ exports.uploadDocument = async (req, res, next) => {
       ...(foodTruck.documents || []),
       {
         title: req.body.title || document.title,
-        document_type: documentType === 'COI' ? 'INSURANCE' : 'LICENSE',
+        document_type: getFoodTruckDocumentTypeFromComplianceType(documentType),
         file_url: url,
         file_key: key,
         original_name: req.file.originalname,
@@ -209,6 +218,52 @@ exports.adminDashboard = async (req, res, next) => {
         (24 * 60 * 60 * 1000);
       return days >= 0 && days <= 30;
     }).length;
+    const foodTrucks = await FoodTruckService.getByData(
+      { inactive: false },
+      {
+        sort: { name: 1 },
+        lean: true,
+        populate: ['userId', 'planId'],
+      }
+    );
+    const vendorScores = await Promise.all(
+      (foodTrucks || []).map(async (foodTruck) => {
+        const summary = await VendorComplianceService.calculateComplianceSummary(
+          foodTruck
+        );
+        const vendorUser = foodTruck.userId;
+
+        return {
+          food_truck_id: foodTruck._id,
+          vendor_user_id:
+            vendorUser && typeof vendorUser === 'object'
+              ? vendorUser._id
+              : vendorUser,
+          vendor_name: foodTruck.name || 'Unnamed vendor',
+          vendor_email:
+            vendorUser && typeof vendorUser === 'object'
+              ? vendorUser.email || vendorUser.emailAddress || null
+              : null,
+          plan_name:
+            foodTruck.planId && typeof foodTruck.planId === 'object'
+              ? foodTruck.planId.name || foodTruck.planId.planName || null
+              : null,
+          score: summary.score,
+          score_color: summary.score_color,
+          score_color_hex: summary.score_color_hex,
+          score_label: summary.score_label,
+          eligible: summary.eligible,
+          missing_requirements: summary.missing_requirements || [],
+          expiring_requirements: summary.expiring_requirements || [],
+          pending_requirements: summary.pending_requirements || [],
+          rejected_requirements: summary.rejected_requirements || [],
+        };
+      })
+    );
+    const byScoreColor = vendorScores.reduce((acc, vendor) => {
+      acc[vendor.score_color] = (acc[vendor.score_color] || 0) + 1;
+      return acc;
+    }, {});
 
     return res.data(
       {
@@ -221,6 +276,8 @@ exports.adminDashboard = async (req, res, next) => {
           expiring_soon: expiringSoonCount,
           by_review_status: byReviewStatus,
           by_document_type: byDocumentType,
+          vendor_scores: vendorScores,
+          by_score_color: byScoreColor,
         },
       },
       'Admin compliance dashboard'
