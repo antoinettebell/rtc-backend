@@ -47,6 +47,160 @@ const CUSTOMER_FEE_TIERS = [
   { min: 0, serviceFeeRate: 5.5, deliveryFee: 6.49 },
 ];
 
+const DEFAULT_MAX_DELIVERY_DISTANCE_MILES = 7;
+const DEFAULT_DELIVERY_CLOSE_TIME = '20:00';
+const DELIVERY_CLOSE_BUFFER_MINUTES = 20;
+const METERS_PER_MILE = 1609.344;
+const DELIVERY_RADIUS_ERROR_CODE = 'DELIVERY_OUTSIDE_RADIUS';
+const DELIVERY_OUTSIDE_RADIUS_MESSAGE =
+  'Delivery is unavailable for this address because it is more than 7 miles from the vendor. Please choose pickup or enter another delivery address.';
+
+const toNullableNumber = (value) => {
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+};
+
+const getGoogleDistanceApiKey = () =>
+  process.env.GOOGLE_DISTANCE_MATRIX_API_KEY ||
+  process.env.GOOGLE_MAPS_API_KEY ||
+  process.env.GOOGLE_PLACES_API_KEY ||
+  process.env.MAPS_API_KEY ||
+  null;
+
+const getConfiguredDeliveryRadiusMiles = (foodTruck, settings) => {
+  const vendorRadius = toNullableNumber(foodTruck?.deliveryRadiusMiles);
+  const globalRadius =
+    toNullableNumber(settings?.deliveryRadiusMiles) ??
+    toNullableNumber(settings?.globalDeliveryRadiusMiles) ??
+    toNullableNumber(process.env.MAX_DELIVERY_DISTANCE_MILES);
+
+  return Math.min(
+    vendorRadius ?? globalRadius ?? DEFAULT_MAX_DELIVERY_DISTANCE_MILES,
+    DEFAULT_MAX_DELIVERY_DISTANCE_MILES
+  );
+};
+
+const httpsGetJson = (url) =>
+  new Promise((resolve, reject) => {
+    https
+      .get(url, (res) => {
+        let responseData = '';
+        res.on('data', (chunk) => {
+          responseData += chunk;
+        });
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(responseData));
+          } catch (error) {
+            reject(error);
+          }
+        });
+      })
+      .on('error', reject);
+  });
+
+const parseTimeToMinutes = (time) => {
+  const match = String(time || '').match(/^(\d{1,2}):(\d{2})/);
+  if (!match) {
+    return null;
+  }
+
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+
+  if (
+    !Number.isInteger(hours) ||
+    !Number.isInteger(minutes) ||
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return null;
+  }
+
+  return hours * 60 + minutes;
+};
+
+const getZonedDateParts = (date, timeZone) =>
+  new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+    .formatToParts(date)
+    .reduce((acc, part) => {
+      if (part.type !== 'literal') {
+        acc[part.type] = part.value;
+      }
+      return acc;
+    }, {});
+
+const normalizeZonedHour = (hour) => {
+  const parsed = Number(hour);
+  return parsed === 24 ? 0 : parsed;
+};
+
+const getTimezoneForCoordinates = async ({ latitude, longitude }) => {
+  const apiKey = getGoogleDistanceApiKey();
+
+  if (!apiKey || latitude === null || longitude === null) {
+    return 'America/New_York';
+  }
+
+  try {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const url = `https://maps.googleapis.com/maps/api/timezone/json?location=${encodeURIComponent(
+      `${latitude},${longitude}`
+    )}&timestamp=${timestamp}&key=${encodeURIComponent(apiKey)}`;
+    const result = await httpsGetJson(url);
+
+    if (result?.status === 'OK' && result?.timeZoneId) {
+      return result.timeZoneId;
+    }
+
+    console.warn('Vendor timezone lookup failed, using fallback timezone', {
+      latitude,
+      longitude,
+      status: result?.status,
+      errorMessage: result?.errorMessage,
+    });
+  } catch (error) {
+    console.warn('Vendor timezone lookup failed, using fallback timezone', {
+      latitude,
+      longitude,
+      message: error.message,
+    });
+  }
+
+  return 'America/New_York';
+};
+
+const createDeliveryValidationError = (code, message, details = {}) => {
+  const error = new Error(message);
+  error.isDeliveryValidationError = true;
+  error.deliveryCode = code;
+  error.statusCode = details.statusCode || 409;
+  Object.assign(error, details);
+  return error;
+};
+
+const sendDeliveryValidationError = (res, error) =>
+  res.status(error.statusCode || 409).json({
+    success: false,
+    eligible: false,
+    code: error.deliveryCode || DELIVERY_RADIUS_ERROR_CODE,
+    message: error.message,
+    maximumMiles: error.maximumMiles,
+    calculatedMiles: error.calculatedMiles,
+    allowPickup: true,
+  });
+
 const getCustomerFeeTier = (foodSubtotal) => {
   const amount = toMoney(foodSubtotal);
   return CUSTOMER_FEE_TIERS.find((tier) => amount >= tier.min) || CUSTOMER_FEE_TIERS.at(-1);
@@ -316,6 +470,363 @@ const resolveOrderTruckUnit = ({ foodTruck, locationId, truckUnitId = null, user
     units.find((unit) => unit.is_primary && !unit.is_archived) ||
     null
   );
+};
+
+const getFoodTruckLocationById = (foodTruck, locationId) =>
+  (foodTruck?.locations || []).find(
+    (location) => location?._id?.toString() === locationId?.toString()
+  ) || null;
+
+const getLocationCoordinates = (location) => ({
+  latitude: toNullableNumber(location?.lat ?? location?.latitude),
+  longitude: toNullableNumber(location?.long ?? location?.longitude),
+});
+
+const buildVendorPhone = (foodTruck, vendorUser, truckUnit) => {
+  const phone =
+    truckUnit?.phone ||
+    foodTruck?.phone ||
+    foodTruck?.phoneNumber ||
+    foodTruck?.businessPhone ||
+    vendorUser?.mobileNumber ||
+    null;
+
+  if (!phone) {
+    return null;
+  }
+
+  if (truckUnit?.phone || phone?.startsWith?.('+')) {
+    return phone;
+  }
+
+  return `${vendorUser?.countryCode || ''}${phone}`;
+};
+
+const resolveVendorPickupDetails = ({
+  foodTruck,
+  locationId,
+  truckUnitId = null,
+  user = {},
+  vendorUser = null,
+}) => {
+  const location = getFoodTruckLocationById(foodTruck, locationId);
+  const truckUnit = resolveOrderTruckUnit({
+    foodTruck,
+    locationId,
+    truckUnitId,
+    user,
+  });
+  const { latitude, longitude } = getLocationCoordinates(location);
+
+  return {
+    location,
+    truckUnit,
+    source: location ? 'foodTruck.locations' : 'missing',
+    name: truckUnit?.name || foodTruck?.name || foodTruck?.businessName || null,
+    address: location?.address || null,
+    phone: buildVendorPhone(foodTruck, vendorUser, truckUnit),
+    latitude,
+    longitude,
+  };
+};
+
+const getBusinessHoursForLocation = (foodTruck, locationId) =>
+  (foodTruck?.businessHours || []).find(
+    (hours) => hours?.locationId?.toString() === locationId?.toString()
+  ) || null;
+
+const hasUsableBusinessHours = (businessHours) => {
+  if (!businessHours || businessHours.available === false) {
+    return !!businessHours;
+  }
+
+  const startMinutes = parseTimeToMinutes(businessHours.startTime);
+  const endMinutes = parseTimeToMinutes(businessHours.endTime);
+
+  return (
+    startMinutes !== null &&
+    endMinutes !== null &&
+    startMinutes !== endMinutes
+  );
+};
+
+const validateDeliveryBusinessHours = async ({
+  foodTruck,
+  locationId,
+  pickup,
+  orderId = null,
+}) => {
+  const businessHours = getBusinessHoursForLocation(foodTruck, locationId);
+  const hasConfiguredBusinessHours = hasUsableBusinessHours(businessHours);
+
+  if (businessHours && businessHours.available === false) {
+    throw createDeliveryValidationError(
+      'DELIVERY_BUSINESS_HOURS_CLOSED',
+      'Delivery is unavailable because this vendor is closed for delivery orders. Please choose pickup or try another vendor.'
+    );
+  }
+
+  const closeTime =
+    hasConfiguredBusinessHours && businessHours.endTime
+      ? businessHours.endTime
+      : DEFAULT_DELIVERY_CLOSE_TIME;
+  const closeMinutes = parseTimeToMinutes(closeTime);
+
+  if (closeMinutes === null) {
+    console.warn('Delivery business hours close time is invalid', {
+      orderId,
+      vendorId: foodTruck?._id?.toString(),
+      locationId,
+      closeTime,
+    });
+    throw createDeliveryValidationError(
+      'DELIVERY_BUSINESS_HOURS_INVALID',
+      'Delivery hours could not be validated for this vendor. Please choose pickup or try another vendor.'
+    );
+  }
+
+  const timeZone = await getTimezoneForCoordinates({
+    latitude: pickup.latitude,
+    longitude: pickup.longitude,
+  });
+  const nowParts = getZonedDateParts(new Date(), timeZone);
+  const currentMinutes =
+    normalizeZonedHour(nowParts.hour) * 60 + Number(nowParts.minute);
+  const cutoffMinutes = closeMinutes - DELIVERY_CLOSE_BUFFER_MINUTES;
+  const isPastCutoff = currentMinutes >= cutoffMinutes;
+
+  console.log('Delivery business hours validation', {
+    orderId,
+    vendorId: foodTruck?._id?.toString(),
+    locationId,
+    pickupAddress: pickup.address,
+    timeZone,
+    configuredBusinessHours: hasConfiguredBusinessHours,
+    closeTime,
+    closeBufferMinutes: DELIVERY_CLOSE_BUFFER_MINUTES,
+    currentLocalTime: `${nowParts.hour}:${nowParts.minute}`,
+    cutoffMinutes,
+    eligible: !isPastCutoff,
+  });
+
+  if (isPastCutoff) {
+    throw createDeliveryValidationError(
+      'DELIVERY_TOO_CLOSE_TO_CLOSING',
+      'Delivery is unavailable within 20 minutes of the vendor closing. Please choose pickup or try another vendor.'
+    );
+  }
+
+  return {
+    timeZone,
+    closeTime,
+    closeBufferMinutes: DELIVERY_CLOSE_BUFFER_MINUTES,
+    configuredBusinessHours: hasConfiguredBusinessHours,
+  };
+};
+
+const geocodeAddress = async ({ address, apiKey }) => {
+  if (!address) {
+    return null;
+  }
+
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(
+    address
+  )}&key=${encodeURIComponent(apiKey)}`;
+  const result = await httpsGetJson(url);
+  const location = result?.results?.[0]?.geometry?.location;
+
+  if (result?.status !== 'OK' || !location) {
+    return null;
+  }
+
+  return {
+    latitude: toNullableNumber(location.lat),
+    longitude: toNullableNumber(location.lng),
+  };
+};
+
+const getDrivingDistanceMiles = async ({
+  origin,
+  destination,
+  originAddress,
+  destinationAddress,
+}) => {
+  const apiKey = getGoogleDistanceApiKey();
+
+  if (!apiKey) {
+    throw createDeliveryValidationError(
+      'DELIVERY_DISTANCE_UNAVAILABLE',
+      'Delivery distance validation is unavailable. Please choose pickup or try again later.',
+      { statusCode: 503 }
+    );
+  }
+
+  let resolvedOrigin = origin;
+  let resolvedDestination = destination;
+
+  if (
+    resolvedOrigin.latitude === null ||
+    resolvedOrigin.longitude === null
+  ) {
+    resolvedOrigin = await geocodeAddress({ address: originAddress, apiKey });
+  }
+
+  if (
+    resolvedDestination.latitude === null ||
+    resolvedDestination.longitude === null
+  ) {
+    resolvedDestination = await geocodeAddress({
+      address: destinationAddress,
+      apiKey,
+    });
+  }
+
+  if (
+    !resolvedOrigin ||
+    resolvedOrigin.latitude === null ||
+    resolvedOrigin.longitude === null ||
+    !resolvedDestination ||
+    resolvedDestination.latitude === null ||
+    resolvedDestination.longitude === null
+  ) {
+    throw createDeliveryValidationError(
+      'DELIVERY_ADDRESS_INVALID',
+      'Delivery distance could not be validated for this address. Please choose pickup or enter another delivery address.'
+    );
+  }
+
+  const originParam = `${resolvedOrigin.latitude},${resolvedOrigin.longitude}`;
+  const destinationParam = `${resolvedDestination.latitude},${resolvedDestination.longitude}`;
+  const url = `https://maps.googleapis.com/maps/api/distancematrix/json?units=imperial&origins=${encodeURIComponent(
+    originParam
+  )}&destinations=${encodeURIComponent(destinationParam)}&key=${encodeURIComponent(
+    apiKey
+  )}`;
+  const result = await httpsGetJson(url);
+  const element = result?.rows?.[0]?.elements?.[0];
+
+  if (result?.status !== 'OK' || element?.status !== 'OK') {
+    throw createDeliveryValidationError(
+      'DELIVERY_ADDRESS_INVALID',
+      'Delivery distance could not be validated for this address. Please choose pickup or enter another delivery address.'
+    );
+  }
+
+  return {
+    miles: Number((Number(element.distance.value) / METERS_PER_MILE).toFixed(2)),
+    origin: resolvedOrigin,
+    destination: resolvedDestination,
+  };
+};
+
+const validateDeliveryEligibility = async ({
+  foodTruck,
+  settings,
+  locationId,
+  truckUnitId = null,
+  user = {},
+  deliveryAddress,
+  deliveryLat,
+  deliveryLong,
+  orderId = null,
+  shipdayRequestSent = false,
+}) => {
+  const vendorUserId = foodTruck?.userId?._id || foodTruck?.userId;
+  const vendorUser = vendorUserId
+    ? await UserService.getById(vendorUserId)
+    : null;
+  const pickup = resolveVendorPickupDetails({
+    foodTruck,
+    locationId,
+    truckUnitId,
+    user,
+    vendorUser,
+  });
+
+  if (
+    !pickup.address ||
+    pickup.latitude === null ||
+    pickup.longitude === null
+  ) {
+    console.error('Delivery pickup validation failed', {
+      orderId,
+      vendorId: foodTruck?._id?.toString(),
+      locationId,
+      pickupAddressSource: pickup.source,
+      hasAddress: !!pickup.address,
+      hasLatitude: pickup.latitude !== null,
+      hasLongitude: pickup.longitude !== null,
+      shipdayRequestSent,
+    });
+    throw createDeliveryValidationError(
+      'DELIVERY_VENDOR_PICKUP_INVALID',
+      'Delivery is unavailable because the vendor does not have a valid pickup address. Please choose pickup or try another vendor.'
+    );
+  }
+
+  if (!deliveryAddress) {
+    throw createDeliveryValidationError(
+      'DELIVERY_ADDRESS_INVALID',
+      'Delivery address is required. Please choose pickup or enter a delivery address.'
+    );
+  }
+
+  const businessHoursValidation = await validateDeliveryBusinessHours({
+    foodTruck,
+    locationId,
+    pickup,
+    orderId,
+  });
+
+  const maximumMiles = getConfiguredDeliveryRadiusMiles(foodTruck, settings);
+  const distance = await getDrivingDistanceMiles({
+    origin: {
+      latitude: pickup.latitude,
+      longitude: pickup.longitude,
+    },
+    destination: {
+      latitude: toNullableNumber(deliveryLat),
+      longitude: toNullableNumber(deliveryLong),
+    },
+    originAddress: pickup.address,
+    destinationAddress: deliveryAddress,
+  });
+  const eligible = distance.miles <= maximumMiles;
+  const logPayload = {
+    orderId,
+    vendorId: foodTruck?._id?.toString(),
+    vendorFulfillmentAddress: pickup.address,
+    customerDeliveryAddress: deliveryAddress,
+    vendorTimeZone: businessHoursValidation.timeZone,
+    vendorCloseTime: businessHoursValidation.closeTime,
+    closeBufferMinutes: businessHoursValidation.closeBufferMinutes,
+    calculatedDrivingMiles: distance.miles,
+    maximumAllowedMiles: maximumMiles,
+    eligibilityResult: eligible,
+    shipdayRequestSent,
+  };
+
+  console.log('Delivery eligibility validation', logPayload);
+
+  if (!eligible) {
+    throw createDeliveryValidationError(
+      DELIVERY_RADIUS_ERROR_CODE,
+      DELIVERY_OUTSIDE_RADIUS_MESSAGE,
+      {
+        maximumMiles,
+        calculatedMiles: distance.miles,
+      }
+    );
+  }
+
+  return {
+    eligible: true,
+    maximumMiles,
+    calculatedMiles: distance.miles,
+    pickup,
+    customerCoordinates: distance.destination,
+    businessHours: businessHoursValidation,
+  };
 };
 
 const touchEmployeeSession = async (user) => {
@@ -594,21 +1105,66 @@ const createShipdayDeliveryForAcceptedOrder = async (order, foodTruck) => {
   }
 
   const customer = await UserService.getById(order.userId);
-  const vendorLocation = order.locationData || {};
   const customerAddress = order.deliveryAddress || getCustomerAddress(customer);
-  const vendorAddress = vendorLocation.address || foodTruck?.address || '';
+  const settings = await SettingService.getByData({}, { singleResult: true });
 
   if (!customerAddress) {
     throw new Error('Customer delivery address is required for Shipday');
   }
 
-  if (!vendorAddress) {
-    throw new Error('Vendor pickup address is required for Shipday');
+  let deliveryValidation = null;
+  try {
+    deliveryValidation = await validateDeliveryEligibility({
+      foodTruck,
+      settings,
+      locationId: order.locationId,
+      truckUnitId: order.truck_unit_id,
+      user: {},
+      deliveryAddress: customerAddress,
+      deliveryLat: order.deliveryLat,
+      deliveryLong: order.deliveryLong,
+      orderId: order._id?.toString(),
+      shipdayRequestSent: false,
+    });
+  } catch (error) {
+    if (error.isDeliveryValidationError) {
+      console.error('Shipday delivery blocked by RTC validation', {
+        orderId: order._id?.toString(),
+        orderNumber: order.orderNumber,
+        vendorId: foodTruck?._id?.toString(),
+        code: error.deliveryCode,
+        message: error.message,
+        calculatedMiles: error.calculatedMiles,
+        maximumMiles: error.maximumMiles,
+        shipdayRequestSent: false,
+      });
+    }
+    throw error;
   }
+
+  const pickup = deliveryValidation.pickup;
+
+  if (!pickup.phone) {
+    throw new Error('Vendor pickup phone is required for Shipday');
+  }
+
+  console.log('Shipday delivery pickup payload', {
+    orderId: order._id?.toString(),
+    orderNumber: order.orderNumber,
+    vendorId: foodTruck?._id?.toString(),
+    pickupAddressSource: pickup.source,
+    restaurantName: pickup.name,
+    restaurantAddress: pickup.address,
+    restaurantPhoneNumber: pickup.phone,
+    pickupLatitude: pickup.latitude,
+    pickupLongitude: pickup.longitude,
+    shipdayRequestSent: true,
+  });
 
   return postJson(shipdayDeliveryFunctionUrl, {
     fulfillmentType: 'DELIVERY',
     orderId: order.orderNumber || order._id.toString(),
+    vendorId: foodTruck?._id?.toString(),
     customerName: [customer?.firstName, customer?.lastName]
       .filter(Boolean)
       .join(' '),
@@ -616,8 +1172,14 @@ const createShipdayDeliveryForAcceptedOrder = async (order, foodTruck) => {
       customer?.mobileNumber || ''
     }`,
     customerAddress,
-    vendorName: foodTruck?.name,
-    vendorAddress,
+    vendorName: pickup.name,
+    vendorAddress: pickup.address,
+    vendorPhone: pickup.phone,
+    pickupLatitude: pickup.latitude,
+    pickupLongitude: pickup.longitude,
+    pickupAddressSource: pickup.source,
+    deliveryDistanceMiles: deliveryValidation.calculatedMiles,
+    deliveryRadiusMiles: deliveryValidation.maximumMiles,
     totalOrderCost: order.totalOrderCost || order.total,
     total: order.total,
     deliveryFee: normalizeDeliveryFee(order.fulfillmentType, order.deliveryFee),
@@ -1034,6 +1596,7 @@ exports.validateOrder = async (req, res, next) => {
     if (!foodTruck) {
       return res.error(new Error('No food truck found'), 409);
     }
+    const settings = await SettingService.getByData({}, { singleResult: true });
     if (
       vendorPosOrder &&
       !assertPosActorFoodTruckAccess(user, foodTruck, locationId)
@@ -1063,6 +1626,29 @@ exports.validateOrder = async (req, res, next) => {
         new Error('This location is closed for normal ordering'),
         409
       );
+    }
+
+    let deliveryValidation = null;
+    if (fulfillmentType === 'DELIVERY') {
+      try {
+        deliveryValidation = await validateDeliveryEligibility({
+          foodTruck,
+          settings,
+          locationId,
+          truckUnitId,
+          user,
+          deliveryAddress,
+          deliveryLat,
+          deliveryLong,
+          orderId: null,
+          shipdayRequestSent: false,
+        });
+      } catch (error) {
+        if (error.isDeliveryValidationError) {
+          return sendDeliveryValidationError(res, error);
+        }
+        throw error;
+      }
     }
 
     (
@@ -1478,7 +2064,6 @@ exports.validateOrder = async (req, res, next) => {
     let freeDessertAmount = 0;
     let isFreeDessertEligible = false;
 
-    const settings = await SettingService.getByData({}, { singleResult: true });
     if (
       !vendorPosOrder &&
       settings?.isFreeDessertEnabled &&
@@ -1543,6 +2128,23 @@ exports.validateOrder = async (req, res, next) => {
       fulfillmentType,
       deliveryAddress:
         fulfillmentType === 'DELIVERY' ? deliveryAddress || null : null,
+      deliveryLat: fulfillmentType === 'DELIVERY' ? deliveryLat || null : null,
+      deliveryLong:
+        fulfillmentType === 'DELIVERY' ? deliveryLong || null : null,
+      deliveryDistanceMiles: deliveryValidation?.calculatedMiles || null,
+      deliveryRadiusMiles: deliveryValidation?.maximumMiles || null,
+      deliveryValidation: deliveryValidation
+        ? {
+            eligible: deliveryValidation.eligible,
+            calculatedMiles: deliveryValidation.calculatedMiles,
+            maximumMiles: deliveryValidation.maximumMiles,
+            pickupAddressSource: deliveryValidation.pickup?.source,
+            pickupAddress: deliveryValidation.pickup?.address,
+            pickupLatitude: deliveryValidation.pickup?.latitude,
+            pickupLongitude: deliveryValidation.pickup?.longitude,
+            businessHours: deliveryValidation.businessHours,
+          }
+        : null,
       couponId,
       availabilityId,
       items: menuItems,
@@ -2767,6 +3369,7 @@ exports.add = async (req, res, next) => {
     if (!foodTruck) {
       return res.error(new Error('No food truck found'), 409);
     }
+    const settings = await SettingService.getByData({}, { singleResult: true });
     if (
       vendorPosOrder &&
       !assertPosActorFoodTruckAccess(user, foodTruck, locationId)
@@ -2796,6 +3399,29 @@ exports.add = async (req, res, next) => {
         new Error('This location is closed for normal ordering'),
         409
       );
+    }
+
+    let deliveryValidation = null;
+    if (fulfillmentType === 'DELIVERY') {
+      try {
+        deliveryValidation = await validateDeliveryEligibility({
+          foodTruck,
+          settings,
+          locationId,
+          truckUnitId,
+          user,
+          deliveryAddress,
+          deliveryLat,
+          deliveryLong,
+          orderId: null,
+          shipdayRequestSent: false,
+        });
+      } catch (error) {
+        if (error.isDeliveryValidationError) {
+          return sendDeliveryValidationError(res, error);
+        }
+        throw error;
+      }
     }
 
     (
@@ -3195,7 +3821,6 @@ exports.add = async (req, res, next) => {
     let freeDessertAmount = 0;
     let isFreeDessertEligible = false;
 
-    const settings = await SettingService.getByData({}, { singleResult: true });
     if (
       !vendorPosOrder &&
       settings?.isFreeDessertEnabled &&
@@ -3272,6 +3897,23 @@ exports.add = async (req, res, next) => {
       fulfillmentType,
       deliveryAddress:
         fulfillmentType === 'DELIVERY' ? deliveryAddress || null : null,
+      deliveryLat: fulfillmentType === 'DELIVERY' ? deliveryLat || null : null,
+      deliveryLong:
+        fulfillmentType === 'DELIVERY' ? deliveryLong || null : null,
+      deliveryDistanceMiles: deliveryValidation?.calculatedMiles || null,
+      deliveryRadiusMiles: deliveryValidation?.maximumMiles || null,
+      deliveryValidation: deliveryValidation
+        ? {
+            eligible: deliveryValidation.eligible,
+            calculatedMiles: deliveryValidation.calculatedMiles,
+            maximumMiles: deliveryValidation.maximumMiles,
+            pickupAddressSource: deliveryValidation.pickup?.source,
+            pickupAddress: deliveryValidation.pickup?.address,
+            pickupLatitude: deliveryValidation.pickup?.latitude,
+            pickupLongitude: deliveryValidation.pickup?.longitude,
+            businessHours: deliveryValidation.businessHours,
+          }
+        : null,
       couponId,
       availabilityId,
       items: menuItems,
