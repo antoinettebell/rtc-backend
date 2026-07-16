@@ -134,6 +134,26 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    deliveryLat: {
+      type: String,
+      default: null,
+    },
+    deliveryLong: {
+      type: String,
+      default: null,
+    },
+    deliveryDistanceMiles: {
+      type: Number,
+      default: null,
+    },
+    deliveryRadiusMiles: {
+      type: Number,
+      default: null,
+    },
+    deliveryValidation: {
+      type: Object,
+      default: null,
+    },
     avalaraTaxAmount: {
       type: Number,
       default: 0,
