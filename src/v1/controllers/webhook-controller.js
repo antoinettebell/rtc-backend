@@ -4,6 +4,10 @@ const { FoodTruckModel, UserModel } = require('../../models');
 const CustomNotification = require('../../helper/custom-notification');
 const VendorComplianceService = require('../services/vendor-compliance-service');
 
+const WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES = 60;
+const WEEKLY_SCHEDULE_CLOSE_BUFFER_MINUTES = 60;
+const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+
 const acceptedStatuses = new Set([
   'completed',
   'declined',
@@ -111,6 +115,145 @@ const getDailyPromptLocation = (foodTruck) => {
   );
 };
 
+const parseTimeToMinutes = (value) => {
+  const [hour, minute] = String(value || '')
+    .split(':')
+    .map((part) => Number(part));
+  if (
+    !Number.isFinite(hour) ||
+    !Number.isFinite(minute) ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    return null;
+  }
+  return hour * 60 + minute;
+};
+
+const isMinuteInsideScheduleWindow = ({ nowMinutes, startTime, endTime }) => {
+  const startMinutes = parseTimeToMinutes(startTime);
+  const endMinutes = parseTimeToMinutes(endTime);
+  if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
+    return false;
+  }
+
+  const effectiveStart = startMinutes + WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES;
+  const effectiveEnd = endMinutes - WEEKLY_SCHEDULE_CLOSE_BUFFER_MINUTES;
+  if (effectiveEnd <= effectiveStart) {
+    return false;
+  }
+
+  return nowMinutes >= effectiveStart && nowMinutes < effectiveEnd;
+};
+
+const getPrimaryTruckUnit = (foodTruck) =>
+  (foodTruck.truck_units || []).find((unit) => unit.is_primary && !unit.is_archived) ||
+  (foodTruck.truck_units || []).find((unit) => !unit.is_archived) ||
+  null;
+
+const reconcileFoodTruckWeeklySchedule = (foodTruck, now = new Date()) => {
+  const today = dayKeys[now.getDay()];
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const primaryUnit = getPrimaryTruckUnit(foodTruck);
+  const activeLocationIds = new Set();
+  const managedLocationIds = new Set();
+  const activeUnitLocationPairs = new Set();
+
+  (foodTruck.availability || [])
+    .filter((slot) => slot.locationId && slot.available)
+    .forEach((slot) => {
+      const locationId = slot.locationId?.toString();
+      const truckUnitId =
+        slot.truckUnitId?.toString() || primaryUnit?._id?.toString() || null;
+      if (!locationId || !truckUnitId) {
+        return;
+      }
+
+      managedLocationIds.add(locationId);
+      if (slot.day !== today) {
+        return;
+      }
+
+      const isActive = isMinuteInsideScheduleWindow({
+        nowMinutes,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+      });
+
+      if (isActive) {
+        activeLocationIds.add(locationId);
+        activeUnitLocationPairs.add(`${truckUnitId}:${locationId}`);
+      }
+    });
+
+  let changed = false;
+
+  (foodTruck.truck_units || []).forEach((unit) => {
+    if (unit.is_archived) {
+      return;
+    }
+
+    const before = JSON.stringify(unit.open_locations || []);
+    const pushedLocationIds = new Set();
+    unit.open_locations = (unit.open_locations || []).filter((openLocation) => {
+      const locationId =
+        openLocation.locationId?.toString() ||
+        openLocation.location_id?.toString() ||
+        openLocation._id?.toString();
+      return !managedLocationIds.has(locationId);
+    });
+
+    (foodTruck.availability || [])
+      .filter((slot) => slot.day === today && slot.locationId && slot.available)
+      .forEach((slot) => {
+        const locationId = slot.locationId?.toString();
+        const truckUnitId =
+          slot.truckUnitId?.toString() || primaryUnit?._id?.toString() || null;
+        if (
+          unit._id?.toString() === truckUnitId &&
+          activeUnitLocationPairs.has(`${truckUnitId}:${locationId}`) &&
+          !pushedLocationIds.has(locationId)
+        ) {
+          pushedLocationIds.add(locationId);
+          unit.open_locations.push({
+            locationId,
+            isOrderingOpen: true,
+            updated_at: now,
+          });
+        }
+      });
+
+    if (before !== JSON.stringify(unit.open_locations || [])) {
+      changed = true;
+    }
+  });
+
+  (foodTruck.locations || []).forEach((location) => {
+    const locationId = location._id?.toString();
+    if (!managedLocationIds.has(locationId)) {
+      return;
+    }
+    const nextOpen = activeLocationIds.has(locationId);
+    if (location.isOrderingOpen !== nextOpen) {
+      location.isOrderingOpen = nextOpen;
+      changed = true;
+    }
+  });
+
+  if (changed) {
+    foodTruck.markModified('truck_units');
+    foodTruck.markModified('locations');
+  }
+
+  return {
+    changed,
+    openedLocations: activeLocationIds.size,
+    managedLocations: managedLocationIds.size,
+  };
+};
+
 exports.vendorDailyLocationCheckReminders = async (req, res) => {
   if (!authorizeBackendWebhook(req, res)) {
     return;
@@ -206,6 +349,52 @@ exports.vendorComplianceMaintenance = async (req, res) => {
     return res.status(error.code || 500).json({
       success: false,
       message: error.message || 'Vendor compliance maintenance failed',
+    });
+  }
+};
+
+exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
+  if (!authorizeBackendWebhook(req, res)) {
+    return;
+  }
+
+  try {
+    const foodTrucks = await FoodTruckModel.find({
+      inactive: false,
+      verified: true,
+      'availability.0': { $exists: true },
+    });
+
+    let updated = 0;
+    let openedLocations = 0;
+    let managedLocations = 0;
+
+    for (const foodTruck of foodTrucks) {
+      const result = reconcileFoodTruckWeeklySchedule(foodTruck);
+      openedLocations += result.openedLocations;
+      managedLocations += result.managedLocations;
+
+      if (result.changed) {
+        await foodTruck.save();
+        updated += 1;
+      }
+    }
+
+    return res.data(
+      {
+        processed: foodTrucks.length,
+        updated,
+        managedLocations,
+        openedLocations,
+        openBufferMinutes: WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES,
+        closeBufferMinutes: WEEKLY_SCHEDULE_CLOSE_BUFFER_MINUTES,
+      },
+      'Vendor weekly schedule maintenance processed'
+    );
+  } catch (error) {
+    return res.status(error.code || 500).json({
+      success: false,
+      message: error.message || 'Vendor weekly schedule maintenance failed',
     });
   }
 };

@@ -252,6 +252,10 @@ const mSchema = mongoose.Schema(
           type: String,
           default: null,
         },
+        truckUnitId: {
+          type: String,
+          default: null,
+        },
         startTime: {
           type: String,
           default: null,

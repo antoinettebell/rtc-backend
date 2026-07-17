@@ -24,4 +24,10 @@ router.post(
   WebhookController.vendorComplianceMaintenance
 );
 
+/** [POST] /api/v1/webhooks/vendor-weekly-schedule-maintenance */
+router.post(
+  '/vendor-weekly-schedule-maintenance',
+  WebhookController.vendorWeeklyScheduleMaintenance
+);
+
 module.exports = router;
