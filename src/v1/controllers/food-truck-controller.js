@@ -513,6 +513,21 @@ const syncOrderingLocationFlags = (foodTruck) => {
   });
 };
 
+const normalizeAvailabilityForCompare = (availability = []) =>
+  JSON.stringify(
+    (availability || []).map((slot) => ({
+      day: slot.day || null,
+      locationId: slot.locationId || null,
+      truckUnitId: slot.truckUnitId || null,
+      startTime: slot.startTime || null,
+      endTime: slot.endTime || null,
+      available: slot.available !== false,
+    }))
+  );
+
+const cloneAvailability = (availability = []) =>
+  JSON.parse(JSON.stringify(availability || []));
+
 const getPlanForFoodTruck = async (foodTruck, nextPlanId = null) => {
   const planId = nextPlanId || foodTruck?.planId;
   return planId ? PlanService.getById(planId) : null;
@@ -855,9 +870,10 @@ exports.update = async (req, res, next) => {
         ein,
         // snn,
         ssn,
-        addOns,
-        documents,
-      },
+	        addOns,
+	        documents,
+	        availabilityChangeDay,
+	      },
       params: { id },
       user,
     } = req;
@@ -918,9 +934,26 @@ exports.update = async (req, res, next) => {
       syncOrderingLocationFlags(item);
     }
 
-    if (availability) {
-      item.availability = availability;
-    }
+	    if (availability) {
+	      const previousAvailability = cloneAvailability(item.availability);
+	      const nextAvailability = cloneAvailability(availability);
+	      if (
+	        normalizeAvailabilityForCompare(previousAvailability) !==
+	        normalizeAvailabilityForCompare(nextAvailability)
+	      ) {
+	        item.availabilityHistory = [
+	          ...(item.availabilityHistory || []),
+	          {
+	            archivedAt: new Date(),
+	            changedByUserId: user?._id || null,
+	            changedDay: availabilityChangeDay || null,
+	            previousAvailability,
+	            newAvailability: nextAvailability,
+	          },
+	        ];
+	      }
+	      item.availability = availability;
+	    }
 
     if (businessHours) {
       item.businessHours = businessHours;

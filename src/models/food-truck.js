@@ -242,10 +242,10 @@ const mSchema = mongoose.Schema(
         },
       },
     ],
-    availability: [
-      {
-        day: {
-          type: String,
+	    availability: [
+	      {
+	        day: {
+	          type: String,
           enum: ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'],
         },
         locationId: {
@@ -267,10 +267,35 @@ const mSchema = mongoose.Schema(
         available: {
           type: Boolean,
           default: true,
-        },
-      },
-    ],
-    businessHours: [
+	        },
+	      },
+	    ],
+	    availabilityHistory: [
+	      {
+	        archivedAt: {
+	          type: Date,
+	          default: Date.now,
+	        },
+	        changedByUserId: {
+	          type: mongoose.Schema.Types.ObjectId,
+	          ref: 'users',
+	          default: null,
+	        },
+	        changedDay: {
+	          type: String,
+	          default: null,
+	        },
+	        previousAvailability: {
+	          type: Array,
+	          default: [],
+	        },
+	        newAvailability: {
+	          type: Array,
+	          default: [],
+	        },
+	      },
+	    ],
+	    businessHours: [
       {
         locationId: {
           type: String,

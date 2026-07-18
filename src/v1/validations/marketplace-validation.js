@@ -76,10 +76,21 @@ const marketplaceEventBody = {
   equipment_needed: Joi.array().items(Joi.string()).default([]),
   vendor_fee: Joi.number().min(0).default(0),
   budgeted_amount: Joi.number().min(0).default(0),
-  payment_responsibility: Joi.string()
-    .valid('COORDINATOR', 'VENDOR', 'BOTH', 'NONE')
-    .default('NONE'),
-  event_close_date: Joi.date().allow(null, ''),
+	  payment_responsibility: Joi.string()
+	    .valid('COORDINATOR', 'VENDOR', 'BOTH', 'NONE')
+	    .default('NONE'),
+	  coordinator_tax_identifier_type: Joi.string().valid('EIN', 'SSN').allow(null, ''),
+	  coordinator_tax_identifier: Joi.string().trim().allow(null, ''),
+	  coordinator_payment_preference: Joi.string()
+	    .valid('CASHAPP', 'ZELLE', 'PAYPAL', 'VENMO', 'DIRECT_DEPOSIT')
+	    .allow(null, ''),
+	  coordinator_payment_handle: Joi.string().trim().allow(null, ''),
+	  coordinator_payment_qr_code_url: Joi.string().uri().allow(null, ''),
+	  coordinator_payment_qr_code_key: Joi.string().trim().allow(null, ''),
+	  coordinator_payment_qr_pending: Joi.boolean().default(false),
+	  coordinator_direct_deposit_routing_number: Joi.string().trim().allow(null, ''),
+	  coordinator_direct_deposit_account_number: Joi.string().trim().allow(null, ''),
+	  event_close_date: Joi.date().allow(null, ''),
   event_close_time: Joi.string().allow(null, ''),
   status: Joi.string().valid(
     'DRAFT',

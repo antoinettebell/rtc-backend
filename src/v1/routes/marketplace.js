@@ -206,6 +206,13 @@ router.post(
   Controller.addEventImage
 );
 
+router.post(
+  '/events/:eventId/coordinator-payment-qr',
+  allowedTo(['CUSTOMER']),
+  MarketplaceUpload.single(),
+  Controller.uploadCoordinatorPaymentQrCode
+);
+
 router.delete(
   '/events/:eventId/images/:imageId',
   allowedTo(['CUSTOMER', 'SUPER_ADMIN']),
