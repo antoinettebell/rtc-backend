@@ -71,6 +71,56 @@ const getOpenBreakMinutes = (session, endedAt = new Date()) => {
 
   return Math.max(0, Math.round((endedAt.getTime() - startedAt.getTime()) / 60000));
 };
+const getWorkDateKey = (value) => {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  return date.toISOString().slice(0, 10);
+};
+const getClosedShiftTotals = (session, endedAt = new Date()) => {
+  const startedAt = session?.started_at ? new Date(session.started_at) : null;
+  const startedTime =
+    startedAt && !Number.isNaN(startedAt.getTime()) ? startedAt.getTime() : null;
+  const endedTime =
+    endedAt && !Number.isNaN(endedAt.getTime()) ? endedAt.getTime() : null;
+  const grossWorkMinutes =
+    startedTime && endedTime
+      ? Math.max(0, Math.round((endedTime - startedTime) / 60000))
+      : 0;
+  const totalBreakMinutes =
+    Number(session?.total_break_minutes || 0) + getOpenBreakMinutes(session, endedAt);
+  const netWorkMinutes = Math.max(0, grossWorkMinutes - totalBreakMinutes);
+
+  return {
+    grossWorkMinutes,
+    netWorkMinutes,
+    grossHoursWorked: Number((grossWorkMinutes / 60).toFixed(2)),
+    netHoursWorked: Number((netWorkMinutes / 60).toFixed(2)),
+    totalBreakMinutes,
+    workDateKey: getWorkDateKey(session?.started_at),
+  };
+};
+const getCloseShiftUpdate = (session, endedAt = new Date()) => {
+  const totals = getClosedShiftTotals(session, endedAt);
+
+  return {
+    $set: {
+      ended_at: endedAt,
+      last_active_at: endedAt,
+      break_ended_at: endedAt,
+      break_started_at: null,
+      total_break_minutes: totals.totalBreakMinutes,
+      gross_work_minutes: totals.grossWorkMinutes,
+      net_work_minutes: totals.netWorkMinutes,
+      gross_hours_worked: totals.grossHoursWorked,
+      net_hours_worked: totals.netHoursWorked,
+      work_date_key: totals.workDateKey,
+      shift_status: 'ENDED',
+      is_active: false,
+    },
+  };
+};
 
 class EmployeeSessionService extends BaseService {
   constructor() {
@@ -96,17 +146,7 @@ class EmployeeSessionService extends BaseService {
       sessions.map((session) => ({
         updateOne: {
           filter: { _id: session._id },
-          update: {
-            $set: {
-              ended_at: now,
-              last_active_at: now,
-              break_ended_at: now,
-              break_started_at: null,
-              shift_status: 'ENDED',
-              is_active: false,
-            },
-            $inc: { total_break_minutes: getOpenBreakMinutes(session, now) },
-          },
+          update: getCloseShiftUpdate(session, now),
         },
       }))
     );
@@ -128,6 +168,11 @@ class EmployeeSessionService extends BaseService {
       break_started_at: null,
       break_ended_at: null,
       total_break_minutes: 0,
+      gross_work_minutes: null,
+      net_work_minutes: null,
+      gross_hours_worked: null,
+      net_hours_worked: null,
+      work_date_key: getWorkDateKey(now),
       shift_status: 'STARTED',
       is_active: true,
     });
@@ -161,20 +206,9 @@ class EmployeeSessionService extends BaseService {
     }
 
     const now = new Date();
-    const breakMinutes = getOpenBreakMinutes(session, now);
     return Model.findOneAndUpdate(
       { _id: session._id },
-      {
-        $set: {
-          ended_at: now,
-          last_active_at: now,
-          break_ended_at: now,
-          break_started_at: null,
-          shift_status: 'ENDED',
-          is_active: false,
-        },
-        $inc: { total_break_minutes: breakMinutes },
-      },
+      getCloseShiftUpdate(session, now),
       { new: true }
     );
   }
@@ -220,6 +254,10 @@ class EmployeeSessionService extends BaseService {
           last_active_at: now,
           break_started_at: null,
           break_ended_at: null,
+          gross_work_minutes: null,
+          net_work_minutes: null,
+          gross_hours_worked: null,
+          net_hours_worked: null,
           shift_status: 'STARTED',
           is_active: true,
         },
