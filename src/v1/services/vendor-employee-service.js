@@ -28,6 +28,36 @@ const toSafeEmployee = (employee) => {
   return safeEmployee;
 };
 
+const normalizeEmployeeRate = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+};
+
+const employeeRatesMatch = (left, right) =>
+  normalizeEmployeeRate(left) === normalizeEmployeeRate(right);
+const employeeProfileFields = [
+  'first_name',
+  'last_name',
+  'zip_code',
+  'phone_number',
+  'address_line1',
+  'address_city',
+  'address_state',
+  'address_zip',
+];
+const normalizeEmployeeProfileValue = (value) =>
+  value === null || value === undefined ? '' : String(value).trim();
+const employeeProfileValuesMatch = (left, right) =>
+  normalizeEmployeeProfileValue(left) === normalizeEmployeeProfileValue(right);
+const buildEmployeeProfileSnapshot = (source) =>
+  employeeProfileFields.reduce((snapshot, field) => {
+    snapshot[field] = source?.[field] ?? null;
+    return snapshot;
+  }, {});
+
 class VendorEmployeeService extends BaseService {
   constructor() {
     super(Model);
@@ -73,6 +103,11 @@ class VendorEmployeeService extends BaseService {
     first_name,
     last_name,
     zip_code,
+    phone_number = null,
+    address_line1 = null,
+    address_city = null,
+    address_state = null,
+    address_zip = null,
     pin,
     ...rest
   }) {
@@ -122,6 +157,11 @@ class VendorEmployeeService extends BaseService {
       first_name,
       last_name,
       zip_code,
+      phone_number,
+      address_line1,
+      address_city,
+      address_state,
+      address_zip,
       employee_login_id,
       pin_hash: pin,
     });
@@ -282,11 +322,47 @@ class VendorEmployeeService extends BaseService {
       employee.assigned_truck_unit_name = assignedTruckUnit.name;
     }
 
-    ['first_name', 'last_name', 'zip_code'].forEach((field) => {
+    const previousProfile = buildEmployeeProfileSnapshot(employee);
+    let profileChanged = false;
+
+    employeeProfileFields.forEach((field) => {
       if (update[field] !== undefined) {
+        if (!employeeProfileValuesMatch(employee[field], update[field])) {
+          profileChanged = true;
+        }
         employee[field] = update[field];
       }
     });
+
+    if (profileChanged) {
+      employee.profile_history = [
+        ...(employee.profile_history || []),
+        {
+          previous: previousProfile,
+          next: buildEmployeeProfileSnapshot(employee),
+          changed_at: new Date(),
+          changed_by_user_id: actor_user_id,
+        },
+      ];
+    }
+
+    if (
+      update.employee_rate !== undefined &&
+      !employeeRatesMatch(employee.employee_rate, update.employee_rate)
+    ) {
+      const previousRate = normalizeEmployeeRate(employee.employee_rate);
+      const nextRate = normalizeEmployeeRate(update.employee_rate);
+      employee.employee_rate_history = [
+        ...(employee.employee_rate_history || []),
+        {
+          previous_rate: previousRate,
+          new_rate: nextRate,
+          changed_at: new Date(),
+          changed_by_user_id: actor_user_id,
+        },
+      ];
+      employee.employee_rate = nextRate;
+    }
 
     ['is_active', 'is_working'].forEach((field) => {
       if (update[field] !== undefined) {
@@ -322,7 +398,7 @@ class VendorEmployeeService extends BaseService {
     return toSafeEmployee(employee);
   }
 
-  async archiveForVendor({ vendor_user_id, employee_id }) {
+  async archiveForVendor({ vendor_user_id, employee_id, actor_user_id = vendor_user_id }) {
     const employee = await this.getScopedEmployee({
       vendor_user_id,
       employee_id,
@@ -331,6 +407,8 @@ class VendorEmployeeService extends BaseService {
     employee.is_active = false;
     employee.is_working = false;
     employee.is_archived = true;
+    employee.terminated_at = employee.terminated_at || new Date();
+    employee.terminated_by_user_id = actor_user_id || vendor_user_id;
     await employee.save();
     return employee;
   }

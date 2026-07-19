@@ -182,12 +182,18 @@ exports.add = async (req, res, next) => {
   try {
     const {
       body: {
-	        food_truck_id,
-	        assigned_location_id,
-	        assigned_truck_unit_id,
-	        first_name,
+        food_truck_id,
+        assigned_location_id,
+        assigned_truck_unit_id,
+        first_name,
         last_name,
         zip_code,
+        phone_number,
+        address_line1,
+        address_city,
+        address_state,
+        address_zip,
+        employee_rate,
         pin,
         is_active,
         is_working,
@@ -200,12 +206,18 @@ exports.add = async (req, res, next) => {
 
     const employee = await Service.createForVendor({
       vendor_user_id: user._id,
-	      food_truck_id,
-	      assigned_location_id,
-	      assigned_truck_unit_id,
-	      first_name,
+      food_truck_id,
+      assigned_location_id,
+      assigned_truck_unit_id,
+      first_name,
       last_name,
       zip_code,
+      phone_number,
+      address_line1,
+      address_city,
+      address_state,
+      address_zip,
+      employee_rate,
       pin,
       is_active,
       is_working,
@@ -326,6 +338,7 @@ exports.archive = async (req, res, next) => {
     const archived = await Service.archiveForVendor({
       vendor_user_id: user._id,
       employee_id: id,
+      actor_user_id: user._id,
     });
     await EmployeeSessionService.endActiveSessions(
       archived.employee_internal_id
@@ -412,6 +425,12 @@ exports.adminAdd = async (req, res, next) => {
         first_name,
         last_name,
         zip_code,
+        phone_number,
+        address_line1,
+        address_city,
+        address_state,
+        address_zip,
+        employee_rate,
         pin,
         is_active,
         is_working,
@@ -425,6 +444,12 @@ exports.adminAdd = async (req, res, next) => {
       first_name,
       last_name,
       zip_code,
+      phone_number,
+      address_line1,
+      address_city,
+      address_state,
+      address_zip,
+      employee_rate,
       pin,
       is_active,
       is_working,
@@ -530,6 +555,7 @@ exports.adminArchive = async (req, res, next) => {
     const archived = await Service.archiveForVendor({
       vendor_user_id: employee.vendor_user_id,
       employee_id: id,
+      actor_user_id: req.user?._id || employee.vendor_user_id,
     });
     await EmployeeSessionService.endActiveSessions(
       archived.employee_internal_id

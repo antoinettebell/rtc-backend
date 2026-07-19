@@ -59,6 +59,19 @@ const getOrderFoodSalesAmount = (order) => {
   );
 };
 
+const getOpenBreakMinutes = (session, endedAt = new Date()) => {
+  if (session?.shift_status !== 'ON_BREAK' || !session?.break_started_at) {
+    return 0;
+  }
+
+  const startedAt = new Date(session.break_started_at);
+  if (Number.isNaN(startedAt.getTime())) {
+    return 0;
+  }
+
+  return Math.max(0, Math.round((endedAt.getTime() - startedAt.getTime()) / 60000));
+};
+
 class EmployeeSessionService extends BaseService {
   constructor() {
     super(Model);
@@ -70,20 +83,32 @@ class EmployeeSessionService extends BaseService {
     }
 
     const now = new Date();
-    return Model.updateMany(
-      {
-        employee_internal_id: employeeInternalId,
-        is_active: true,
-      },
-      {
-        $set: {
-          ended_at: now,
-          last_active_at: now,
-          break_ended_at: now,
-          shift_status: 'ENDED',
-          is_active: false,
+    const sessions = await Model.find({
+      employee_internal_id: employeeInternalId,
+      is_active: true,
+    }).lean();
+
+    if (!sessions.length) {
+      return null;
+    }
+
+    return Model.bulkWrite(
+      sessions.map((session) => ({
+        updateOne: {
+          filter: { _id: session._id },
+          update: {
+            $set: {
+              ended_at: now,
+              last_active_at: now,
+              break_ended_at: now,
+              break_started_at: null,
+              shift_status: 'ENDED',
+              is_active: false,
+            },
+            $inc: { total_break_minutes: getOpenBreakMinutes(session, now) },
+          },
         },
-      }
+      }))
     );
   }
 
@@ -136,6 +161,7 @@ class EmployeeSessionService extends BaseService {
     }
 
     const now = new Date();
+    const breakMinutes = getOpenBreakMinutes(session, now);
     return Model.findOneAndUpdate(
       { _id: session._id },
       {
@@ -143,9 +169,11 @@ class EmployeeSessionService extends BaseService {
           ended_at: now,
           last_active_at: now,
           break_ended_at: now,
+          break_started_at: null,
           shift_status: 'ENDED',
           is_active: false,
         },
+        $inc: { total_break_minutes: breakMinutes },
       },
       { new: true }
     );
@@ -285,6 +313,7 @@ class EmployeeSessionService extends BaseService {
     );
 
     const now = new Date();
+    const breakMinutes = getOpenBreakMinutes(session, now);
     return Model.findOneAndUpdate(
       { _id: session._id },
       {
@@ -295,6 +324,7 @@ class EmployeeSessionService extends BaseService {
           last_active_at: now,
           shift_status: 'STARTED',
         },
+        $inc: { total_break_minutes: breakMinutes },
       },
       { new: true }
     );
