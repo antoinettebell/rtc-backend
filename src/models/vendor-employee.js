@@ -71,6 +71,31 @@ const mSchema = mongoose.Schema(
       required: true,
       trim: true,
     },
+    phone_number: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    address_line1: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    address_city: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    address_state: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    address_zip: {
+      type: String,
+      default: null,
+      trim: true,
+    },
     employee_login_id: {
       type: String,
       required: true,
@@ -119,6 +144,39 @@ const mSchema = mongoose.Schema(
         },
       },
     ],
+    profile_history: [
+      {
+        previous: {
+          first_name: String,
+          last_name: String,
+          zip_code: String,
+          phone_number: String,
+          address_line1: String,
+          address_city: String,
+          address_state: String,
+          address_zip: String,
+        },
+        next: {
+          first_name: String,
+          last_name: String,
+          zip_code: String,
+          phone_number: String,
+          address_line1: String,
+          address_city: String,
+          address_state: String,
+          address_zip: String,
+        },
+        changed_at: {
+          type: Date,
+          default: Date.now,
+        },
+        changed_by_user_id: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'users',
+          default: null,
+        },
+      },
+    ],
     is_active: {
       type: Boolean,
       default: true,
@@ -130,6 +188,15 @@ const mSchema = mongoose.Schema(
     is_archived: {
       type: Boolean,
       default: false,
+    },
+    terminated_at: {
+      type: Date,
+      default: null,
+    },
+    terminated_by_user_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'users',
+      default: null,
     },
     last_login_at: {
       type: Date,

@@ -188,6 +188,11 @@ exports.add = async (req, res, next) => {
         first_name,
 	        last_name,
 	        zip_code,
+        phone_number,
+        address_line1,
+        address_city,
+        address_state,
+        address_zip,
         employee_rate,
 	        pin,
         is_active,
@@ -207,6 +212,11 @@ exports.add = async (req, res, next) => {
       first_name,
 	      last_name,
 	      zip_code,
+      phone_number,
+      address_line1,
+      address_city,
+      address_state,
+      address_zip,
       employee_rate,
 	      pin,
       is_active,
@@ -329,6 +339,7 @@ exports.archive = async (req, res, next) => {
     const archived = await Service.archiveForVendor({
       vendor_user_id: user._id,
       employee_id: id,
+      actor_user_id: user._id,
     });
     await EmployeeSessionService.endActiveSessions(
       archived.employee_internal_id
@@ -416,6 +427,11 @@ exports.adminAdd = async (req, res, next) => {
         first_name,
 	        last_name,
 	        zip_code,
+        phone_number,
+        address_line1,
+        address_city,
+        address_state,
+        address_zip,
         employee_rate,
 	        pin,
         is_active,
@@ -431,6 +447,11 @@ exports.adminAdd = async (req, res, next) => {
       first_name,
 	      last_name,
 	      zip_code,
+      phone_number,
+      address_line1,
+      address_city,
+      address_state,
+      address_zip,
       employee_rate,
 	      pin,
       is_active,
@@ -539,6 +560,7 @@ exports.adminArchive = async (req, res, next) => {
     const archived = await Service.archiveForVendor({
       vendor_user_id: employee.vendor_user_id,
       employee_id: id,
+      actor_user_id: req.user?._id || employee.vendor_user_id,
     });
     await EmployeeSessionService.endActiveSessions(
       archived.employee_internal_id
