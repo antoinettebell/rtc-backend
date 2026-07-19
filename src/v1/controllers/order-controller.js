@@ -4209,12 +4209,20 @@ exports.update = async (req, res, next) => {
 
       item.statusTime[statusTimeKey[orderStatus]] = new Date().toISOString();
 
-      // Process refund for CANCEL/REJECTED orders with Apple Pay/Google Pay
+      // Process refund/void for paid gateway CANCEL/REJECTED orders before saving the status change.
       if (
         (orderStatus === 'CANCEL' || orderStatus === 'REJECTED') &&
-        item.transactionId &&
         isGatewayPaymentMethod(item.paymentMethod)
       ) {
+        if (item.paymentStatus === 'PAID' && !item.transactionId) {
+          return res.error(
+            new Error(
+              'Can not update this order status because no payment transaction is available to refund'
+            ),
+            409
+          );
+        }
+
         try {
           const refundResp = await PaymentHelper.processRefund({
             transactionId: item.transactionId,
@@ -4282,13 +4290,16 @@ exports.update = async (req, res, next) => {
               console.error('Payment log update failed:', err);
             }
           } else {
-            item.refundStatus = 'FAILED';
-            item.refundErrorMessage = refundResp.message;
+            return res.error(
+              new Error(refundResp.message || 'Refund/void failed'),
+              400
+            );
           }
         } catch (refundError) {
-          item.refundStatus = 'FAILED';
-          item.refundErrorMessage =
-            refundError.message || 'Refund processing failed';
+          return res.error(
+            new Error(refundError.message || 'Refund processing failed'),
+            400
+          );
         }
       }
     }

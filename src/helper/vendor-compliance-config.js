@@ -3,10 +3,16 @@ const SUPPORT_PHONE_NUMBER = '(800) 410-7053';
 const DOCUMENT_TYPES = {
   HEALTH_PERMIT: {
     type: 'HEALTH_PERMIT',
-    label: 'Health Permit',
+    label: 'Sanitation Grade',
     required: false,
     scoreWeight: 0,
-    ocrFields: ['permit_number', 'issuing_authority', 'issue_date', 'expiration_date'],
+    ocrFields: [
+      'permit_number',
+      'issuing_authority',
+      'issue_date',
+      'expiration_date',
+      'sanitation_grade',
+    ],
   },
   BUSINESS_LICENSE: {
     type: 'BUSINESS_LICENSE',
@@ -47,7 +53,10 @@ const DOCUMENT_TYPES = {
 const DOCUMENT_TYPE_ALIASES = {
   HEALTH: 'HEALTH_PERMIT',
   HEALTH_PERMIT: 'HEALTH_PERMIT',
+  HEALTH_DEPARTMENT: 'HEALTH_PERMIT',
   PERMIT: 'HEALTH_PERMIT',
+  SANITATION: 'HEALTH_PERMIT',
+  SANITATION_GRADE: 'HEALTH_PERMIT',
   BUSINESS: 'BUSINESS_LICENSE',
   BUSINESS_LICENSE: 'BUSINESS_LICENSE',
   LICENSE: 'BUSINESS_LICENSE',

@@ -51,6 +51,10 @@ module.exports = {
     body: Joi.object({
       isOrderingOpen: Joi.boolean().required(),
       truck_unit_id: Joi.string().trim().allow(null, ''),
+      schedule_override_reason: Joi.string()
+        .trim()
+        .valid('OPENING_EARLY', 'CLOSING_EARLY', 'ADMIN_OVERRIDE', 'MANUAL')
+        .allow(null, ''),
     }),
   },
 
@@ -201,6 +205,7 @@ module.exports = {
           startTime: Joi.string().required(),
           endTime: Joi.string().required(),
           available: Joi.boolean().required(),
+          truckUnitId: Joi.string().trim().allow(null, ''),
         }).min(0).allow(null),
       ),
       businessHours: Joi.array().items(

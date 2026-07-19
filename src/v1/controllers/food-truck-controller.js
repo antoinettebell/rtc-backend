@@ -19,6 +19,11 @@ const {
   canUseMultipleTruckUnits,
   normalizeVendorPlan,
 } = require('../../helper/vendor-plan-helper');
+const {
+  DEFAULT_VENDOR_SCHEDULE_TIME_ZONE,
+  applyVendorScheduleTimeZoneCache,
+  getNextVendorScheduleResetAt,
+} = require('../../helper/vendor-schedule-timezone');
 const VendorComplianceService = require('../services/vendor-compliance-service');
 const { addObjectWithKey, removeObject } = require('../../helper/aws');
 const fs = require('fs');
@@ -73,6 +78,25 @@ const matchesEventTypeFilters = (event, eventTypes = []) => {
   if (!eventTypes.length) return true;
   const selectedTypes = eventTypes.map(normalizeFilterValue);
   return selectedTypes.includes(normalizeFilterValue(event.event_type));
+};
+
+const attachSanitationGrades = async (foodTrucks = []) => {
+  const list = (foodTrucks || []).filter(Boolean);
+  if (!list.length) return foodTrucks;
+
+  const gradeMap = await VendorComplianceService.getSanitationGradeMap(
+    list.map((item) => item._id)
+  );
+
+  list.forEach((item) => {
+    const id = item._id?.toString();
+    if (id && gradeMap[id]) {
+      item.sanitationGrade = gradeMap[id];
+      item.sanitation_grade = gradeMap[id];
+    }
+  });
+
+  return foodTrucks;
 };
 
 const getMarketplaceEventAddress = (event) =>
@@ -380,12 +404,20 @@ const findTruckUnit = (foodTruck, truckUnitId) => {
   );
 };
 
+const getScheduleOverrideUntilNextReset = (foodTruck) =>
+  getNextVendorScheduleResetAt(
+    foodTruck?.schedule_time_zone || DEFAULT_VENDOR_SCHEDULE_TIME_ZONE
+  );
+
 const setTruckUnitLocationOpen = ({
   foodTruck,
   truckUnitId,
   locationId,
   isOpen,
   closeOtherLocations = false,
+  statusSource = 'MANUAL',
+  scheduleOverrideReason = null,
+  scheduleOverrideUntil = null,
 }) => {
   const unit = findTruckUnit(foodTruck, truckUnitId);
   if (!unit || unit.is_archived) {
@@ -421,6 +453,9 @@ const setTruckUnitLocationOpen = ({
     locationId,
     isOrderingOpen: !!isOpen,
     updated_at: new Date(),
+    status_source: statusSource,
+    schedule_override_reason: scheduleOverrideReason,
+    schedule_override_until: scheduleOverrideUntil,
   });
 
   syncOrderingLocationFlagsFromTruckUnits(foodTruck);
@@ -639,6 +674,7 @@ exports.list = async (req, res, next) => {
       const rating = await Service.getRatting([item]);
       item.avgRate = rating[item._id.toString()].avgRate || 0;
       item.totalReviews = rating[item._id.toString()].totalReviews || 0;
+      await attachSanitationGrades([item]);
 
       return res.data(
         { [`${entityName.toLocaleLowerCase()}`]: item },
@@ -677,6 +713,7 @@ exports.list = async (req, res, next) => {
         userLong,
         distanceInMeters
       );
+      await attachSanitationGrades(data);
       return res.data(
         {
           [`${entityName.toLocaleLowerCase()}List`]: data,
@@ -703,6 +740,7 @@ exports.list = async (req, res, next) => {
       ...itm,
       ...(rating[itm._id.toString()] || {}),
     }));
+    await attachSanitationGrades(data);
 
     const total = await Service.getCount({
       ...q,
@@ -934,26 +972,28 @@ exports.update = async (req, res, next) => {
       syncOrderingLocationFlags(item);
     }
 
-	    if (availability) {
-	      const previousAvailability = cloneAvailability(item.availability);
-	      const nextAvailability = cloneAvailability(availability);
-	      if (
-	        normalizeAvailabilityForCompare(previousAvailability) !==
-	        normalizeAvailabilityForCompare(nextAvailability)
-	      ) {
-	        item.availabilityHistory = [
-	          ...(item.availabilityHistory || []),
-	          {
+		    if (availability) {
+		      const previousAvailability = cloneAvailability(item.availability);
+		      const nextAvailability = cloneAvailability(availability);
+		      const availabilityChanged =
+		        normalizeAvailabilityForCompare(previousAvailability) !==
+		        normalizeAvailabilityForCompare(nextAvailability);
+		      if (availabilityChanged) {
+		        item.availabilityHistory = [
+		          ...(item.availabilityHistory || []),
+		          {
 	            archivedAt: new Date(),
 	            changedByUserId: user?._id || null,
 	            changedDay: availabilityChangeDay || null,
 	            previousAvailability,
 	            newAvailability: nextAvailability,
-	          },
-	        ];
-	      }
-	      item.availability = availability;
-	    }
+		          },
+		        ];
+            const vendor = await UserService.getById(item.userId);
+            applyVendorScheduleTimeZoneCache(item, vendor);
+		      }
+		      item.availability = availability;
+		    }
 
     if (businessHours) {
       item.businessHours = businessHours;
@@ -1227,7 +1267,7 @@ exports.updateExtra = async (req, res, next) => {
 exports.toggleLocationOrdering = async (req, res, next) => {
   try {
     const {
-      body: { isOrderingOpen, truck_unit_id },
+      body: { isOrderingOpen, truck_unit_id, schedule_override_reason },
       params: { id, locationId },
       user,
     } = req;
@@ -1277,9 +1317,7 @@ exports.toggleLocationOrdering = async (req, res, next) => {
     }
 
     if (isOrderingOpen) {
-      if (user.userType === 'VENDOR') {
-        await VendorComplianceService.assertEligible(item, 'open and accept orders');
-      }
+      await VendorComplianceService.assertEligible(item, 'open and accept orders');
 
       const menuItemsCount = await MenuItemService.getCount({
         userId: item.userId,
@@ -1300,6 +1338,11 @@ exports.toggleLocationOrdering = async (req, res, next) => {
         locationId,
         isOpen: true,
         closeOtherLocations: user.userType === 'EMPLOYEE',
+        statusSource: 'MANUAL',
+        scheduleOverrideReason:
+          schedule_override_reason ||
+          (user.userType === 'SUPER_ADMIN' ? 'ADMIN_OVERRIDE' : 'OPENING_EARLY'),
+        scheduleOverrideUntil: getScheduleOverrideUntilNextReset(item),
       });
     } else {
       setTruckUnitLocationOpen({
@@ -1307,6 +1350,11 @@ exports.toggleLocationOrdering = async (req, res, next) => {
         truckUnitId: truck_unit_id || user.assigned_truck_unit_id || null,
         locationId,
         isOpen: false,
+        statusSource: 'MANUAL',
+        scheduleOverrideReason:
+          schedule_override_reason ||
+          (user.userType === 'SUPER_ADMIN' ? 'ADMIN_OVERRIDE' : 'CLOSING_EARLY'),
+        scheduleOverrideUntil: getScheduleOverrideUntilNextReset(item),
       });
     }
 
@@ -1561,7 +1609,7 @@ exports.filterFT = async (req, res, next) => {
       },
       user,
     } = req;
-    let { data, total } = await Service.getWithFilters(
+	    let { data, total } = await Service.getWithFilters(
       day,
       time,
       userLat,
@@ -1569,9 +1617,10 @@ exports.filterFT = async (req, res, next) => {
       limit,
       page,
       search,
-      distanceInMeters
-    );
-    if (user?.userType === 'CUSTOMER') {
+	      distanceInMeters
+	    );
+    await attachSanitationGrades(data);
+	    if (user?.userType === 'CUSTOMER') {
       const fav = {};
       (
         await FavoriteFoodTruckService.getByData({
@@ -1620,7 +1669,7 @@ exports.filterNewFT = async (req, res, next) => {
       user,
     } = req;
 
-    let { data, total } = await Service.getWithFiltersNew(
+	    let { data, total } = await Service.getWithFiltersNew(
       user,
       null,
       null,
@@ -1631,9 +1680,10 @@ exports.filterNewFT = async (req, res, next) => {
       search,
       distanceInMeters,
       available,
-      featured
-    );
-    if (user?.userType === 'CUSTOMER') {
+	      featured
+	    );
+    await attachSanitationGrades(data);
+	    if (user?.userType === 'CUSTOMER') {
       const fav = {};
       (
         await FavoriteFoodTruckService.getByData({
@@ -1733,6 +1783,8 @@ exports.nearMe = async (req, res, next) => {
       acc[image.event_id].push(image);
       return acc;
     }, {});
+
+    await attachSanitationGrades(foodResult?.data || []);
 
     const foodItems = (foodResult?.data || [])
       .flatMap((truck) => {

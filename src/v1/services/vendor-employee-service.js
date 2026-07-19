@@ -28,6 +28,17 @@ const toSafeEmployee = (employee) => {
   return safeEmployee;
 };
 
+const normalizeEmployeeRate = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+};
+
+const employeeRatesMatch = (left, right) =>
+  normalizeEmployeeRate(left) === normalizeEmployeeRate(right);
+
 class VendorEmployeeService extends BaseService {
   constructor() {
     super(Model);
@@ -118,12 +129,13 @@ class VendorEmployeeService extends BaseService {
       food_truck_id,
       assigned_location_id,
       assigned_truck_unit_id: assignedTruckUnit._id,
-      assigned_truck_unit_name: assignedTruckUnit.name,
-      first_name,
-      last_name,
+	      assigned_truck_unit_name: assignedTruckUnit.name,
+	      first_name,
+	      last_name,
       zip_code,
       employee_login_id,
       pin_hash: pin,
+      employee_rate: normalizeEmployeeRate(rest.employee_rate),
     });
   }
 
@@ -256,7 +268,7 @@ class VendorEmployeeService extends BaseService {
     return employee;
   }
 
-  async updateForVendor({ vendor_user_id, employee_id, update }) {
+  async updateForVendor({ vendor_user_id, employee_id, update, actor_user_id = vendor_user_id }) {
     const employee = await this.getScopedEmployee({ vendor_user_id, employee_id });
     let assignedLocationChanged = false;
 
@@ -287,6 +299,24 @@ class VendorEmployeeService extends BaseService {
         employee[field] = update[field];
       }
     });
+
+    if (
+      update.employee_rate !== undefined &&
+      !employeeRatesMatch(employee.employee_rate, update.employee_rate)
+    ) {
+      const previousRate = normalizeEmployeeRate(employee.employee_rate);
+      const nextRate = normalizeEmployeeRate(update.employee_rate);
+      employee.employee_rate_history = [
+        ...(employee.employee_rate_history || []),
+        {
+          previous_rate: previousRate,
+          new_rate: nextRate,
+          changed_at: new Date(),
+          changed_by_user_id: actor_user_id,
+        },
+      ];
+      employee.employee_rate = nextRate;
+    }
 
     ['is_active', 'is_working'].forEach((field) => {
       if (update[field] !== undefined) {

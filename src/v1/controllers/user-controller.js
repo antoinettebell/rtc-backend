@@ -14,6 +14,7 @@ const {
   buildTaxIdUpdate,
   sanitizeCoordinatorProfile,
 } = require('../../helper/event-coordinator-profile');
+const { applyVendorScheduleTimeZoneCache } = require('../../helper/vendor-schedule-timezone');
 const bcrypt = require('bcrypt');
 const entityName = 'User';
 const MailHelper = require('../../helper/mail-helper');
@@ -303,6 +304,10 @@ exports.update = async (req, res, next) => {
     // } 
     if (addressLine1) existRecord.addressLine1 = addressLine1;
     if (addressLine2) existRecord.addressLine2 = addressLine2;
+    const scheduleAddressChanged =
+      (addressState && addressState !== existRecord.addressState) ||
+      (addressCity && addressCity !== existRecord.addressCity) ||
+      (addressPostal && addressPostal !== existRecord.addressPostal);
     if (addressState) existRecord.addressState = addressState;
     if (addressCity) existRecord.addressCity = addressCity;
     if (addressCountry) existRecord.addressCountry = addressCountry;
@@ -351,6 +356,16 @@ exports.update = async (req, res, next) => {
     }
 
     await existRecord.save();
+
+    if (existRecord.userType === 'VENDOR' && scheduleAddressChanged) {
+      const foodTruck = await FoodTruckService.getByData(
+        { userId: existRecord._id },
+        { singleResult: true }
+      );
+      if (foodTruck && applyVendorScheduleTimeZoneCache(foodTruck, existRecord)) {
+        await foodTruck.save();
+      }
+    }
 
     return res.data(
       {

@@ -180,15 +180,16 @@ exports.vendorShiftAction = async (req, res, next) => {
 
 exports.add = async (req, res, next) => {
   try {
-    const {
-      body: {
-	        food_truck_id,
-	        assigned_location_id,
-	        assigned_truck_unit_id,
-	        first_name,
-        last_name,
-        zip_code,
-        pin,
+	    const {
+	      body: {
+        food_truck_id,
+        assigned_location_id,
+        assigned_truck_unit_id,
+        first_name,
+	        last_name,
+	        zip_code,
+        employee_rate,
+	        pin,
         is_active,
         is_working,
       },
@@ -198,15 +199,16 @@ exports.add = async (req, res, next) => {
     const foodTruck = await Service.getVendorFoodTruck(user._id, food_truck_id);
     await assertEmployeeManagementAllowed(foodTruck);
 
-    const employee = await Service.createForVendor({
-      vendor_user_id: user._id,
-	      food_truck_id,
-	      assigned_location_id,
-	      assigned_truck_unit_id,
-	      first_name,
-      last_name,
-      zip_code,
-      pin,
+	    const employee = await Service.createForVendor({
+	      vendor_user_id: user._id,
+      food_truck_id,
+      assigned_location_id,
+      assigned_truck_unit_id,
+      first_name,
+	      last_name,
+	      zip_code,
+      employee_rate,
+	      pin,
       is_active,
       is_working,
     });
@@ -250,6 +252,7 @@ exports.update = async (req, res, next) => {
       vendor_user_id: user._id,
       employee_id: id,
       update: body,
+      actor_user_id: user._id,
     });
 
     if (
@@ -409,10 +412,12 @@ exports.adminAdd = async (req, res, next) => {
         vendor_user_id,
         food_truck_id,
         assigned_location_id,
+        assigned_truck_unit_id,
         first_name,
-        last_name,
-        zip_code,
-        pin,
+	        last_name,
+	        zip_code,
+        employee_rate,
+	        pin,
         is_active,
         is_working,
       },
@@ -422,10 +427,12 @@ exports.adminAdd = async (req, res, next) => {
       vendor_user_id,
       food_truck_id,
       assigned_location_id,
+      assigned_truck_unit_id,
       first_name,
-      last_name,
-      zip_code,
-      pin,
+	      last_name,
+	      zip_code,
+      employee_rate,
+	      pin,
       is_active,
       is_working,
     });
@@ -444,6 +451,7 @@ exports.adminUpdate = async (req, res, next) => {
     const {
       params: { id },
       body,
+      user,
     } = req;
 
     const employee = await Service.getByData(
@@ -457,6 +465,7 @@ exports.adminUpdate = async (req, res, next) => {
       vendor_user_id: employee.vendor_user_id,
       employee_id: id,
       update: body,
+      actor_user_id: user?._id || employee.vendor_user_id,
     });
 
     if (body.is_working === false || body.is_active === false) {

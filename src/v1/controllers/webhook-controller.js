@@ -3,6 +3,10 @@ const { docusign } = require('../../config');
 const { FoodTruckModel, UserModel } = require('../../models');
 const CustomNotification = require('../../helper/custom-notification');
 const VendorComplianceService = require('../services/vendor-compliance-service');
+const {
+  DEFAULT_VENDOR_SCHEDULE_TIME_ZONE,
+  applyVendorScheduleTimeZoneCache,
+} = require('../../helper/vendor-schedule-timezone');
 
 const WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES = 60;
 const WEEKLY_SCHEDULE_CLOSE_BUFFER_MINUTES = 60;
@@ -132,6 +136,39 @@ const parseTimeToMinutes = (value) => {
   return hour * 60 + minute;
 };
 
+const getZonedScheduleParts = (date, timeZone = DEFAULT_VENDOR_SCHEDULE_TIME_ZONE) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const values = parts.reduce((acc, part) => {
+    if (part.type !== 'literal') {
+      acc[part.type] = part.value;
+    }
+    return acc;
+  }, {});
+  const weekdayMap = {
+    Sun: 'sun',
+    Mon: 'mon',
+    Tue: 'tue',
+    Wed: 'wed',
+    Thu: 'thu',
+    Fri: 'fri',
+    Sat: 'sat',
+  };
+  const hour = Number(values.hour === '24' ? '0' : values.hour);
+  const minute = Number(values.minute || 0);
+
+  return {
+    day: weekdayMap[values.weekday] || dayKeys[date.getDay()],
+    minutes: hour * 60 + minute,
+    timeZone,
+  };
+};
+
 const isMinuteInsideScheduleWindow = ({ nowMinutes, startTime, endTime }) => {
   const startMinutes = parseTimeToMinutes(startTime);
   const endMinutes = parseTimeToMinutes(endTime);
@@ -153,13 +190,68 @@ const getPrimaryTruckUnit = (foodTruck) =>
   (foodTruck.truck_units || []).find((unit) => !unit.is_archived) ||
   null;
 
-const reconcileFoodTruckWeeklySchedule = (foodTruck, now = new Date()) => {
-  const today = dayKeys[now.getDay()];
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+const getOpenLocationId = (openLocation) =>
+  openLocation.locationId?.toString() ||
+  openLocation.location_id?.toString() ||
+  openLocation._id?.toString() ||
+  null;
+
+const hasActiveScheduleOverride = (openLocation, now) =>
+  openLocation?.status_source === 'MANUAL' &&
+  openLocation?.schedule_override_until &&
+  new Date(openLocation.schedule_override_until).getTime() > now.getTime();
+
+const closeFoodTruckForCompliance = (foodTruck, now = new Date()) => {
+  let changed = false;
+  (foodTruck.truck_units || []).forEach((unit) => {
+    const before = JSON.stringify(unit.open_locations || []);
+    unit.open_locations = (unit.open_locations || []).map((openLocation) => ({
+      ...openLocation,
+      isOrderingOpen: false,
+      updated_at: now,
+      status_source: 'COMPLIANCE',
+      schedule_override_reason: 'COMPLIANCE_BLOCK',
+      schedule_override_until: null,
+    }));
+    if (before !== JSON.stringify(unit.open_locations || [])) {
+      changed = true;
+    }
+  });
+
+  (foodTruck.locations || []).forEach((location) => {
+    if (location.isOrderingOpen) {
+      location.isOrderingOpen = false;
+      changed = true;
+    }
+  });
+
+  if (foodTruck.currentLocation) {
+    foodTruck.currentLocation = null;
+    changed = true;
+  }
+
+  if (changed) {
+    foodTruck.markModified('truck_units');
+    foodTruck.markModified('locations');
+    foodTruck.markModified('currentLocation');
+  }
+
+  return changed;
+};
+
+const reconcileFoodTruckWeeklySchedule = (
+  foodTruck,
+  now = new Date(),
+  timeZone = DEFAULT_VENDOR_SCHEDULE_TIME_ZONE
+) => {
+  const scheduleParts = getZonedScheduleParts(now, timeZone);
+  const today = scheduleParts.day;
+  const nowMinutes = scheduleParts.minutes;
   const primaryUnit = getPrimaryTruckUnit(foodTruck);
   const activeLocationIds = new Set();
   const managedLocationIds = new Set();
   const activeUnitLocationPairs = new Set();
+  const overrideUnitLocationPairs = new Set();
 
   (foodTruck.availability || [])
     .filter((slot) => slot.locationId && slot.available)
@@ -195,13 +287,29 @@ const reconcileFoodTruckWeeklySchedule = (foodTruck, now = new Date()) => {
       return;
     }
 
+    (unit.open_locations || []).forEach((openLocation) => {
+      if (!hasActiveScheduleOverride(openLocation, now)) {
+        return;
+      }
+      const locationId = getOpenLocationId(openLocation);
+      if (locationId) {
+        overrideUnitLocationPairs.add(`${unit._id?.toString()}:${locationId}`);
+      }
+    });
+  });
+
+  (foodTruck.truck_units || []).forEach((unit) => {
+    if (unit.is_archived) {
+      return;
+    }
+
     const before = JSON.stringify(unit.open_locations || []);
     const pushedLocationIds = new Set();
     unit.open_locations = (unit.open_locations || []).filter((openLocation) => {
-      const locationId =
-        openLocation.locationId?.toString() ||
-        openLocation.location_id?.toString() ||
-        openLocation._id?.toString();
+      const locationId = getOpenLocationId(openLocation);
+      if (hasActiveScheduleOverride(openLocation, now)) {
+        return true;
+      }
       return !managedLocationIds.has(locationId);
     });
 
@@ -211,34 +319,54 @@ const reconcileFoodTruckWeeklySchedule = (foodTruck, now = new Date()) => {
         const locationId = slot.locationId?.toString();
         const truckUnitId =
           slot.truckUnitId?.toString() || primaryUnit?._id?.toString() || null;
-        if (
-          unit._id?.toString() === truckUnitId &&
-          activeUnitLocationPairs.has(`${truckUnitId}:${locationId}`) &&
-          !pushedLocationIds.has(locationId)
-        ) {
-          pushedLocationIds.add(locationId);
-          unit.open_locations.push({
-            locationId,
-            isOrderingOpen: true,
-            updated_at: now,
-          });
-        }
-      });
+	        if (
+	          unit._id?.toString() === truckUnitId &&
+	          activeUnitLocationPairs.has(`${truckUnitId}:${locationId}`) &&
+          !overrideUnitLocationPairs.has(`${truckUnitId}:${locationId}`) &&
+	          !pushedLocationIds.has(locationId)
+	        ) {
+	          pushedLocationIds.add(locationId);
+	          unit.open_locations.push({
+	            locationId,
+	            isOrderingOpen: true,
+	            updated_at: now,
+            status_source: 'SCHEDULE',
+            schedule_override_until: null,
+            schedule_override_reason: null,
+	          });
+	        }
+	      });
 
     if (before !== JSON.stringify(unit.open_locations || [])) {
       changed = true;
     }
   });
 
-  (foodTruck.locations || []).forEach((location) => {
-    const locationId = location._id?.toString();
-    if (!managedLocationIds.has(locationId)) {
-      return;
-    }
-    const nextOpen = activeLocationIds.has(locationId);
-    if (location.isOrderingOpen !== nextOpen) {
-      location.isOrderingOpen = nextOpen;
-      changed = true;
+	  (foodTruck.locations || []).forEach((location) => {
+	    const locationId = location._id?.toString();
+	    if (!managedLocationIds.has(locationId)) {
+	      return;
+	    }
+    const overrideOpen = (foodTruck.truck_units || []).some((unit) =>
+      (unit.open_locations || []).some(
+        (openLocation) =>
+          getOpenLocationId(openLocation) === locationId &&
+          hasActiveScheduleOverride(openLocation, now) &&
+          !!openLocation.isOrderingOpen
+      )
+    );
+    const overrideClosed = (foodTruck.truck_units || []).some((unit) =>
+      (unit.open_locations || []).some(
+        (openLocation) =>
+          getOpenLocationId(openLocation) === locationId &&
+          hasActiveScheduleOverride(openLocation, now) &&
+          !openLocation.isOrderingOpen
+      )
+    );
+	    const nextOpen = overrideClosed ? false : overrideOpen || activeLocationIds.has(locationId);
+	    if (location.isOrderingOpen !== nextOpen) {
+	      location.isOrderingOpen = nextOpen;
+	      changed = true;
     }
   });
 
@@ -364,17 +492,46 @@ exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
       verified: true,
       'availability.0': { $exists: true },
     });
+    const vendors = await UserModel.find(
+      { _id: { $in: foodTrucks.map((foodTruck) => foodTruck.userId) } },
+      { _id: 1, addressCity: 1, addressState: 1, addressPostal: 1 }
+    ).lean();
+    const vendorById = new Map(
+      vendors.map((vendor) => [vendor._id?.toString(), vendor])
+    );
 
     let updated = 0;
-    let openedLocations = 0;
-    let managedLocations = 0;
+	    let openedLocations = 0;
+	    let managedLocations = 0;
+    let complianceClosed = 0;
+	    const processedByTimeZone = {};
 
-    for (const foodTruck of foodTrucks) {
-      const result = reconcileFoodTruckWeeklySchedule(foodTruck);
+	    for (const foodTruck of foodTrucks) {
+	      const vendor = vendorById.get(foodTruck.userId?.toString());
+	      const cacheChanged = applyVendorScheduleTimeZoneCache(foodTruck, vendor);
+	      const timeZone =
+	        foodTruck.schedule_time_zone || DEFAULT_VENDOR_SCHEDULE_TIME_ZONE;
+	      processedByTimeZone[timeZone] = (processedByTimeZone[timeZone] || 0) + 1;
+
+      const complianceSummary =
+        await VendorComplianceService.calculateComplianceSummary(foodTruck);
+      if (!complianceSummary.can_open_accepting_orders) {
+        const complianceChanged = closeFoodTruckForCompliance(foodTruck);
+        if (complianceChanged || cacheChanged) {
+          await foodTruck.save();
+          updated += 1;
+        }
+        if (complianceChanged) {
+          complianceClosed += 1;
+        }
+        continue;
+      }
+
+	      const result = reconcileFoodTruckWeeklySchedule(foodTruck, new Date(), timeZone);
       openedLocations += result.openedLocations;
       managedLocations += result.managedLocations;
 
-      if (result.changed) {
+      if (result.changed || cacheChanged) {
         await foodTruck.save();
         updated += 1;
       }
@@ -385,9 +542,12 @@ exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
         processed: foodTrucks.length,
         updated,
         managedLocations,
-        openedLocations,
+	        openedLocations,
+        complianceClosed,
         openBufferMinutes: WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES,
         closeBufferMinutes: WEEKLY_SCHEDULE_CLOSE_BUFFER_MINUTES,
+        fallbackScheduleTimeZone: DEFAULT_VENDOR_SCHEDULE_TIME_ZONE,
+        processedByTimeZone,
       },
       'Vendor weekly schedule maintenance processed'
     );

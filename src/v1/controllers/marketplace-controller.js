@@ -36,6 +36,9 @@ const {
   assertMarketplaceEventImageHasNoContactInfo,
 } = require('../../helper/marketplace-image-contact-moderation');
 const EncryptionService = require('../../helper/encryption');
+const {
+  buildTaxIdUpdate,
+} = require('../../helper/event-coordinator-profile');
 
 const buildError = (message, code = 400) => {
   const error = new Error(message);
@@ -144,7 +147,7 @@ const VENDOR_AGREEMENT_VALID_DAYS = 365;
 const REQUIREMENT_ATTACHMENT_TYPE = 'REQUIREMENT_DOCUMENT';
 const DEFAULT_REQUIREMENT_LABELS = [
   'Insurance',
-  'Health Permit',
+  'Sanitation Grade',
   'Fire Permit',
   'Liquor License',
   'Certificate of Insurance',
@@ -154,7 +157,7 @@ const DEFAULT_REQUIREMENT_LABELS = [
 ];
 
 const COMPLIANCE_DOCUMENT_LABELS = {
-  HEALTH_PERMIT: 'Health Permit',
+  HEALTH_PERMIT: 'Sanitation Grade',
   BUSINESS_LICENSE: 'Business License',
   COI: 'Insurance',
 };
@@ -1703,8 +1706,8 @@ const getVendorMarketplaceFoodTruck = async (userId, options = {}) => {
 
   if (enforceCompliance) {
     const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
-    if (Number(summary.score || 0) < 100 || !summary.eligible) {
-      const error = buildError('Please update your compliance paperwork.', 409);
+    if (Number(summary.score || 0) < 100 || !summary.eligible || !summary.can_bid) {
+      const error = buildError(summary.message || 'Please update your compliance paperwork.', 409);
       error.compliance = summary;
       throw error;
     }
@@ -1814,10 +1817,24 @@ const attachVerifiedComplianceDocumentsToSubmission = async ({
 const assertCustomerEventCoordinator = async (userId) => {
   const customer = await UserService.getById(userId);
   if (
+    customer?.isEventCoordinator &&
+    !customer.eventCoordinatorTaxIdEncrypted &&
+    customer.eventCoordinatorEin
+  ) {
+    Object.assign(
+      customer,
+      buildTaxIdUpdate({
+        type: customer.eventCoordinatorTaxIdType || 'EIN',
+        value: customer.eventCoordinatorEin,
+      })
+    );
+    await customer.save();
+  }
+
+  if (
     !customer ||
     !customer.isEventCoordinator ||
-    !customer.eventCoordinatorTaxIdEncrypted &&
-    !customer.eventCoordinatorEin
+    !customer.eventCoordinatorTaxIdEncrypted
   ) {
     throw buildError(
       'Event coordination profile with tax ID is required to access My Events.',

@@ -59,10 +59,45 @@ class FavoriteFoodTruckService extends BaseService {
           },
         },
         {
+          $lookup: {
+            from: 'vendor_compliance_documents',
+            let: { foodTruckId: '$foodTruck._id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ['$food_truck_id', '$$foodTruckId'] },
+                  document_type: 'HEALTH_PERMIT',
+                  review_status: 'verified',
+                  archived_at: null,
+                },
+              },
+              { $sort: { created_at: -1 } },
+              { $limit: 1 },
+              { $project: { extracted_fields: 1 } },
+            ],
+            as: 'sanitationGradeDocument',
+          },
+        },
+        {
+          $addFields: {
+            'foodTruck.sanitationGrade': {
+              $ifNull: [
+                {
+                  $arrayElemAt: [
+                    '$sanitationGradeDocument.extracted_fields.sanitation_grade',
+                    0,
+                  ],
+                },
+                null,
+              ],
+            },
+          },
+        },
+        {
           $match: { ...q },
         },
         { $sort: { createdAt: -1 } },
-        { $project: { reviews: 0 } },
+        { $project: { reviews: 0, sanitationGradeDocument: 0 } },
         {
           $facet: {
             data: [{ $skip: (page - 1) * limit }, { $limit: limit }],

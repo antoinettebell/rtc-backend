@@ -38,6 +38,62 @@ const taxDigits = (value) => String(value || '').replace(/\D/g, '');
 
 const hasValidTaxIdentifier = (value) => taxDigits(value).length === 9;
 
+const SANITATION_GRADE_FIELDS = [
+  'sanitation_grade',
+  'sanitationGrade',
+  'grade',
+  'letter_grade',
+  'inspection_grade',
+  'rating',
+  'sanitation_rating',
+];
+
+const normalizeSanitationGrade = (value) => {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim().toUpperCase();
+  if (!text) return null;
+
+  const letterMatch = text.match(/\b([ABCDF])\b/);
+  if (letterMatch) return letterMatch[1];
+
+  const numericMatch = text.match(/\b(100|[1-9]?\d)(?:\.\d+)?\b/);
+  if (!numericMatch) return null;
+
+  const score = Number(numericMatch[1]);
+  if (!Number.isFinite(score)) return null;
+  if (score >= 90) return 'A';
+  if (score >= 80) return 'B';
+  if (score >= 70) return 'C';
+  if (score >= 60) return 'D';
+  return 'F';
+};
+
+const getSanitationGradeFromFields = (fields = {}) => {
+  for (const fieldName of SANITATION_GRADE_FIELDS) {
+    const grade = normalizeSanitationGrade(fields?.[fieldName]);
+    if (grade) return grade;
+  }
+
+  return normalizeSanitationGrade(
+    fields?.raw_text ||
+      fields?.text ||
+      fields?.ocr_text ||
+      fields?.detected_text ||
+      fields?.full_text
+  );
+};
+
+const getSanitationGradeRank = (grade) => {
+  const normalized = normalizeSanitationGrade(grade);
+  if (!normalized) return null;
+  return { A: 5, B: 4, C: 3, D: 2, F: 1 }[normalized] || null;
+};
+
+const isSanitationGradeEligible = (grade) => {
+  const rank = getSanitationGradeRank(grade);
+  return rank !== null && rank >= getSanitationGradeRank('B');
+};
+
 const getScoreBand = ({ score, eligible, hasPendingReview }) => {
   if (!eligible || score < 50) {
     return {
@@ -97,6 +153,40 @@ const selectLatestByType = (documents = []) =>
     return acc;
   }, {});
 
+const getLatestSanitationGradeDocument = (documents = [], now = new Date()) =>
+  documents.find(
+    (document) =>
+      document.document_type === 'HEALTH_PERMIT' &&
+      isVerifiedActiveDocument(document, now) &&
+      getSanitationGradeFromFields(document.extracted_fields)
+  ) || null;
+
+const getSanitationGradeMap = async (foodTruckIds = []) => {
+  const ids = [...new Set((foodTruckIds || []).filter(Boolean).map((id) => id.toString()))];
+  if (!ids.length) return {};
+
+  const documents = await VendorComplianceDocumentService.getByData(
+    {
+      food_truck_id: { $in: ids },
+      document_type: 'HEALTH_PERMIT',
+      review_status: 'verified',
+      archived_at: null,
+    },
+    { lean: true, sort: { created_at: -1 } }
+  );
+
+  return documents.reduce((acc, document) => {
+    const id = document.food_truck_id?.toString();
+    if (!id || acc[id]) return acc;
+
+    const grade = getSanitationGradeFromFields(document.extracted_fields);
+    if (grade) {
+      acc[id] = grade;
+    }
+    return acc;
+  }, {});
+};
+
 const calculateComplianceSummary = async (foodTruckOrId) => {
   const foodTruck =
     typeof foodTruckOrId === 'object' && foodTruckOrId?._id
@@ -113,6 +203,11 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   const now = new Date();
   const documents = await getCurrentDocuments(foodTruck._id);
   const latestByType = selectLatestByType(documents);
+  const sanitationGradeDocument = getLatestSanitationGradeDocument(documents, now);
+  const sanitationGrade = getSanitationGradeFromFields(
+    sanitationGradeDocument?.extracted_fields
+  );
+  const sanitationGradeEligible = isSanitationGradeEligible(sanitationGrade);
   const hasSsnOnProfile = hasValidTaxIdentifier(foodTruck.ssn);
   const hasEinOnProfile = hasValidTaxIdentifier(foodTruck.ein);
   const taxIdRequirementType = hasSsnOnProfile ? 'SSN' : 'EIN';
@@ -182,6 +277,11 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   const eligible = missingRequirements.length === 0 && rejectedRequirements.length === 0;
   const hasPendingReview = pendingRequirements.length > 0;
   const scoreBand = getScoreBand({ score, eligible, hasPendingReview });
+  const complianceMessage = !sanitationGradeEligible
+    ? 'Please work on increasing your Sanitation Score and resubmit your Rating'
+    : eligible
+      ? 'Vendor compliance is eligible.'
+      : `Vendor compliance must be completed before bidding or accepting orders. Contact support at ${SUPPORT_PHONE_NUMBER}.`;
 
   return {
     food_truck_id: foodTruck._id,
@@ -191,12 +291,12 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     score_color_hex: scoreBand.hex,
     score_label: scoreBand.label,
     eligible,
-    can_bid: eligible,
-    can_open_accepting_orders: eligible,
+    sanitation_grade: sanitationGrade,
+    sanitation_grade_eligible: sanitationGradeEligible,
+    can_bid: eligible && sanitationGradeEligible,
+    can_open_accepting_orders: sanitationGradeEligible,
     support_phone_number: SUPPORT_PHONE_NUMBER,
-    message: eligible
-      ? 'Vendor compliance is eligible.'
-      : `Vendor compliance must be completed before bidding or accepting orders. Contact support at ${SUPPORT_PHONE_NUMBER}.`,
+    message: complianceMessage,
     requirements,
     missing_requirements: missingRequirements,
     expiring_requirements: expiringRequirements,
@@ -207,9 +307,14 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
 
 const assertEligible = async (foodTruckOrId, actionLabel = 'continue') => {
   const summary = await calculateComplianceSummary(foodTruckOrId);
-  if (!summary.eligible) {
+  const isOpenAcceptingOrdersAction = /open|accept orders/i.test(actionLabel);
+  const isBlocked = isOpenAcceptingOrdersAction
+    ? !summary.can_open_accepting_orders
+    : !summary.eligible || !summary.can_bid;
+
+  if (isBlocked) {
     throw buildComplianceError(
-      `Compliance must be complete before vendors can ${actionLabel}.`,
+      summary.message || `Compliance must be complete before vendors can ${actionLabel}.`,
       409,
       summary
     );
@@ -371,8 +476,16 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     throw buildComplianceError('Compliance document not found', 404);
   }
 
+  const normalizedExtractedFields = extractedFields || document.extracted_fields || {};
+  if (document.document_type === 'HEALTH_PERMIT') {
+    const sanitationGrade = getSanitationGradeFromFields(normalizedExtractedFields);
+    if (sanitationGrade) {
+      normalizedExtractedFields.sanitation_grade = sanitationGrade;
+    }
+  }
+
   document.ocr_status = ocrStatus || 'completed';
-  document.extracted_fields = extractedFields || document.extracted_fields || {};
+  document.extracted_fields = normalizedExtractedFields;
   document.ocr_completed_at = new Date();
   document.ocr_error_message = errorMessage || null;
   if (extractedFields?.expiration_date && !document.expiration_date) {
@@ -494,6 +607,8 @@ module.exports = {
   REMINDER_DAYS,
   calculateComplianceSummary,
   assertEligible,
+  getSanitationGradeMap,
+  getSanitationGradeFromFields,
   uploadComplianceDocument,
   reviewComplianceDocument,
   applyOcrResult,

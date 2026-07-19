@@ -93,6 +93,32 @@ const mSchema = mongoose.Schema(
       default: 'EMPLOYEE',
       immutable: true,
     },
+    employee_rate: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    employee_rate_history: [
+      {
+        previous_rate: {
+          type: Number,
+          default: null,
+        },
+        new_rate: {
+          type: Number,
+          default: null,
+        },
+        changed_at: {
+          type: Date,
+          default: Date.now,
+        },
+        changed_by_user_id: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'users',
+          default: null,
+        },
+      },
+    ],
     is_active: {
       type: Boolean,
       default: true,

@@ -126,6 +126,19 @@ const mSchema = mongoose.Schema(
               type: Date,
               default: Date.now,
             },
+            status_source: {
+              type: String,
+              enum: ['MANUAL', 'SCHEDULE'],
+              default: 'MANUAL',
+            },
+            schedule_override_until: {
+              type: Date,
+              default: null,
+            },
+            schedule_override_reason: {
+              type: String,
+              default: null,
+            },
           },
         ],
       },
@@ -295,6 +308,23 @@ const mSchema = mongoose.Schema(
 	        },
 	      },
 	    ],
+    schedule_time_zone: {
+      type: String,
+      default: null,
+    },
+    schedule_time_zone_source: {
+      type: String,
+      enum: ['CITY_STATE', 'STATE', 'FALLBACK', 'GOOGLE', null],
+      default: null,
+    },
+    schedule_address_signature: {
+      type: String,
+      default: null,
+    },
+    schedule_time_zone_updated_at: {
+      type: Date,
+      default: null,
+    },
 	    businessHours: [
       {
         locationId: {
