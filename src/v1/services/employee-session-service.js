@@ -59,6 +59,46 @@ const getOrderFoodSalesAmount = (order) => {
   );
 };
 
+const getShiftRange = (range = 'week') => {
+  const end = new Date();
+  const start = new Date(end);
+
+  if (range === 'day') {
+    start.setHours(0, 0, 0, 0);
+  } else {
+    start.setDate(start.getDate() - 7);
+    start.setHours(0, 0, 0, 0);
+  }
+
+  return { start, end };
+};
+
+const summarizeSessions = (sessions = []) => {
+  const totals = sessions.reduce(
+    (acc, session) => ({
+      grossWorkMinutes: acc.grossWorkMinutes + toNumber(session.gross_work_minutes),
+      netWorkMinutes: acc.netWorkMinutes + toNumber(session.net_work_minutes),
+      breakMinutes: acc.breakMinutes + toNumber(session.total_break_minutes),
+      sessionCount: acc.sessionCount + 1,
+    }),
+    {
+      grossWorkMinutes: 0,
+      netWorkMinutes: 0,
+      breakMinutes: 0,
+      sessionCount: 0,
+    }
+  );
+
+  return {
+    session_count: totals.sessionCount,
+    gross_work_minutes: totals.grossWorkMinutes,
+    net_work_minutes: totals.netWorkMinutes,
+    break_minutes: totals.breakMinutes,
+    gross_hours_worked: Number((totals.grossWorkMinutes / 60).toFixed(2)),
+    net_hours_worked: Number((totals.netWorkMinutes / 60).toFixed(2)),
+  };
+};
+
 const getOpenBreakMinutes = (session, endedAt = new Date()) => {
   if (session?.shift_status !== 'ON_BREAK' || !session?.break_started_at) {
     return 0;
@@ -407,7 +447,7 @@ class EmployeeSessionService extends BaseService {
       activeSession ||
       (await this.getLatestCurrentDaySession(user.employee_internal_id));
 
-    const [todayOrders, requests] = await Promise.all([
+    const [todayOrders, requests, todayShiftSummary, weekShiftSummary] = await Promise.all([
       OrderModel.find({
         created_by_type: 'EMPLOYEE',
         employee_internal_id: user.employee_internal_id,
@@ -428,6 +468,16 @@ class EmployeeSessionService extends BaseService {
         location_id: user.assigned_location_id,
         requested_at: { $gte: startOfToday, $lt: endOfToday },
       }).lean(),
+      this.getEmployeeShiftSummary({
+        foodTruckId: user.food_truck_id,
+        employeeInternalId: user.employee_internal_id,
+        range: 'day',
+      }),
+      this.getEmployeeShiftSummary({
+        foodTruckId: user.food_truck_id,
+        employeeInternalId: user.employee_internal_id,
+        range: 'week',
+      }),
     ]);
 
     const completedOrders = todayOrders.filter(
@@ -508,7 +558,7 @@ class EmployeeSessionService extends BaseService {
         shift_status: latestSession?.shift_status || null,
         is_active: !!latestSession?.is_active,
       },
-      metrics: {
+	      metrics: {
         orders_created_today: todayOrders.length,
         completed_orders_today: completedOrders.length,
         gross_sales_today: grossSalesToday,
@@ -521,10 +571,14 @@ class EmployeeSessionService extends BaseService {
           isTapPayment(order.payment_method || order.paymentMethod)
         ).length,
         refund_cancel_requests_submitted: requests.length,
-        refund_cancel_request_status_counts: refundCancelStatusCounts,
-      },
-    };
-  }
+	        refund_cancel_request_status_counts: refundCancelStatusCounts,
+	      },
+	      shift_summary: {
+	        today: todayShiftSummary,
+	        week: weekShiftSummary,
+	      },
+	    };
+	  }
 
   async getVendorEmployeeAnalytics({
     vendorUserId,
@@ -700,9 +754,13 @@ class EmployeeSessionService extends BaseService {
           },
           { pending: 0, approved: 0, rejected: 0 }
         );
-        const session =
-          sessionsByEmployee[employee.employee_internal_id] || null;
-	        const assignedLocation =
+	        const session =
+	          sessionsByEmployee[employee.employee_internal_id] || null;
+	        const employeeSessions = sessions.filter(
+	          (item) => item.employee_internal_id === employee.employee_internal_id
+	        );
+	        const shiftSummary = summarizeSessions(employeeSessions);
+		        const assignedLocation =
 	          locationsById[employee.assigned_location_id?.toString()] || null;
 	        const assignedTruckUnit =
 	          truckUnitsById[employee.assigned_truck_unit_id?.toString()] || null;
@@ -745,10 +803,15 @@ class EmployeeSessionService extends BaseService {
             tap_orders: filteredOrders.filter((order) =>
               isTapPayment(order.payment_method || order.paymentMethod)
             ).length,
-            refund_cancel_requests_submitted: employeeRequests.length,
-            refund_cancel_request_status_counts: refundCancelStatusCounts,
-          },
-        };
+	            refund_cancel_requests_submitted: employeeRequests.length,
+	            refund_cancel_request_status_counts: refundCancelStatusCounts,
+	            gross_work_minutes: shiftSummary.gross_work_minutes,
+	            net_work_minutes: shiftSummary.net_work_minutes,
+	            break_minutes: shiftSummary.break_minutes,
+	            gross_hours_worked: shiftSummary.gross_hours_worked,
+	            net_hours_worked: shiftSummary.net_hours_worked,
+	          },
+	        };
       })
       .filter(
         (employee) =>
@@ -770,33 +833,45 @@ class EmployeeSessionService extends BaseService {
     };
   }
 
-  async getEmployeeShiftHistory({
-    foodTruckId,
-    employeeInternalId,
-    range = 'week',
-  }) {
-    const end = new Date();
-    const start = new Date(end);
+	  async getEmployeeShiftHistory({
+	    foodTruckId,
+	    employeeInternalId,
+	    range = 'week',
+	  }) {
+	    const { start, end } = getShiftRange(range);
 
-    if (range === 'month') {
-      start.setMonth(start.getMonth() - 1);
-    } else {
-      start.setDate(start.getDate() - 7);
-    }
-    start.setHours(0, 0, 0, 0);
-
-    return Model.find({
+	    return Model.find({
       food_truck_id: foodTruckId,
       employee_internal_id: employeeInternalId,
       started_at: { $gte: start, $lte: end },
     })
       .sort({ started_at: -1 })
-      .limit(100)
-      .select(
-        'employee_session_id started_at ended_at last_active_at shift_status is_active'
-      )
-      .lean();
-  }
-}
+	      .limit(100)
+	      .select(
+	        'employee_session_id started_at ended_at last_active_at shift_status is_active total_break_minutes gross_work_minutes net_work_minutes gross_hours_worked net_hours_worked work_date_key'
+	      )
+	      .lean();
+	  }
+
+	  async getEmployeeShiftSummary({
+	    foodTruckId,
+	    employeeInternalId,
+	    range = 'week',
+	  }) {
+	    const { start, end } = getShiftRange(range);
+	    const sessions = await Model.find({
+	      food_truck_id: foodTruckId,
+	      employee_internal_id: employeeInternalId,
+	      started_at: { $gte: start, $lte: end },
+	      is_active: false,
+	    })
+	      .select(
+	        'total_break_minutes gross_work_minutes net_work_minutes gross_hours_worked net_hours_worked'
+	      )
+	      .lean();
+
+	    return summarizeSessions(sessions);
+	  }
+	}
 
 module.exports = new EmployeeSessionService();

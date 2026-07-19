@@ -6,6 +6,8 @@ const {
 const { BaseService } = require('../../common-services');
 const FoodTruckService = require('./food-truck-service');
 const PlanService = require('./plan-service');
+const EncryptionService = require('../../helper/encryption');
+const { maskTaxId } = require('../../helper/event-coordinator-profile');
 const {
   assertVendorPlanCapability,
   getVendorPlanCapabilities,
@@ -48,6 +50,8 @@ const employeeProfileFields = [
   'address_state',
   'address_zip',
   'employee_id_photo_url',
+  'employee_tax_identifier_type',
+  'employee_tax_identifier_masked',
 ];
 const normalizeEmployeeProfileValue = (value) =>
   value === null || value === undefined ? '' : String(value).trim();
@@ -57,7 +61,40 @@ const buildEmployeeProfileSnapshot = (source) =>
   employeeProfileFields.reduce((snapshot, field) => {
     snapshot[field] = source?.[field] ?? null;
     return snapshot;
-  }, {});
+	  }, {});
+
+const normalizeTaxIdType = (value) => {
+  const normalized = String(value || '').toUpperCase();
+  return normalized === 'SSN' ? 'SSN' : 'EIN';
+};
+
+const taxDigits = (value) => String(value || '').replace(/\D/g, '').slice(0, 9);
+
+const buildEmployeeTaxUpdate = ({ type, value }) => {
+  if (value === undefined) {
+    return null;
+  }
+
+  const digits = taxDigits(value);
+  if (!digits) {
+    return {
+      employee_tax_identifier_type: null,
+      employee_tax_identifier_encrypted: null,
+      employee_tax_identifier_masked: null,
+    };
+  }
+
+  if (digits.length !== 9) {
+    throw buildError('Employee EIN/SSN must be 9 digits.', 400);
+  }
+
+  const taxType = normalizeTaxIdType(type);
+  return {
+    employee_tax_identifier_type: taxType,
+    employee_tax_identifier_encrypted: EncryptionService.encrypt(digits),
+    employee_tax_identifier_masked: maskTaxId(digits, taxType),
+  };
+};
 
 class VendorEmployeeService extends BaseService {
   constructor() {
@@ -109,8 +146,10 @@ class VendorEmployeeService extends BaseService {
     address_city = null,
     address_state = null,
     address_zip = null,
-    employee_id_photo_url,
-    pin,
+	    employee_id_photo_url,
+	    employee_tax_identifier_type = null,
+	    employee_tax_identifier = undefined,
+	    pin,
     ...rest
   }) {
     const foodTruck = await FoodTruckService.getByData(
@@ -153,7 +192,12 @@ class VendorEmployeeService extends BaseService {
       zip_code,
     });
 
-    return this.create({
+	    const taxUpdate = buildEmployeeTaxUpdate({
+	      type: employee_tax_identifier_type,
+	      value: employee_tax_identifier,
+	    });
+
+	    return this.create({
       ...rest,
       vendor_user_id,
       food_truck_id,
@@ -168,9 +212,10 @@ class VendorEmployeeService extends BaseService {
       address_city,
       address_state,
       address_zip,
-      employee_id_photo_url,
-      employee_id_photo_uploaded_at: new Date(),
-      employee_login_id,
+	      employee_id_photo_url,
+	      employee_id_photo_uploaded_at: new Date(),
+	      ...(taxUpdate || {}),
+	      employee_login_id,
       pin_hash: pin,
       employee_rate: normalizeEmployeeRate(rest.employee_rate),
     });
@@ -335,7 +380,16 @@ class VendorEmployeeService extends BaseService {
       employee.assigned_truck_unit_name = assignedTruckUnit.name;
     }
 
-    const previousProfile = buildEmployeeProfileSnapshot(employee);
+	    const taxUpdate = buildEmployeeTaxUpdate({
+	      type: update.employee_tax_identifier_type || employee.employee_tax_identifier_type,
+	      value: update.employee_tax_identifier,
+	    });
+	    if (taxUpdate) {
+	      Object.assign(update, taxUpdate);
+	      delete update.employee_tax_identifier;
+	    }
+
+	    const previousProfile = buildEmployeeProfileSnapshot(employee);
     let profileChanged = false;
 
     employeeProfileFields.forEach((field) => {

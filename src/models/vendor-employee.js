@@ -126,6 +126,20 @@ const mSchema = mongoose.Schema(
         },
       },
     ],
+    employee_tax_identifier_type: {
+      type: String,
+      enum: ['EIN', 'SSN', null],
+      default: null,
+    },
+    employee_tax_identifier_encrypted: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    employee_tax_identifier_masked: {
+      type: String,
+      default: null,
+    },
     employee_login_id: {
       type: String,
       required: true,
