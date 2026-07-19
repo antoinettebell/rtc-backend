@@ -353,6 +353,20 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    tax_identifier_type: {
+      type: String,
+      enum: ['EIN', 'SSN', null],
+      default: null,
+    },
+    tax_identifier_encrypted: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    tax_identifier_masked: {
+      type: String,
+      default: null,
+    },
     featured: {
       type: Boolean,
       default: false,

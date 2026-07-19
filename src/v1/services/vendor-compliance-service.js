@@ -37,6 +37,9 @@ const getDaysUntil = (date, now = new Date()) => {
 const taxDigits = (value) => String(value || '').replace(/\D/g, '');
 
 const hasValidTaxIdentifier = (value) => taxDigits(value).length === 9;
+const hasEncryptedTaxIdentifier = (foodTruck, type) =>
+  String(foodTruck?.tax_identifier_type || '').toUpperCase() === type &&
+  !!foodTruck?.tax_identifier_masked;
 
 const SANITATION_GRADE_FIELDS = [
   'sanitation_grade',
@@ -208,8 +211,12 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     sanitationGradeDocument?.extracted_fields
   );
   const sanitationGradeEligible = isSanitationGradeEligible(sanitationGrade);
-  const hasSsnOnProfile = hasValidTaxIdentifier(foodTruck.ssn);
-  const hasEinOnProfile = hasValidTaxIdentifier(foodTruck.ein);
+  const hasSsnOnProfile =
+    hasValidTaxIdentifier(foodTruck.ssn) ||
+    hasEncryptedTaxIdentifier(foodTruck, 'SSN');
+  const hasEinOnProfile =
+    hasValidTaxIdentifier(foodTruck.ein) ||
+    hasEncryptedTaxIdentifier(foodTruck, 'EIN');
   const taxIdRequirementType = hasSsnOnProfile ? 'SSN' : 'EIN';
   let score = 0;
   const missingRequirements = [];

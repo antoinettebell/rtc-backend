@@ -12,11 +12,52 @@ const { FORGOT_PASSWORD_TEMPLATE } = require('../../helper/templates');
 const { normalizeVendorPlan } = require('../../helper/vendor-plan-helper');
 const {
   buildTaxIdUpdate,
+  maskTaxId,
   sanitizeCoordinatorProfile,
 } = require('../../helper/event-coordinator-profile');
+const EncryptionService = require('../../helper/encryption');
 const disposableDomains = require('disposable-email-domains');
 const { addObject } = require('../../helper/aws');
 const fs = require('fs');
+
+const vendorTaxDigits = (value) =>
+  String(value || '').replace(/\D/g, '').slice(0, 9);
+const normalizeVendorTaxIdType = (value) => {
+  const normalized = String(value || '').toUpperCase();
+  return normalized === 'SSN' ? 'SSN' : 'EIN';
+};
+const buildVendorTaxIdFields = (foodTruck = {}) => {
+  const taxType = normalizeVendorTaxIdType(
+    foodTruck.infoType || (foodTruck.ssn ? 'SSN' : 'EIN')
+  );
+  const rawValue = taxType === 'SSN' ? foodTruck.ssn : foodTruck.ein;
+  const digits = vendorTaxDigits(rawValue);
+
+  if (!digits) {
+    return {
+      ein: null,
+      ssn: null,
+      tax_identifier_type: null,
+      tax_identifier_encrypted: null,
+      tax_identifier_masked: null,
+    };
+  }
+
+  if (digits.length !== 9) {
+    const error = new Error('Vendor EIN/SSN must be 9 digits.');
+    error.code = 400;
+    throw error;
+  }
+
+  const masked = maskTaxId(digits, taxType);
+  return {
+    ein: taxType === 'EIN' ? masked : null,
+    ssn: taxType === 'SSN' ? masked : null,
+    tax_identifier_type: taxType,
+    tax_identifier_encrypted: EncryptionService.encrypt(digits),
+    tax_identifier_masked: masked,
+  };
+};
 
 /**
  * To add new entry to given collection
@@ -330,23 +371,21 @@ exports.addVendor = async (req, res, next) => {
       { singleResult: true }
     );
 
-    if (fc) {
-      fc.name = foodTruck.name;
-      fc.ein = foodTruck.ein || null;
-      // fc.snn = foodTruck.snn || null;
-      fc.ssn = foodTruck.ssn || null;
-      fc.infoType = foodTruck.infoType;
-      fc.socialMedia = foodTruck.socialMedia || [];
+	    const vendorTaxFields = buildVendorTaxIdFields(foodTruck);
+
+	    if (fc) {
+	      fc.name = foodTruck.name;
+	      Object.assign(fc, vendorTaxFields);
+	      fc.infoType = foodTruck.infoType;
+	      fc.socialMedia = foodTruck.socialMedia || [];
 
       await fc.save();
     } else {
-      fc = await FoodTruckService.create({
-        userId: user._id,
-        name: foodTruck.name,
-        ein: foodTruck.ein || null,
-        // snn: foodTruck.snn || null,
-        ssn: foodTruck.ssn || null,
-        infoType: foodTruck.infoType,
+	      fc = await FoodTruckService.create({
+	        userId: user._id,
+	        name: foodTruck.name,
+	        ...vendorTaxFields,
+	        infoType: foodTruck.infoType,
         socialMedia: foodTruck.socialMedia || [],
       });
     }

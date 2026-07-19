@@ -25,6 +25,8 @@ const {
   getNextVendorScheduleResetAt,
 } = require('../../helper/vendor-schedule-timezone');
 const VendorComplianceService = require('../services/vendor-compliance-service');
+const EncryptionService = require('../../helper/encryption');
+const { maskTaxId } = require('../../helper/event-coordinator-profile');
 const { addObjectWithKey, removeObject } = require('../../helper/aws');
 const fs = require('fs');
 const entityName = 'FoodTruck';
@@ -41,6 +43,48 @@ const parseCsvParam = (value) =>
     .filter(Boolean);
 
 const DOCUMENT_TYPES = new Set(['PERMIT', 'LICENSE', 'INSURANCE', 'EIN', 'W9', 'OTHER']);
+
+const taxDigits = (value) => String(value || '').replace(/\D/g, '').slice(0, 9);
+const normalizeTaxIdType = (value) => {
+  const normalized = String(value || '').toUpperCase();
+  return normalized === 'SSN' ? 'SSN' : 'EIN';
+};
+const applyFoodTruckTaxId = (item, { ein, ssn, infoType }) => {
+  const rawEin = ein !== undefined ? ein : undefined;
+  const rawSsn = ssn !== undefined ? ssn : undefined;
+  if (rawEin === undefined && rawSsn === undefined) {
+    return;
+  }
+
+  const taxType = normalizeTaxIdType(infoType || (rawSsn ? 'SSN' : 'EIN'));
+  const rawValue = taxType === 'SSN' ? rawSsn : rawEin;
+  if (String(rawValue || '').includes('*')) {
+    return;
+  }
+  const digits = taxDigits(rawValue);
+
+  if (!digits) {
+    item.tax_identifier_type = null;
+    item.tax_identifier_encrypted = null;
+    item.tax_identifier_masked = null;
+    item.ein = null;
+    item.ssn = null;
+    return;
+  }
+
+  if (digits.length !== 9) {
+    const error = new Error('Vendor EIN/SSN must be 9 digits.');
+    error.code = 400;
+    throw error;
+  }
+
+  const masked = maskTaxId(digits, taxType);
+  item.tax_identifier_type = taxType;
+  item.tax_identifier_encrypted = EncryptionService.encrypt(digits);
+  item.tax_identifier_masked = masked;
+  item.ein = taxType === 'EIN' ? masked : null;
+  item.ssn = taxType === 'SSN' ? masked : null;
+};
 
 const normalizeDocumentType = (value) => {
   const normalized = String(value || 'OTHER')
@@ -1004,17 +1048,7 @@ exports.update = async (req, res, next) => {
       item.planId = planId;
     }
 
-    if (ein !== undefined) {
-      item.ein = ein;
-    }
-
-    // if (snn !== undefined) {
-    //   item.snn = snn;
-    // }
-
-    if (ssn !== undefined) {
-      item.ssn = ssn;
-    }
+	    applyFoodTruckTaxId(item, { ein, ssn, infoType });
 
     if (addOns) {
       item.addOns = addOns;
