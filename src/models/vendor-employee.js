@@ -96,6 +96,36 @@ const mSchema = mongoose.Schema(
       default: null,
       trim: true,
     },
+    employee_id_photo_url: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    employee_id_photo_uploaded_at: {
+      type: Date,
+      default: null,
+    },
+    employee_id_photo_history: [
+      {
+        previous_url: {
+          type: String,
+          default: null,
+        },
+        new_url: {
+          type: String,
+          default: null,
+        },
+        changed_at: {
+          type: Date,
+          default: Date.now,
+        },
+        changed_by_user_id: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'users',
+          default: null,
+        },
+      },
+    ],
     employee_login_id: {
       type: String,
       required: true,
@@ -155,6 +185,7 @@ const mSchema = mongoose.Schema(
           address_city: String,
           address_state: String,
           address_zip: String,
+          employee_id_photo_url: String,
         },
         next: {
           first_name: String,
@@ -165,6 +196,7 @@ const mSchema = mongoose.Schema(
           address_city: String,
           address_state: String,
           address_zip: String,
+          employee_id_photo_url: String,
         },
         changed_at: {
           type: Date,

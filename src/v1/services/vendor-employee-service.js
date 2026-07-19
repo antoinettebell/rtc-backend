@@ -47,6 +47,7 @@ const employeeProfileFields = [
   'address_city',
   'address_state',
   'address_zip',
+  'employee_id_photo_url',
 ];
 const normalizeEmployeeProfileValue = (value) =>
   value === null || value === undefined ? '' : String(value).trim();
@@ -108,6 +109,7 @@ class VendorEmployeeService extends BaseService {
     address_city = null,
     address_state = null,
     address_zip = null,
+    employee_id_photo_url,
     pin,
     ...rest
   }) {
@@ -140,6 +142,10 @@ class VendorEmployeeService extends BaseService {
       throw buildError('Employee PIN is required.');
     }
 
+    if (!employee_id_photo_url) {
+      throw buildError('Employee ID photo is required.', 400);
+    }
+
     const employee_login_id = await this.generateUniqueEmployeeLoginId({
       food_truck_id,
       first_name,
@@ -162,6 +168,8 @@ class VendorEmployeeService extends BaseService {
       address_city,
       address_state,
       address_zip,
+      employee_id_photo_url,
+      employee_id_photo_uploaded_at: new Date(),
       employee_login_id,
       pin_hash: pin,
       employee_rate: normalizeEmployeeRate(rest.employee_rate),
@@ -301,6 +309,10 @@ class VendorEmployeeService extends BaseService {
     const employee = await this.getScopedEmployee({ vendor_user_id, employee_id });
     let assignedLocationChanged = false;
 
+    if (!employee.employee_id_photo_url && !update.employee_id_photo_url) {
+      throw buildError('Employee ID photo is required before saving employee changes.', 400);
+    }
+
     if (update.assigned_location_id || update.assigned_truck_unit_id) {
       const foodTruck = await this.getVendorFoodTruck(
         vendor_user_id,
@@ -345,6 +357,25 @@ class VendorEmployeeService extends BaseService {
           changed_by_user_id: actor_user_id,
         },
       ];
+    }
+
+    if (
+      update.employee_id_photo_url !== undefined &&
+      !employeeProfileValuesMatch(
+        previousProfile.employee_id_photo_url,
+        update.employee_id_photo_url
+      )
+    ) {
+      employee.employee_id_photo_history = [
+        ...(employee.employee_id_photo_history || []),
+        {
+          previous_url: previousProfile.employee_id_photo_url || null,
+          new_url: update.employee_id_photo_url || null,
+          changed_at: new Date(),
+          changed_by_user_id: actor_user_id,
+        },
+      ];
+      employee.employee_id_photo_uploaded_at = new Date();
     }
 
     if (

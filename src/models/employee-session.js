@@ -66,6 +66,27 @@ const mSchema = mongoose.Schema(
       type: Number,
       default: 0,
     },
+    gross_work_minutes: {
+      type: Number,
+      default: null,
+    },
+    net_work_minutes: {
+      type: Number,
+      default: null,
+    },
+    gross_hours_worked: {
+      type: Number,
+      default: null,
+    },
+    net_hours_worked: {
+      type: Number,
+      default: null,
+    },
+    work_date_key: {
+      type: String,
+      default: null,
+      index: true,
+    },
     break_count: {
       type: Number,
       default: 0,
