@@ -340,6 +340,9 @@ const archiveExistingDocument = async ({
     {
       food_truck_id: foodTruckId,
       document_type: documentType,
+      ...(replacedByDocumentId
+        ? { document_id: { $ne: replacedByDocumentId } }
+        : {}),
       review_status: { $ne: 'archived' },
       archived_at: null,
     },
