@@ -8,9 +8,10 @@ const DELETE_STACK = true;
  */
 // eslint-disable-next-line no-unused-vars
 exports.handler = (err, req, res, next) => {
+  const statusCode = Number(err.status || err.code || 500);
   const response = {
     success: false,
-    code: err.status,
+    code: statusCode >= 100 && statusCode < 600 ? statusCode : 500,
     error: err.error,
     message: err.message,
     stack: err.stack,
@@ -54,7 +55,7 @@ exports.converter = (err, req, res, next) => {
       success: false,
       message: err.message,
       stack: err.stack,
-      status: err.status || err.code,
+      status: err.status || err.code || 500,
       data: err.data || (err.compliance ? { compliance: err.compliance } : null),
     });
   }
