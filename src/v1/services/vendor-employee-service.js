@@ -6,6 +6,7 @@ const {
 const { BaseService } = require('../../common-services');
 const FoodTruckService = require('./food-truck-service');
 const PlanService = require('./plan-service');
+const EmployeeSessionService = require('./employee-session-service');
 const EncryptionService = require('../../helper/encryption');
 const { maskTaxId } = require('../../helper/event-coordinator-profile');
 const {
@@ -248,7 +249,7 @@ class VendorEmployeeService extends BaseService {
     includeArchived = false,
     archivedOnly = false,
   }) {
-    return this.getByData(
+    const employees = await this.getByData(
       this.buildEmployeeListQuery({
         vendor_user_id,
         food_truck_id,
@@ -258,6 +259,32 @@ class VendorEmployeeService extends BaseService {
       {
         sort: { is_archived: 1, created_at: -1 },
       }
+    );
+
+    return Promise.all(
+      employees.map(async (employee) => {
+        const safeEmployee = toSafeEmployee(employee);
+        const [todayShiftSummary, weekShiftSummary] = await Promise.all([
+          EmployeeSessionService.getEmployeeShiftSummary({
+            foodTruckId: safeEmployee.food_truck_id,
+            employeeInternalId: safeEmployee.employee_internal_id,
+            range: 'day',
+          }),
+          EmployeeSessionService.getEmployeeShiftSummary({
+            foodTruckId: safeEmployee.food_truck_id,
+            employeeInternalId: safeEmployee.employee_internal_id,
+            range: 'week',
+          }),
+        ]);
+
+        return {
+          ...safeEmployee,
+          shift_summary: {
+            today: todayShiftSummary,
+            week: weekShiftSummary,
+          },
+        };
+      })
     );
   }
 
