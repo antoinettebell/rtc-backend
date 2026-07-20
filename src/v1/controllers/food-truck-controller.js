@@ -1177,6 +1177,10 @@ exports.addDocument = async (req, res, next) => {
     item.documents = [...(item.documents || []), document];
     await item.save();
 
+    await VendorComplianceService.syncLegacyFoodTruckDocuments({
+      foodTruckId: item._id,
+    });
+
     return res.data(
       { [`${entityName.toLocaleLowerCase()}`]: item },
       `${entityName} document uploaded`

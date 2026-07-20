@@ -198,6 +198,10 @@ exports.adminList = async (req, res, next) => {
       document_type,
       food_truck_id,
     } = req.query;
+    await VendorComplianceService.syncLegacyFoodTruckDocuments({
+      foodTruckId: food_truck_id || null,
+    });
+
     const query = {
       ...(review_status ? { review_status } : {}),
       ...(document_type
@@ -230,6 +234,8 @@ exports.adminList = async (req, res, next) => {
 
 exports.adminDashboard = async (req, res, next) => {
   try {
+    await VendorComplianceService.syncLegacyFoodTruckDocuments();
+
     const documents = await VendorComplianceDocumentService.getByData(
       { review_status: { $ne: 'archived' } },
       { sort: { created_at: -1 }, populate: ['food_truck_id'], lean: true }

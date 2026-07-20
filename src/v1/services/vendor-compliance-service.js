@@ -470,6 +470,81 @@ const uploadComplianceDocument = async ({
   );
 };
 
+const syncLegacyFoodTruckDocuments = async ({ foodTruckId = null } = {}) => {
+  const query = foodTruckId ? { _id: foodTruckId } : {};
+  const foodTrucks = await FoodTruckService.getByData(query, { lean: true });
+  let createdCount = 0;
+
+  for (const foodTruck of foodTrucks || []) {
+    if (!foodTruck?._id || !foodTruck?.userId) continue;
+
+    for (const legacyDocument of foodTruck.documents || []) {
+      if (
+        !legacyDocument?.file_url ||
+        legacyDocument?.document_status === 'ARCHIVED'
+      ) {
+        continue;
+      }
+
+      const documentType = normalizeComplianceDocumentType(
+        legacyDocument.document_type
+      );
+      const requirement = getComplianceRequirement(documentType);
+      if (!requirement) continue;
+
+      const existing = await VendorComplianceDocumentService.getByData(
+        {
+          food_truck_id: foodTruck._id,
+          document_type: documentType,
+          $or: [
+            { file_url: legacyDocument.file_url },
+            ...(legacyDocument.file_key
+              ? [{ file_key: legacyDocument.file_key }]
+              : []),
+          ],
+        },
+        { singleResult: true, lean: true }
+      );
+      if (existing) continue;
+
+      const existingCount = await VendorComplianceDocumentService.getCount({
+        food_truck_id: foodTruck._id,
+        document_type: documentType,
+      });
+      const document = await VendorComplianceDocumentService.create({
+        food_truck_id: foodTruck._id,
+        vendor_user_id: foodTruck.userId,
+        document_type: documentType,
+        version: Number(existingCount || 0) + 1,
+        title: legacyDocument.title || requirement.label,
+        file_url: legacyDocument.file_url,
+        file_key: legacyDocument.file_key || null,
+        original_name: legacyDocument.original_name || null,
+        mime_type: legacyDocument.mime_type || null,
+        size_bytes: legacyDocument.size_bytes || null,
+        uploaded_by_user_id:
+          legacyDocument.uploaded_by_user_id || foodTruck.userId,
+        review_status: 'pending_review',
+        ocr_status: 'not_configured',
+      });
+
+      await VendorComplianceAuditService.create({
+        document_id: document.document_id,
+        food_truck_id: foodTruck._id,
+        vendor_user_id: foodTruck.userId,
+        action: 'UPLOAD',
+        actor_user_id: legacyDocument.uploaded_by_user_id || foodTruck.userId,
+        actor_user_type: 'VENDOR',
+        notes: 'Imported from vendor document record',
+        metadata: { document_type: documentType, source: 'food_truck.documents' },
+      });
+      createdCount += 1;
+    }
+  }
+
+  return createdCount;
+};
+
 const submitComplianceDocumentsForOcr = async ({ foodTruck, user }) => {
   const documents = await VendorComplianceDocumentService.getByData(
     {
@@ -729,6 +804,7 @@ module.exports = {
   getSanitationGradeMap,
   getSanitationGradeFromFields,
   uploadComplianceDocument,
+  syncLegacyFoodTruckDocuments,
   submitComplianceDocumentsForOcr,
   reviewComplianceDocument,
   applyOcrResult,
