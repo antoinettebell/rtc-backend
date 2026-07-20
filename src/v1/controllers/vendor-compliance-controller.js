@@ -97,11 +97,23 @@ exports.uploadDocument = async (req, res, next) => {
       fileKey: key,
     });
 
+    const foodTruckDocumentType =
+      getFoodTruckDocumentTypeFromComplianceType(documentType);
+    foodTruck.documents = (foodTruck.documents || []).map((existingDocument) =>
+      existingDocument?.document_type === foodTruckDocumentType &&
+      existingDocument?.document_status !== 'ARCHIVED'
+        ? {
+            ...existingDocument,
+            document_status: 'ARCHIVED',
+            archived_at: new Date(),
+          }
+        : existingDocument
+    );
     foodTruck.documents = [
       ...(foodTruck.documents || []),
       {
         title: req.body.title || document.title,
-        document_type: getFoodTruckDocumentTypeFromComplianceType(documentType),
+        document_type: foodTruckDocumentType,
         file_url: url,
         file_key: key,
         original_name: req.file.originalname,
@@ -125,6 +137,25 @@ exports.uploadDocument = async (req, res, next) => {
     if (req.file?.path) {
       fs.unlink(req.file.path, () => {});
     }
+    return handleError(e, next);
+  }
+};
+
+exports.submitDocumentsForOcr = async (req, res, next) => {
+  try {
+    const foodTruck = await getVendorFoodTruck(req.user, req.params.foodTruckId);
+    const documents =
+      await VendorComplianceService.submitComplianceDocumentsForOcr({
+        foodTruck,
+        user: req.user,
+      });
+    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
+
+    return res.data(
+      { complianceDocumentList: documents, compliance: summary },
+      'Compliance documents submitted for OCR'
+    );
+  } catch (e) {
     return handleError(e, next);
   }
 };

@@ -28,6 +28,11 @@ const asDate = (value) => {
   return Number.isNaN(date.getTime()) ? null : date;
 };
 
+const getDateKey = (value) => {
+  const date = asDate(value);
+  return date ? date.toISOString().slice(0, 10) : null;
+};
+
 const getDaysUntil = (date, now = new Date()) => {
   const parsed = asDate(date);
   if (!parsed) return null;
@@ -144,6 +149,14 @@ const getScoreBand = ({ score, eligible, hasPendingReview }) => {
     };
   }
 
+  if (hasPendingReview) {
+    return {
+      color: 'yellow',
+      label: 'Pending review',
+      hex: '#F9AB00',
+    };
+  }
+
   if (score < 80) {
     return {
       color: 'yellow',
@@ -152,7 +165,7 @@ const getScoreBand = ({ score, eligible, hasPendingReview }) => {
     };
   }
 
-  if (score < 100 || hasPendingReview) {
+  if (score < 100) {
     return {
       color: 'blue',
       label: 'Almost complete',
@@ -278,9 +291,7 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
       score += requirement.scoreWeight;
     } else if (document?.review_status === 'pending_review') {
       status = 'pending_review';
-      if (!isOptionalDocument) {
-        pendingRequirements.push(requirement.type);
-      }
+      pendingRequirements.push(requirement.type);
     } else if (document?.review_status === 'rejected') {
       status = 'rejected';
       if (!isOptionalDocument) {
@@ -443,12 +454,6 @@ const uploadComplianceDocument = async ({
     replacedByDocumentId: document.document_id,
   });
 
-  const ocrResult = await enqueueComplianceOcr({ document, requirement });
-  await VendorComplianceDocumentService.update(
-    { document_id: document.document_id },
-    ocrResult
-  );
-
   await VendorComplianceAuditService.create({
     document_id: document.document_id,
     food_truck_id: foodTruck._id,
@@ -463,6 +468,52 @@ const uploadComplianceDocument = async ({
     { document_id: document.document_id },
     { singleResult: true, lean: true }
   );
+};
+
+const submitComplianceDocumentsForOcr = async ({ foodTruck, user }) => {
+  const documents = await VendorComplianceDocumentService.getByData(
+    {
+      food_truck_id: foodTruck._id,
+      review_status: { $ne: 'archived' },
+      archived_at: null,
+    },
+    { sort: { created_at: -1 } }
+  );
+  const latestByType = selectLatestByType(documents);
+  const submittedDocuments = [];
+
+  for (const document of Object.values(latestByType)) {
+    const requirement = getComplianceRequirement(document.document_type);
+    if (!requirement) continue;
+
+    if (['queued', 'processing'].includes(document.ocr_status)) {
+      submittedDocuments.push(document);
+      continue;
+    }
+
+    const ocrResult = await enqueueComplianceOcr({ document, requirement });
+    Object.assign(document, {
+      ...ocrResult,
+      review_status: 'pending_review',
+      reviewed_by_user_id: null,
+      reviewed_at: null,
+    });
+    await document.save();
+
+    await VendorComplianceAuditService.create({
+      document_id: document.document_id,
+      food_truck_id: foodTruck._id,
+      vendor_user_id: foodTruck.userId,
+      action: 'SUBMIT_OCR',
+      actor_user_id: user._id,
+      actor_user_type: user.userType,
+      metadata: { document_type: document.document_type },
+    });
+
+    submittedDocuments.push(document);
+  }
+
+  return submittedDocuments;
 };
 
 const reviewComplianceDocument = async ({
@@ -538,12 +589,29 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   document.ocr_error_message = errorMessage || null;
   const extractedExpirationDate = getOcrExpirationDate(extractedFields);
   const extractedIssueDate = getOcrIssueDate(extractedFields);
+  const vendorExpirationKey = getDateKey(document.expiration_date);
+  const ocrExpirationKey = getDateKey(extractedExpirationDate);
+  const requiresExpirationDate = !!getComplianceRequirement(
+    document.document_type
+  )?.ocrFields?.includes('expiration_date');
+  const expirationMismatch =
+    vendorExpirationKey && ocrExpirationKey && vendorExpirationKey !== ocrExpirationKey;
+  const missingOcrExpiration =
+    requiresExpirationDate && vendorExpirationKey && !ocrExpirationKey;
 
   if (extractedExpirationDate && !document.expiration_date) {
     document.expiration_date = asDate(extractedExpirationDate);
   }
   if (extractedIssueDate && !document.issue_date) {
     document.issue_date = asDate(extractedIssueDate);
+  }
+
+  if (expirationMismatch || missingOcrExpiration) {
+    document.review_status = 'pending_review';
+    document.ocr_status = 'manual_review';
+    document.ocr_error_message = expirationMismatch
+      ? 'OCR expiration date does not match the vendor-entered expiration date.'
+      : 'OCR could not confirm the vendor-entered expiration date.';
   }
   await document.save();
   return document;
@@ -661,6 +729,7 @@ module.exports = {
   getSanitationGradeMap,
   getSanitationGradeFromFields,
   uploadComplianceDocument,
+  submitComplianceDocumentsForOcr,
   reviewComplianceDocument,
   applyOcrResult,
   sendExpirationReminders,

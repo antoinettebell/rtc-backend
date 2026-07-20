@@ -95,6 +95,20 @@ router.get(
   Controller.list
 );
 
+/** [GET] /api/v1/user/event-coordinators */
+router.get(
+  '/event-coordinators',
+  allowedTo(['SUPER_ADMIN']),
+  Controller.listEventCoordinators
+);
+
+/** [PUT] /api/v1/user/event-coordinators/:id/status */
+router.put(
+  '/event-coordinators/:id/status',
+  allowedTo(['SUPER_ADMIN']),
+  Controller.changeEventCoordinatorStatus
+);
+
 /** [GET] /api/v1/user/:id */
 router.get('/:id', Controller.list);
 

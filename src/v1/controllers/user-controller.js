@@ -185,6 +185,104 @@ exports.list = async (req, res, next) => {
   }
 };
 
+exports.listEventCoordinators = async (req, res, next) => {
+  try {
+    const {
+      query: { limit = 10, page = 1, search, status },
+    } = req;
+
+    const searchText = String(search || '').trim();
+    const coordinatorProfileFilter = {
+      userType: 'CUSTOMER',
+      $or: [
+        { isEventCoordinator: true },
+        { eventCoordinatorCompanyName: { $nin: [null, ''] } },
+        { eventCoordinatorTaxIdMasked: { $nin: [null, ''] } },
+        { eventCoordinatorPaymentPreference: { $nin: [null, ''] } },
+      ],
+    };
+
+    const query = {
+      ...coordinatorProfileFilter,
+      ...(status === 'enabled'
+        ? { isEventCoordinator: true }
+        : status === 'disabled'
+          ? { isEventCoordinator: false }
+          : {}),
+      ...(searchText
+        ? {
+            $and: [
+              {
+                $or: [
+                  { email: { $regex: searchText, $options: 'i' } },
+                  { firstName: { $regex: searchText, $options: 'i' } },
+                  { lastName: { $regex: searchText, $options: 'i' } },
+                  { mobileNumber: { $regex: searchText, $options: 'i' } },
+                  {
+                    eventCoordinatorCompanyName: {
+                      $regex: searchText,
+                      $options: 'i',
+                    },
+                  },
+                ],
+              },
+            ],
+          }
+        : {}),
+    };
+
+    const data = (
+      await Service.getByData(query, {
+        paging: { limit, page },
+        lean: true,
+        sort: { updatedAt: -1 },
+      })
+    ).map((item) => {
+      delete item.password;
+      delete item.changePassToken;
+      return sanitizeCoordinatorProfile(item);
+    });
+
+    const total = await Service.getCount(query);
+
+    return res.data(
+      {
+        eventCoordinatorList: data,
+        total,
+        page,
+        totalPages: total < limit ? 1 : Math.ceil(total / limit),
+      },
+      'Event coordinator items'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.changeEventCoordinatorStatus = async (req, res, next) => {
+  try {
+    const {
+      params: { id },
+      body: { isEventCoordinator },
+    } = req;
+
+    const item = await Service.getById(id);
+    if (!item || item.userType !== 'CUSTOMER') {
+      return res.message('event coordinator not found', 404);
+    }
+
+    item.isEventCoordinator = !!isEventCoordinator;
+    await item.save();
+
+    return res.data(
+      { user: sanitizeCoordinatorProfile(item) },
+      'Event coordinator status updated'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
 /**
  * To add entry to given collection
  * Support POST request
@@ -405,19 +503,6 @@ exports.update = async (req, res, next) => {
           existRecord.eventCoordinatorDirectDepositAccountNumberEncrypted = null;
           existRecord.eventCoordinatorDirectDepositAccountNumberMasked = null;
         }
-      } else {
-        existRecord.eventCoordinatorCompanyName = null;
-        existRecord.eventCoordinatorCompanyAddress = null;
-        existRecord.eventCoordinatorTaxIdType = null;
-        existRecord.eventCoordinatorTaxIdEncrypted = null;
-        existRecord.eventCoordinatorTaxIdMasked = null;
-        existRecord.eventCoordinatorEin = null;
-        existRecord.eventCoordinatorPaymentPreference = null;
-        existRecord.eventCoordinatorPaymentHandle = null;
-        existRecord.eventCoordinatorPaymentQrCodeUrl = null;
-        existRecord.eventCoordinatorDirectDepositRoutingNumber = null;
-        existRecord.eventCoordinatorDirectDepositAccountNumberEncrypted = null;
-        existRecord.eventCoordinatorDirectDepositAccountNumberMasked = null;
       }
     }
 

@@ -25,6 +25,12 @@ router.post(
   Controller.uploadDocument
 );
 
+router.post(
+  '/food-truck/:foodTruckId/submit',
+  allowedTo(['SUPER_ADMIN', 'VENDOR']),
+  Controller.submitDocumentsForOcr
+);
+
 router.get(
   '/food-truck/:foodTruckId/history',
   allowedTo(['SUPER_ADMIN', 'VENDOR']),

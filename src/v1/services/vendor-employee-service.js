@@ -182,10 +182,6 @@ class VendorEmployeeService extends BaseService {
       throw buildError('Employee PIN is required.');
     }
 
-    if (!employee_id_photo_url) {
-      throw buildError('Employee ID photo is required.', 400);
-    }
-
     const employee_login_id = await this.generateUniqueEmployeeLoginId({
       food_truck_id,
       first_name,
@@ -213,8 +209,8 @@ class VendorEmployeeService extends BaseService {
       address_city,
       address_state,
       address_zip,
-	      employee_id_photo_url,
-	      employee_id_photo_uploaded_at: new Date(),
+	      employee_id_photo_url: employee_id_photo_url || null,
+	      employee_id_photo_uploaded_at: employee_id_photo_url ? new Date() : null,
 	      ...(taxUpdate || {}),
 	      employee_login_id,
       pin_hash: pin,
@@ -380,10 +376,6 @@ class VendorEmployeeService extends BaseService {
   async updateForVendor({ vendor_user_id, employee_id, update, actor_user_id = vendor_user_id }) {
     const employee = await this.getScopedEmployee({ vendor_user_id, employee_id });
     let assignedLocationChanged = false;
-
-    if (!employee.employee_id_photo_url && !update.employee_id_photo_url) {
-      throw buildError('Employee ID photo is required before saving employee changes.', 400);
-    }
 
     if (update.assigned_location_id || update.assigned_truck_unit_id) {
       const foodTruck = await this.getVendorFoodTruck(

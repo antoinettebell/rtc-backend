@@ -3087,6 +3087,9 @@ const completeSignedAward = async (payment) => {
       status: 'AWARDED',
       award_payment_id: payment.payment_id,
       award_payment_status: 'PAID',
+      agreement_provider: null,
+      agreement_status: 'NOT_REQUIRED',
+      agreement_error_message: null,
     },
     { getNew: true }
   );
@@ -3218,17 +3221,6 @@ const refreshAwardAgreementStatus = async (event, source = 'USER_REFRESH') => {
 };
 
 const finalizePaidAwardPayment = async (payment) => {
-  const { marketplaceEvent } = await ensureAwardAgreementEnvelope(payment);
-  const refreshedEvent = await refreshAwardAgreementStatus(marketplaceEvent);
-
-  if (refreshedEvent.agreement_status !== 'SIGNED') {
-    return {
-      marketplaceEvent: refreshedEvent,
-      agreement_required: true,
-      agreement_status: refreshedEvent.agreement_status,
-    };
-  }
-
   return completeSignedAward(payment);
 };
 
