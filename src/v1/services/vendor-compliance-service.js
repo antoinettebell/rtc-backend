@@ -34,6 +34,44 @@ const getDaysUntil = (date, now = new Date()) => {
   return Math.ceil((parsed.getTime() - now.getTime()) / MS_PER_DAY);
 };
 
+const getFirstFieldValue = (fields = {}, names = []) => {
+  for (const name of names) {
+    const value = fields?.[name];
+    if (value !== undefined && value !== null && value !== '') {
+      return value;
+    }
+  }
+  return null;
+};
+
+const getOcrExpirationDate = (fields = {}) =>
+  getFirstFieldValue(fields, [
+    'expiration_date',
+    'expirationDate',
+    'expiry_date',
+    'expiryDate',
+    'expires_at',
+    'expiresAt',
+    'exp_date',
+    'expDate',
+    'valid_until',
+    'validUntil',
+    'valid_through',
+    'validThrough',
+  ]);
+
+const getOcrIssueDate = (fields = {}) =>
+  getFirstFieldValue(fields, [
+    'issue_date',
+    'issueDate',
+    'issued_date',
+    'issuedDate',
+    'effective_date',
+    'effectiveDate',
+    'inspection_date',
+    'inspectionDate',
+  ]);
+
 const taxDigits = (value) => String(value || '').replace(/\D/g, '');
 
 const hasValidTaxIdentifier = (value) => taxDigits(value).length === 9;
@@ -498,11 +536,14 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   document.extracted_fields = normalizedExtractedFields;
   document.ocr_completed_at = new Date();
   document.ocr_error_message = errorMessage || null;
-  if (extractedFields?.expiration_date && !document.expiration_date) {
-    document.expiration_date = asDate(extractedFields.expiration_date);
+  const extractedExpirationDate = getOcrExpirationDate(extractedFields);
+  const extractedIssueDate = getOcrIssueDate(extractedFields);
+
+  if (extractedExpirationDate && !document.expiration_date) {
+    document.expiration_date = asDate(extractedExpirationDate);
   }
-  if (extractedFields?.issue_date && !document.issue_date) {
-    document.issue_date = asDate(extractedFields.issue_date);
+  if (extractedIssueDate && !document.issue_date) {
+    document.issue_date = asDate(extractedIssueDate);
   }
   await document.save();
   return document;
