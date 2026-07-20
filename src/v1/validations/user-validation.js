@@ -48,6 +48,13 @@ module.exports = {
       eventCoordinatorAddressZip: Joi.string().trim().allow(null, ''),
       eventCoordinatorFormattedAddress: Joi.string().trim().allow(null, ''),
       eventCoordinatorPlaceId: Joi.string().trim().allow(null, ''),
+      eventCoordinatorPaymentPreference: Joi.string()
+        .valid('CASHAPP', 'ZELLE', 'PAYPAL', 'VENMO', 'DIRECT_DEPOSIT')
+        .allow(null, ''),
+      eventCoordinatorPaymentHandle: Joi.string().trim().allow(null, ''),
+      eventCoordinatorPaymentQrCodeUrl: Joi.string().uri().allow(null, ''),
+      eventCoordinatorDirectDepositRoutingNumber: Joi.string().trim().allow(null, ''),
+      eventCoordinatorDirectDepositAccountNumber: Joi.string().trim().allow(null, ''),
       // mailing: Joi.object({
       //   address: Joi.string().trim().required(),
       //   city: Joi.string().trim().required(),

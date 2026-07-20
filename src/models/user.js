@@ -136,6 +136,31 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    eventCoordinatorPaymentPreference: {
+      type: String,
+      enum: ['CASHAPP', 'ZELLE', 'PAYPAL', 'VENMO', 'DIRECT_DEPOSIT', null],
+      default: null,
+    },
+    eventCoordinatorPaymentHandle: {
+      type: String,
+      default: null,
+    },
+    eventCoordinatorPaymentQrCodeUrl: {
+      type: String,
+      default: null,
+    },
+    eventCoordinatorDirectDepositRoutingNumber: {
+      type: String,
+      default: null,
+    },
+    eventCoordinatorDirectDepositAccountNumberEncrypted: {
+      type: String,
+      default: null,
+    },
+    eventCoordinatorDirectDepositAccountNumberMasked: {
+      type: String,
+      default: null,
+    },
       addressLine1: {
         type: String,
         default: 'NA',

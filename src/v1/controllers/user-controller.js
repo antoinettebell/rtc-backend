@@ -11,6 +11,7 @@ const {
 const EncryptionService = require('../../helper/encryption');
 const { normalizeVendorPlan } = require('../../helper/vendor-plan-helper');
 const {
+  buildPayoutAccountUpdate,
   buildTaxIdUpdate,
   sanitizeCoordinatorProfile,
 } = require('../../helper/event-coordinator-profile');
@@ -264,6 +265,11 @@ exports.update = async (req, res, next) => {
         eventCoordinatorAddressZip,
         eventCoordinatorFormattedAddress,
         eventCoordinatorPlaceId,
+        eventCoordinatorPaymentPreference,
+        eventCoordinatorPaymentHandle,
+        eventCoordinatorPaymentQrCodeUrl,
+        eventCoordinatorDirectDepositRoutingNumber,
+        eventCoordinatorDirectDepositAccountNumber,
         // mailing,
       },
       params: { id: _id },
@@ -341,6 +347,64 @@ exports.update = async (req, res, next) => {
         existRecord.eventCoordinatorFormattedAddress =
           eventCoordinatorFormattedAddress || eventCoordinatorCompanyAddress || null;
         existRecord.eventCoordinatorPlaceId = eventCoordinatorPlaceId || null;
+        const paymentPreferenceProvided = Object.prototype.hasOwnProperty.call(
+          req.body,
+          'eventCoordinatorPaymentPreference'
+        );
+        const paymentPreference = paymentPreferenceProvided
+          ? eventCoordinatorPaymentPreference || null
+          : existRecord.eventCoordinatorPaymentPreference || null;
+        const effectiveQrCodeUrl =
+          eventCoordinatorPaymentQrCodeUrl ||
+          existRecord.eventCoordinatorPaymentQrCodeUrl ||
+          null;
+        const effectiveRoutingNumber =
+          eventCoordinatorDirectDepositRoutingNumber ||
+          existRecord.eventCoordinatorDirectDepositRoutingNumber ||
+          null;
+        if (paymentPreference === 'DIRECT_DEPOSIT') {
+          if (!effectiveRoutingNumber) {
+            const error = new Error('Routing number is required for direct deposit.');
+            error.code = 400;
+            throw error;
+          }
+          if (
+            !eventCoordinatorDirectDepositAccountNumber &&
+            !existRecord.eventCoordinatorDirectDepositAccountNumberEncrypted
+          ) {
+            const error = new Error('Account number is required for direct deposit.');
+            error.code = 400;
+            throw error;
+          }
+        } else if (paymentPreference && !effectiveQrCodeUrl) {
+          const error = new Error('A QR code is required for the selected coordinator payment preference.');
+          error.code = 400;
+          throw error;
+        }
+        existRecord.eventCoordinatorPaymentPreference = paymentPreference;
+        existRecord.eventCoordinatorPaymentHandle =
+          paymentPreference && paymentPreference !== 'DIRECT_DEPOSIT'
+            ? eventCoordinatorPaymentHandle || null
+            : null;
+        existRecord.eventCoordinatorPaymentQrCodeUrl =
+          paymentPreference && paymentPreference !== 'DIRECT_DEPOSIT'
+            ? effectiveQrCodeUrl
+            : null;
+        existRecord.eventCoordinatorDirectDepositRoutingNumber =
+          paymentPreference === 'DIRECT_DEPOSIT'
+            ? effectiveRoutingNumber
+            : null;
+        if (paymentPreference === 'DIRECT_DEPOSIT' && eventCoordinatorDirectDepositAccountNumber) {
+          Object.assign(
+            existRecord,
+            buildPayoutAccountUpdate({
+              value: eventCoordinatorDirectDepositAccountNumber,
+            })
+          );
+        } else if (paymentPreference !== 'DIRECT_DEPOSIT') {
+          existRecord.eventCoordinatorDirectDepositAccountNumberEncrypted = null;
+          existRecord.eventCoordinatorDirectDepositAccountNumberMasked = null;
+        }
       } else {
         existRecord.eventCoordinatorCompanyName = null;
         existRecord.eventCoordinatorCompanyAddress = null;
@@ -348,6 +412,12 @@ exports.update = async (req, res, next) => {
         existRecord.eventCoordinatorTaxIdEncrypted = null;
         existRecord.eventCoordinatorTaxIdMasked = null;
         existRecord.eventCoordinatorEin = null;
+        existRecord.eventCoordinatorPaymentPreference = null;
+        existRecord.eventCoordinatorPaymentHandle = null;
+        existRecord.eventCoordinatorPaymentQrCodeUrl = null;
+        existRecord.eventCoordinatorDirectDepositRoutingNumber = null;
+        existRecord.eventCoordinatorDirectDepositAccountNumberEncrypted = null;
+        existRecord.eventCoordinatorDirectDepositAccountNumberMasked = null;
       }
     }
 

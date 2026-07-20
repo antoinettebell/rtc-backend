@@ -299,41 +299,7 @@ const mSchema = mongoose.Schema(
 	      default: 'NONE',
 	      index: true,
 	    },
-	    coordinator_tax_identifier_type: {
-	      type: String,
-	      enum: ['EIN', 'SSN', null],
-	      default: null,
-	    },
-	    coordinator_tax_identifier: {
-	      type: String,
-	      default: null,
-	    },
-	    coordinator_payment_preference: {
-	      type: String,
-	      enum: ['CASHAPP', 'ZELLE', 'PAYPAL', 'VENMO', 'DIRECT_DEPOSIT', null],
-	      default: null,
-	    },
-	    coordinator_payment_handle: {
-	      type: String,
-	      default: null,
-	    },
-	    coordinator_payment_qr_code_url: {
-	      type: String,
-	      default: null,
-	    },
-	    coordinator_payment_qr_code_key: {
-	      type: String,
-	      default: null,
-	    },
-	    coordinator_direct_deposit_routing_number: {
-	      type: String,
-	      default: null,
-	    },
-	    coordinator_direct_deposit_account_number: {
-	      type: String,
-	      default: null,
-	    },
-	    event_close_date: {
+		    event_close_date: {
 	      type: Date,
 	      required: function requiredCloseDate() {
         return this.status !== 'DRAFT';

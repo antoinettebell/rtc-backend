@@ -35,7 +35,6 @@ const {
 const {
   assertMarketplaceEventImageHasNoContactInfo,
 } = require('../../helper/marketplace-image-contact-moderation');
-const EncryptionService = require('../../helper/encryption');
 const {
   buildTaxIdUpdate,
 } = require('../../helper/event-coordinator-profile');
@@ -133,13 +132,6 @@ const assertRequiredMarketplaceFields = (fields = {}) => {
 const MARKETPLACE_PHONE_NUMBER = '800-410-7053';
 const COORDINATOR_AWARD_FEE_RATE = 0.035;
 const VENDOR_EVENT_PROCESSING_RATE = 0.02;
-const COORDINATOR_PAYMENT_METHODS = ['CASHAPP', 'ZELLE', 'PAYPAL', 'VENMO', 'DIRECT_DEPOSIT'];
-const COORDINATOR_PAYOUT_ENCRYPTED_FIELDS = [
-  'coordinator_tax_identifier',
-  'coordinator_direct_deposit_routing_number',
-  'coordinator_direct_deposit_account_number',
-];
-
 const roundMoney = (value) => Number((Number(value || 0)).toFixed(2));
 const ACTIVE_EVENT_STATUSES = ['OPEN', 'REOPENED'];
 const DRAFT_TTL_DAYS = 7;
@@ -173,24 +165,6 @@ const asArray = (value) => {
 };
 
 const hasText = (value) => String(value || '').trim().length > 0;
-
-const encryptSensitiveMarketplaceField = (value) => {
-  if (!hasText(value)) {
-    return null;
-  }
-  const text = String(value).trim();
-  return text.includes(':') ? text : EncryptionService.encrypt(text);
-};
-
-const encryptCoordinatorPayoutFields = (payload = {}) => {
-  const encryptedPayload = { ...payload };
-  COORDINATOR_PAYOUT_ENCRYPTED_FIELDS.forEach((field) => {
-    if (encryptedPayload[field] !== undefined) {
-      encryptedPayload[field] = encryptSensitiveMarketplaceField(encryptedPayload[field]);
-    }
-  });
-  return encryptedPayload;
-};
 
 const isMarketplaceEventClosedForSubmissionEdits = (event = {}) => {
   if (!event) return true;
@@ -359,21 +333,6 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   }
 
   const paymentResponsibility = body.payment_responsibility || 'NONE';
-  const coordinatorPaymentPreference =
-    body.coordinator_payment_preference ||
-    existingEvent?.coordinator_payment_preference ||
-    null;
-  const normalizedCoordinatorPaymentPreference = hasText(coordinatorPaymentPreference)
-    ? String(coordinatorPaymentPreference).trim().toUpperCase()
-    : null;
-  const coordinatorPaymentQrCodeUrl =
-    body.coordinator_payment_qr_code_url !== undefined
-      ? body.coordinator_payment_qr_code_url || null
-      : existingEvent?.coordinator_payment_qr_code_url || null;
-  const coordinatorPaymentQrCodeKey =
-    body.coordinator_payment_qr_code_key !== undefined
-      ? body.coordinator_payment_qr_code_key || null
-      : existingEvent?.coordinator_payment_qr_code_key || null;
   let vendorFee = roundMoney(body.vendor_fee || 0);
   let budgetedAmount = roundMoney(body.budgeted_amount || 0);
   if (paymentResponsibility === 'COORDINATOR') {
@@ -441,21 +400,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
 	    vendors_required_to_giveaway_food: vendorsRequiredToGiveawayFood,
 	    catered_vip_section_enabled: cateredVipSectionEnabled,
 	    vip_guest_count: vipGuestCount,
-	    coordinator_tax_identifier_type: body.coordinator_tax_identifier_type || existingEvent?.coordinator_tax_identifier_type || null,
-	    coordinator_tax_identifier: body.coordinator_tax_identifier || existingEvent?.coordinator_tax_identifier || null,
-	    coordinator_payment_preference: normalizedCoordinatorPaymentPreference,
-	    coordinator_payment_handle: body.coordinator_payment_handle || existingEvent?.coordinator_payment_handle || null,
-	    coordinator_payment_qr_code_url: coordinatorPaymentQrCodeUrl,
-	    coordinator_payment_qr_code_key: coordinatorPaymentQrCodeKey,
-	    coordinator_direct_deposit_routing_number:
-	      body.coordinator_direct_deposit_routing_number ||
-	      existingEvent?.coordinator_direct_deposit_routing_number ||
-	      null,
-	    coordinator_direct_deposit_account_number:
-	      body.coordinator_direct_deposit_account_number ||
-	      existingEvent?.coordinator_direct_deposit_account_number ||
-	      null,
-	    draft_expires_at:
+		    draft_expires_at:
 	      isDraft && !existingEvent?.draft_expires_at
         ? new Date(Date.now() + DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000)
         : existingEvent?.draft_expires_at || null,
@@ -552,42 +497,11 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
       throw buildError(`Budget amount must be at least $${minimumBudget.toFixed(2)} for the paid guest count.`, 400);
     }
   }
-  if (normalized.coordinator_tax_identifier_type) {
-    const taxType = String(normalized.coordinator_tax_identifier_type).toUpperCase();
-    if (!['EIN', 'SSN'].includes(taxType)) {
-      throw buildError('Coordinator tax identifier type must be EIN or SSN.', 400);
-    }
-    normalized.coordinator_tax_identifier_type = taxType;
-    if (!hasText(normalized.coordinator_tax_identifier)) {
-      throw buildError('Coordinator EIN/SSN is required for accounting and tax purposes.', 400);
-    }
-  }
-  if (normalized.coordinator_payment_preference) {
-    if (!COORDINATOR_PAYMENT_METHODS.includes(normalized.coordinator_payment_preference)) {
-      throw buildError('Coordinator payment preference is not supported.', 400);
-    }
-    if (normalized.coordinator_payment_preference === 'DIRECT_DEPOSIT') {
-      if (!hasText(normalized.coordinator_direct_deposit_routing_number)) {
-        throw buildError('Routing number is required for direct deposit.', 400);
-      }
-      if (!hasText(normalized.coordinator_direct_deposit_account_number)) {
-        throw buildError('Account number is required for direct deposit.', 400);
-      }
-      normalized.coordinator_payment_qr_code_url = null;
-      normalized.coordinator_payment_qr_code_key = null;
-    } else if (
-      !hasText(normalized.coordinator_payment_qr_code_url) &&
-      body.coordinator_payment_qr_pending !== true
-    ) {
-      throw buildError('A QR code is required for the selected coordinator payment preference.', 400);
-    }
-  }
-
   normalized.number_of_guests = Number(normalized.number_of_guests);
   normalized.number_of_vendors_needed = normalizeMarketplaceVendorCount(normalized);
   normalized.draft_expires_at = null;
   normalized.archived_at = null;
-  return encryptCoordinatorPayoutFields(normalized);
+  return normalized;
 };
 
 const sendEventClosedNotification = async (event) => {
@@ -5557,51 +5471,6 @@ exports.addEventImage = async (req, res, next) => {
     return res.data(
       { marketplaceEventImage },
       'Marketplace event image uploaded'
-    );
-  } catch (e) {
-    if (req.file?.path) {
-      fs.unlink(req.file.path, () => {});
-    }
-    return next(e);
-  }
-};
-
-exports.uploadCoordinatorPaymentQrCode = async (req, res, next) => {
-  try {
-    if (req.user.userType !== 'CUSTOMER') {
-      throw buildError('Only event owners can upload coordinator payment QR codes', 403);
-    }
-
-    const event = await getOwnedEvent(req.params.eventId, req.user._id);
-
-    if (!req.file) {
-      throw buildError('No QR code image uploaded', 400);
-    }
-
-    if (!isImageMimeType(req.file.mimetype)) {
-      throw buildError('Only image files are allowed for coordinator payment QR codes', 400);
-    }
-
-    if (event.coordinator_payment_qr_code_key) {
-      await removeObject(event.coordinator_payment_qr_code_key);
-    }
-
-    const { url, key } = await addObjectWithKey(
-      req.file,
-      'marketplace/events/coordinator-payment-qr'
-    );
-    fs.unlink(req.file.path, () => {});
-
-    event.coordinator_payment_qr_code_url = url;
-    event.coordinator_payment_qr_code_key = key;
-    await event.save();
-
-    return res.data(
-      {
-        coordinator_payment_qr_code_url: url,
-        coordinator_payment_qr_code_key: key,
-      },
-      'Coordinator payment QR code uploaded'
     );
   } catch (e) {
     if (req.file?.path) {
