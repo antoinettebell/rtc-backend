@@ -333,7 +333,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   let serviceStyles = asArray(body.service_styles);
   let primaryServiceStyle = body.primary_service_style || existingEvent?.primary_service_style || '';
 
-  if (serviceTypes.includes('Food Truck') && !primaryServiceStyle) {
+  if (serviceTypes.includes('Food Truck')) {
     primaryServiceStyle = 'Food Truck';
     if (!serviceStyles.includes('Food Truck')) {
       serviceStyles = [...serviceStyles, 'Food Truck'];
@@ -399,6 +399,10 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
         ? body.vendors_required_to_giveaway_food
         : null
       : null;
+  const cateredVipSectionEnabled = Boolean(body.catered_vip_section_enabled);
+  const vipGuestCount = cateredVipSectionEnabled
+    ? Math.max(0, Number(body.vip_guest_count || 0))
+    : 0;
   const rawEventDurationHours = Number(body.event_duration_hours || 0);
   const rawEventDurationMinutes = Number(body.event_duration_minutes || 0);
   const eventDurationHours = Number.isFinite(rawEventDurationHours)
@@ -435,6 +439,8 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     free_food_offered: freeFoodOffered,
     free_food_provider: freeFoodProvider,
 	    vendors_required_to_giveaway_food: vendorsRequiredToGiveawayFood,
+	    catered_vip_section_enabled: cateredVipSectionEnabled,
+	    vip_guest_count: vipGuestCount,
 	    coordinator_tax_identifier_type: body.coordinator_tax_identifier_type || existingEvent?.coordinator_tax_identifier_type || null,
 	    coordinator_tax_identifier: body.coordinator_tax_identifier || existingEvent?.coordinator_tax_identifier || null,
 	    coordinator_payment_preference: normalizedCoordinatorPaymentPreference,
@@ -529,10 +535,21 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   if (paymentResponsibility === 'BOTH' && (budgetedAmount <= 0 || vendorFee <= 0)) {
     throw buildError('Budget amount and vendor fee are required when both parties pay.', 400);
   }
+  if (
+    paymentResponsibility === 'BOTH' &&
+    cateredVipSectionEnabled &&
+    vipGuestCount < 1
+  ) {
+    throw buildError('VIP guest count is required for the catered VIP section.', 400);
+  }
   if (['COORDINATOR', 'BOTH'].includes(paymentResponsibility)) {
-    const minimumBudget = Number(normalized.number_of_guests || 0) * 25;
+    const budgetGuestCount =
+      paymentResponsibility === 'BOTH' && cateredVipSectionEnabled
+        ? vipGuestCount
+        : Number(normalized.number_of_guests || 0);
+    const minimumBudget = budgetGuestCount * 25;
     if (budgetedAmount < minimumBudget) {
-      throw buildError(`Budget amount must be at least $${minimumBudget.toFixed(2)} for this guest count.`, 400);
+      throw buildError(`Budget amount must be at least $${minimumBudget.toFixed(2)} for the paid guest count.`, 400);
     }
   }
   if (normalized.coordinator_tax_identifier_type) {

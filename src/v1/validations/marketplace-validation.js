@@ -71,6 +71,8 @@ const marketplaceEventBody = {
   free_food_offered: Joi.boolean().allow(null),
   free_food_provider: Joi.string().trim().allow(null, ''),
   vendors_required_to_giveaway_food: Joi.boolean().allow(null),
+  catered_vip_section_enabled: Joi.boolean().default(false),
+  vip_guest_count: Joi.number().integer().min(0).allow(null, ''),
   cuisine_preferences: Joi.array().items(Joi.string()).default([]),
   dietary_restrictions: Joi.array().items(Joi.string()).default([]),
   equipment_needed: Joi.array().items(Joi.string()).default([]),

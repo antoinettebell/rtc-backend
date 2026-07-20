@@ -217,7 +217,12 @@ const normalizeNearMeFood = (
     openLocationCandidate === undefined
       ? getClosestOpenTruckLocation(truck, userLat, userLong)
       : openLocationCandidate;
-  const location = closestOpenLocation?.location || truck.location || null;
+  const location = closestOpenLocation?.location
+    ? {
+        ...closestOpenLocation.location,
+        isOrderingOpen: true,
+      }
+    : truck.location || null;
   const vendorUser = Array.isArray(truck.user) ? truck.user[0] : truck.user;
   const mailingAddress = [
     vendorUser?.addressCity && vendorUser.addressCity !== 'NA'

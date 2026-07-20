@@ -262,6 +262,15 @@ const mSchema = mongoose.Schema(
         return this.status !== 'DRAFT' && this.free_food_offered === true;
       },
     },
+    catered_vip_section_enabled: {
+      type: Boolean,
+      default: false,
+    },
+    vip_guest_count: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     cuisine_preferences: {
       type: [String],
       default: [],
