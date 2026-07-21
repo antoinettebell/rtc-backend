@@ -290,6 +290,8 @@ const normalizeNearMeFood = (
 const normalizeNearMeEvent = (event, imagesByEventId, userLat, userLong) => {
   const latitude = toNumberOrNull(event.latitude);
   const longitude = toNumberOrNull(event.longitude);
+  const images = imagesByEventId[event.event_id] || [];
+  const imageUrls = images.map((image) => image.image_url).filter(Boolean);
   const hasCoordinates = latitude !== null && longitude !== null;
   const distance =
     hasCoordinates && userLat !== null && userLong !== null
@@ -315,10 +317,16 @@ const normalizeNearMeEvent = (event, imagesByEventId, userLat, userLong) => {
     event_zip: event.event_zip,
     latitude,
     longitude,
-    image_url: getFirstImageUrl(imagesByEventId[event.event_id] || []),
+    image_url: getFirstImageUrl(images),
+    images,
+    image_urls: imageUrls,
     distance,
     distanceInMeters: distance,
-    raw: event,
+    raw: {
+      ...event,
+      images,
+      image_urls: imageUrls,
+    },
   };
 };
 
