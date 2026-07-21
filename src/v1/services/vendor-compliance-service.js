@@ -333,11 +333,9 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   const eligible = missingRequirements.length === 0 && rejectedRequirements.length === 0;
   const hasPendingReview = pendingRequirements.length > 0;
   const scoreBand = getScoreBand({ score, eligible, hasPendingReview });
-  const complianceMessage = !sanitationGradeEligible
-    ? 'Please work on increasing your Sanitation Score and resubmit your Rating'
-    : eligible
-      ? 'Vendor compliance is eligible.'
-      : `Vendor compliance must be completed before bidding or accepting orders. Contact support at ${SUPPORT_PHONE_NUMBER}.`;
+  const complianceMessage = eligible
+    ? 'Vendor compliance is eligible.'
+    : `Vendor compliance must be completed before bidding or accepting orders. Contact support at ${SUPPORT_PHONE_NUMBER}.`;
 
   return {
     food_truck_id: foodTruck._id,
@@ -349,8 +347,8 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     eligible,
     sanitation_grade: sanitationGrade,
     sanitation_grade_eligible: sanitationGradeEligible,
-    can_bid: eligible && sanitationGradeEligible,
-    can_open_accepting_orders: sanitationGradeEligible,
+    can_bid: eligible,
+    can_open_accepting_orders: eligible,
     support_phone_number: SUPPORT_PHONE_NUMBER,
     message: complianceMessage,
     requirements,
