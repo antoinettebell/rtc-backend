@@ -16,7 +16,7 @@ const mSchema = mongoose.Schema(
     },
     food_truck_id: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'food_trucks',
+      ref: 'food-trucks',
       required: true,
       index: true,
     },
