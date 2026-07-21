@@ -195,6 +195,39 @@ const mSchema = mongoose.Schema(
           enum: ['ACTIVE', 'ARCHIVED'],
           default: 'ACTIVE',
         },
+        compliance_status: {
+          type: String,
+          enum: [
+            'NOT_APPLICABLE',
+            'NEEDS_SYNC',
+            'PENDING_REVIEW',
+            'VERIFIED',
+            'REJECTED',
+            'EXPIRED',
+            'ARCHIVED',
+          ],
+          default: 'NEEDS_SYNC',
+        },
+        compliance_document_id: {
+          type: String,
+          default: null,
+        },
+        compliance_document_type: {
+          type: String,
+          default: null,
+        },
+        compliance_review_status: {
+          type: String,
+          default: null,
+        },
+        compliance_ocr_status: {
+          type: String,
+          default: null,
+        },
+        compliance_synced_at: {
+          type: Date,
+          default: null,
+        },
         archived_at: {
           type: Date,
           default: null,

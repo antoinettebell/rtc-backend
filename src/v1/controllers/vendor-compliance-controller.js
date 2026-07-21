@@ -122,6 +122,12 @@ exports.uploadDocument = async (req, res, next) => {
         uploaded_by_user_id: req.user._id,
         uploaded_at: new Date(),
         document_status: 'ACTIVE',
+        compliance_status: 'PENDING_REVIEW',
+        compliance_document_id: document.document_id,
+        compliance_document_type: document.document_type,
+        compliance_review_status: document.review_status,
+        compliance_ocr_status: document.ocr_status,
+        compliance_synced_at: new Date(),
       },
     ];
     await foodTruck.save();

@@ -207,6 +207,78 @@ const selectLatestByType = (documents = []) =>
     return acc;
   }, {});
 
+const getFoodTruckDocumentComplianceStatus = (document = null) => {
+  if (!document) return 'NEEDS_SYNC';
+  if (document.review_status === 'verified') return 'VERIFIED';
+  if (document.review_status === 'rejected') return 'REJECTED';
+  if (document.review_status === 'expired') return 'EXPIRED';
+  if (document.archived_at || document.review_status === 'archived') {
+    return 'ARCHIVED';
+  }
+  return 'PENDING_REVIEW';
+};
+
+const applyComplianceStatusToFoodTruckDocument = (legacyDocument, complianceDocument) => {
+  if (!legacyDocument) return false;
+
+  const nextStatus = complianceDocument
+    ? getFoodTruckDocumentComplianceStatus(complianceDocument)
+    : 'NOT_APPLICABLE';
+  const nextValues = {
+    compliance_status: nextStatus,
+    compliance_document_id: complianceDocument?.document_id || null,
+    compliance_document_type: complianceDocument?.document_type || null,
+    compliance_review_status: complianceDocument?.review_status || null,
+    compliance_ocr_status: complianceDocument?.ocr_status || null,
+  };
+
+  let changed = false;
+  Object.entries(nextValues).forEach(([key, value]) => {
+    if (String(legacyDocument[key] || '') !== String(value || '')) {
+      legacyDocument[key] = value;
+      changed = true;
+    }
+  });
+
+  if (changed) {
+    legacyDocument.compliance_synced_at = new Date();
+  }
+  return changed;
+};
+
+const updateLinkedFoodTruckDocumentComplianceStatus = async (complianceDocument) => {
+  if (!complianceDocument?.food_truck_id) return false;
+
+  const foodTruck = await FoodTruckService.getByData(
+    { _id: complianceDocument.food_truck_id },
+    { singleResult: true }
+  );
+  if (!foodTruck) return false;
+
+  let changed = false;
+  for (const legacyDocument of foodTruck.documents || []) {
+    const matches =
+      legacyDocument.compliance_document_id === complianceDocument.document_id ||
+      legacyDocument.file_url === complianceDocument.file_url ||
+      (legacyDocument.file_key &&
+        complianceDocument.file_key &&
+        legacyDocument.file_key === complianceDocument.file_key);
+
+    if (matches) {
+      changed =
+        applyComplianceStatusToFoodTruckDocument(
+          legacyDocument,
+          complianceDocument
+        ) || changed;
+    }
+  }
+
+  if (changed) {
+    await foodTruck.save();
+  }
+  return changed;
+};
+
 const getLatestSanitationGradeDocument = (documents = [], now = new Date()) =>
   documents.find(
     (document) =>
@@ -479,11 +551,12 @@ const uploadComplianceDocument = async ({
 
 const syncLegacyFoodTruckDocuments = async ({ foodTruckId = null } = {}) => {
   const query = foodTruckId ? { _id: foodTruckId } : {};
-  const foodTrucks = await FoodTruckService.getByData(query, { lean: true });
+  const foodTrucks = await FoodTruckService.getByData(query);
   let createdCount = 0;
 
   for (const foodTruck of foodTrucks || []) {
     if (!foodTruck?._id || !foodTruck?.userId) continue;
+    let foodTruckChanged = false;
 
     for (const legacyDocument of foodTruck.documents || []) {
       if (
@@ -497,7 +570,12 @@ const syncLegacyFoodTruckDocuments = async ({ foodTruckId = null } = {}) => {
         legacyDocument.document_type
       );
       const requirement = getComplianceRequirement(documentType);
-      if (!requirement) continue;
+      if (!requirement) {
+        foodTruckChanged =
+          applyComplianceStatusToFoodTruckDocument(legacyDocument, null) ||
+          foodTruckChanged;
+        continue;
+      }
 
       const existing = await VendorComplianceDocumentService.getByData(
         {
@@ -514,7 +592,12 @@ const syncLegacyFoodTruckDocuments = async ({ foodTruckId = null } = {}) => {
         },
         { singleResult: true, lean: true }
       );
-      if (existing) continue;
+      if (existing) {
+        foodTruckChanged =
+          applyComplianceStatusToFoodTruckDocument(legacyDocument, existing) ||
+          foodTruckChanged;
+        continue;
+      }
 
       const existingCount = await VendorComplianceDocumentService.getCount({
         food_truck_id: foodTruck._id,
@@ -547,7 +630,14 @@ const syncLegacyFoodTruckDocuments = async ({ foodTruckId = null } = {}) => {
         notes: 'Imported from vendor document record',
         metadata: { document_type: documentType, source: 'food_truck.documents' },
       });
+      foodTruckChanged =
+        applyComplianceStatusToFoodTruckDocument(legacyDocument, document) ||
+        foodTruckChanged;
       createdCount += 1;
+    }
+
+    if (foodTruckChanged) {
+      await foodTruck.save();
     }
   }
 
@@ -583,6 +673,7 @@ const submitComplianceDocumentsForOcr = async ({ foodTruck, user }) => {
       reviewed_at: null,
     });
     await document.save();
+    await updateLinkedFoodTruckDocumentComplianceStatus(document);
 
     await VendorComplianceAuditService.create({
       document_id: document.document_id,
@@ -635,6 +726,7 @@ const reviewComplianceDocument = async ({
     };
   }
   await document.save();
+  await updateLinkedFoodTruckDocumentComplianceStatus(document);
 
   await VendorComplianceAuditService.create({
     document_id: document.document_id,
@@ -698,6 +790,7 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
       : 'OCR could not confirm the vendor-entered expiration date.';
   }
   await document.save();
+  await updateLinkedFoodTruckDocumentComplianceStatus(document);
   return document;
 };
 
@@ -718,6 +811,7 @@ const archiveExpiredDocuments = async () => {
       document.archived_at = now;
       document.archived_reason = 'Compliance document expired';
       await document.save();
+      await updateLinkedFoodTruckDocumentComplianceStatus(document);
       await VendorComplianceAuditService.create({
         document_id: document.document_id,
         food_truck_id: document.food_truck_id,
