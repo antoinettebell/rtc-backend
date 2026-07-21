@@ -99,16 +99,28 @@ exports.uploadDocument = async (req, res, next) => {
 
     const foodTruckDocumentType =
       getFoodTruckDocumentTypeFromComplianceType(documentType);
-    foodTruck.documents = (foodTruck.documents || []).map((existingDocument) =>
-      existingDocument?.document_type === foodTruckDocumentType &&
-      existingDocument?.document_status !== 'ARCHIVED'
-        ? {
-            ...existingDocument,
-            document_status: 'ARCHIVED',
-            archived_at: new Date(),
-          }
-        : existingDocument
-    );
+    foodTruck.documents = (foodTruck.documents || [])
+      .map((existingDocument) => {
+        const sameType =
+          existingDocument?.document_type === foodTruckDocumentType &&
+          existingDocument?.document_status !== 'ARCHIVED';
+
+        if (!sameType) return existingDocument;
+
+        const isVerified =
+          existingDocument?.compliance_status === 'VERIFIED' ||
+          existingDocument?.compliance_review_status === 'verified';
+
+        if (!isVerified) return null;
+
+        return {
+          ...existingDocument,
+          document_status: 'ARCHIVED',
+          compliance_status: 'ARCHIVED',
+          archived_at: new Date(),
+        };
+      })
+      .filter(Boolean);
     foodTruck.documents = [
       ...(foodTruck.documents || []),
       {

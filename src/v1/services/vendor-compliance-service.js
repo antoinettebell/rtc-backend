@@ -1,5 +1,6 @@
 const {
   FoodTruckService,
+  MarketplaceAttachmentService,
   VendorComplianceDocumentService,
   VendorComplianceAuditService,
 } = require('./index');
@@ -12,6 +13,7 @@ const {
 } = require('../../helper/vendor-compliance-config');
 const { enqueueComplianceOcr } = require('../../helper/vendor-compliance-ocr-helper');
 const CustomNotification = require('../../helper/custom-notification');
+const { removeObject } = require('../../helper/aws');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -457,7 +459,82 @@ const assertEligible = async (foodTruckOrId, actionLabel = 'continue') => {
   return summary;
 };
 
-const archiveExistingDocument = async ({
+const isDocumentAttachedToMarketplace = async (document) => {
+  if (!document?.file_url && !document?.file_key) return false;
+
+  const attachmentQuery = {
+    status: { $ne: 'DELETED' },
+    $or: [
+      ...(document.file_url ? [{ file_url: document.file_url }] : []),
+      ...(document.file_key ? [{ file_key: document.file_key }] : []),
+    ],
+  };
+
+  const count = await MarketplaceAttachmentService.getCount(attachmentQuery);
+  return Number(count || 0) > 0;
+};
+
+const removeLinkedFoodTruckDocuments = async (complianceDocument) => {
+  if (!complianceDocument?.food_truck_id) return false;
+
+  const foodTruck = await FoodTruckService.getByData(
+    { _id: complianceDocument.food_truck_id },
+    { singleResult: true }
+  );
+  if (!foodTruck) return false;
+
+  const originalCount = (foodTruck.documents || []).length;
+  foodTruck.documents = (foodTruck.documents || []).filter((legacyDocument) => {
+    const matches =
+      legacyDocument.compliance_document_id === complianceDocument.document_id ||
+      legacyDocument.file_url === complianceDocument.file_url ||
+      (legacyDocument.file_key &&
+        complianceDocument.file_key &&
+        legacyDocument.file_key === complianceDocument.file_key);
+
+    return !matches;
+  });
+
+  if (foodTruck.documents.length !== originalCount) {
+    await foodTruck.save();
+    return true;
+  }
+
+  return false;
+};
+
+const deleteUnverifiedDocument = async ({
+  document,
+  actorUserId,
+  reason,
+  replacedByDocumentId,
+}) => {
+  await removeLinkedFoodTruckDocuments(document);
+
+  await VendorComplianceAuditService.create({
+    document_id: document.document_id,
+    food_truck_id: document.food_truck_id,
+    vendor_user_id: document.vendor_user_id,
+    action: 'DELETE_UNVERIFIED_REPLACED',
+    actor_user_id: actorUserId,
+    actor_user_type: 'SYSTEM',
+    notes: reason,
+    metadata: {
+      document_type: document.document_type,
+      replaced_by_document_id: replacedByDocumentId || null,
+    },
+  });
+
+  await VendorComplianceDocumentService.destroy({
+    document_id: document.document_id,
+  });
+
+  if (document.file_key) {
+    await removeObject(document.file_key);
+  }
+};
+
+const retainOrDeleteExistingDocument = async ({
   foodTruckId,
   documentType,
   actorUserId,
@@ -479,6 +556,20 @@ const archiveExistingDocument = async ({
 
   await Promise.all(
     existingDocuments.map(async (document) => {
+      const shouldRetain =
+        document.review_status === 'verified' ||
+        (await isDocumentAttachedToMarketplace(document));
+
+      if (!shouldRetain) {
+        await deleteUnverifiedDocument({
+          document,
+          actorUserId,
+          reason,
+          replacedByDocumentId,
+        });
+        return;
+      }
+
       document.review_status = 'archived';
       document.archived_at = new Date();
       document.archived_reason = reason;
@@ -526,7 +617,7 @@ const uploadComplianceDocument = async ({
     review_status: 'pending_review',
   });
 
-  await archiveExistingDocument({
+  await retainOrDeleteExistingDocument({
     foodTruckId: foodTruck._id,
     documentType,
     actorUserId: user._id,
