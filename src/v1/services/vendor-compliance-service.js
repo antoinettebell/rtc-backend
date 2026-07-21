@@ -82,6 +82,10 @@ const getOcrIssueDate = (fields = {}) =>
 const taxDigits = (value) => String(value || '').replace(/\D/g, '');
 
 const hasValidTaxIdentifier = (value) => taxDigits(value).length === 9;
+const hasMaskedTaxIdentifier = (value) => {
+  const text = String(value || '');
+  return text.includes('*') && taxDigits(text).length >= 4;
+};
 const hasEncryptedTaxIdentifier = (foodTruck, type) =>
   String(foodTruck?.tax_identifier_type || '').toUpperCase() === type &&
   !!foodTruck?.tax_identifier_masked;
@@ -143,7 +147,7 @@ const isSanitationGradeEligible = (grade) => {
 };
 
 const getScoreBand = ({ score, eligible, hasPendingReview }) => {
-  if (!eligible || score < 50) {
+  if (score < 25) {
     return {
       color: 'red',
       label: 'Blocked',
@@ -151,33 +155,25 @@ const getScoreBand = ({ score, eligible, hasPendingReview }) => {
     };
   }
 
-  if (hasPendingReview) {
+  if (score < 50) {
     return {
-      color: 'yellow',
-      label: 'Pending review',
-      hex: '#F9AB00',
-    };
-  }
-
-  if (score < 80) {
-    return {
-      color: 'yellow',
+      color: 'orange',
       label: 'Needs attention',
-      hex: '#F9AB00',
+      hex: '#F97316',
     };
   }
 
-  if (score < 100) {
+  if (score < 75 || hasPendingReview || !eligible) {
     return {
-      color: 'blue',
-      label: 'Almost complete',
-      hex: '#1A73E8',
+      color: 'yellow',
+      label: hasPendingReview ? 'Pending review' : 'In progress',
+      hex: '#F9AB00',
     };
   }
 
   return {
     color: 'green',
-    label: 'Complete',
+    label: score >= 100 ? 'Complete' : 'On track',
     hex: '#188038',
   };
 };
@@ -338,9 +334,11 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   const sanitationGradeEligible = isSanitationGradeEligible(sanitationGrade);
   const hasSsnOnProfile =
     hasValidTaxIdentifier(foodTruck.ssn) ||
+    hasMaskedTaxIdentifier(foodTruck.ssn) ||
     hasEncryptedTaxIdentifier(foodTruck, 'SSN');
   const hasEinOnProfile =
     hasValidTaxIdentifier(foodTruck.ein) ||
+    hasMaskedTaxIdentifier(foodTruck.ein) ||
     hasEncryptedTaxIdentifier(foodTruck, 'EIN');
   const selectedTaxIdentifierType =
     String(foodTruck.tax_identifier_type || '').toUpperCase() === 'SSN' ||
@@ -534,6 +532,43 @@ const deleteUnverifiedDocument = async ({
   }
 };
 
+const deleteRejectedDocument = async ({ document, user, reason }) => {
+  const attachedToMarketplace = await isDocumentAttachedToMarketplace(document);
+
+  if (attachedToMarketplace) {
+    document.review_status = 'archived';
+    document.archived_at = new Date();
+    document.archived_reason = reason;
+    document.archived_by_user_id = user._id;
+    await document.save();
+    await updateLinkedFoodTruckDocumentComplianceStatus(document);
+    return document;
+  }
+
+  await removeLinkedFoodTruckDocuments(document);
+
+  await VendorComplianceAuditService.create({
+    document_id: document.document_id,
+    food_truck_id: document.food_truck_id,
+    vendor_user_id: document.vendor_user_id,
+    action: 'DELETE_REJECTED',
+    actor_user_id: user._id,
+    actor_user_type: user.userType,
+    notes: reason,
+    metadata: { document_type: document.document_type },
+  });
+
+  await VendorComplianceDocumentService.destroy({
+    document_id: document.document_id,
+  });
+
+  if (document.file_key) {
+    await removeObject(document.file_key);
+  }
+
+  return document;
+};
+
 const retainOrDeleteExistingDocument = async ({
   foodTruckId,
   documentType,
@@ -614,7 +649,10 @@ const uploadComplianceDocument = async ({
     issue_date: asDate(body.issue_date),
     expiration_date: asDate(body.expiration_date),
     uploaded_by_user_id: user._id,
-    review_status: 'pending_review',
+    review_status: user.userType === 'SUPER_ADMIN' ? 'verified' : 'pending_review',
+    reviewed_by_user_id: user.userType === 'SUPER_ADMIN' ? user._id : null,
+    reviewed_at: user.userType === 'SUPER_ADMIN' ? new Date() : null,
+    ocr_status: user.userType === 'SUPER_ADMIN' ? 'not_configured' : undefined,
   });
 
   await retainOrDeleteExistingDocument({
@@ -798,6 +836,14 @@ const reviewComplianceDocument = async ({
 
   if (!document) {
     throw buildComplianceError('Compliance document not found', 404);
+  }
+
+  if (reviewStatus === 'rejected') {
+    return deleteRejectedDocument({
+      document,
+      user,
+      reason: reviewNotes || 'Rejected by admin',
+    });
   }
 
   document.review_status = reviewStatus;
