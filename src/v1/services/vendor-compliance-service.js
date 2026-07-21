@@ -268,7 +268,12 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   const hasEinOnProfile =
     hasValidTaxIdentifier(foodTruck.ein) ||
     hasEncryptedTaxIdentifier(foodTruck, 'EIN');
-  const taxIdRequirementType = hasSsnOnProfile ? 'SSN' : 'EIN';
+  const selectedTaxIdentifierType =
+    String(foodTruck.tax_identifier_type || '').toUpperCase() === 'SSN' ||
+    hasSsnOnProfile
+      ? 'SSN'
+      : 'EIN';
+  const taxIdRequirementType = selectedTaxIdentifierType;
   let score = 0;
   const missingRequirements = [];
   const expiringRequirements = [];
@@ -324,7 +329,11 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   });
 
   if (taxIdRequirementType === 'SSN') {
-    score += 50;
+    if (hasSsnOnProfile) {
+      score += 50;
+    } else {
+      missingRequirements.push('SSN_PROFILE');
+    }
   } else if (!hasEinOnProfile) {
     missingRequirements.push('EIN_PROFILE');
   }
