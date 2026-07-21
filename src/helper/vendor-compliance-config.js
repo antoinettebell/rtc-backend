@@ -17,14 +17,14 @@ const DOCUMENT_TYPES = {
   BUSINESS_LICENSE: {
     type: 'BUSINESS_LICENSE',
     label: 'Business License',
-    required: false,
+    required: true,
     scoreWeight: 0,
     ocrFields: ['license_number', 'business_name', 'issuing_authority', 'expiration_date'],
   },
   COI: {
     type: 'COI',
     label: 'Certificate of Insurance',
-    required: false,
+    required: true,
     scoreWeight: 0,
     ocrFields: [
       'policy_number',
