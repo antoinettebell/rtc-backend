@@ -217,6 +217,7 @@ exports.adminList = async (req, res, next) => {
       document_type,
       food_truck_id,
     } = req.query;
+    await VendorComplianceService.purgeRejectedDocuments({ user: req.user });
     await VendorComplianceService.syncLegacyFoodTruckDocuments({
       foodTruckId: food_truck_id || null,
     });
@@ -253,6 +254,7 @@ exports.adminList = async (req, res, next) => {
 
 exports.adminDashboard = async (req, res, next) => {
   try {
+    await VendorComplianceService.purgeRejectedDocuments({ user: req.user });
     await VendorComplianceService.syncLegacyFoodTruckDocuments();
 
     const documents = await VendorComplianceDocumentService.getByData(

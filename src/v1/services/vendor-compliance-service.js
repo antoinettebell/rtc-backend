@@ -555,7 +555,7 @@ const deleteRejectedDocument = async ({ document, user, reason }) => {
     document.review_status = 'archived';
     document.archived_at = new Date();
     document.archived_reason = reason;
-    document.archived_by_user_id = user._id;
+    document.archived_by_user_id = user?._id || null;
     await document.save();
     await updateLinkedFoodTruckDocumentComplianceStatus(document);
     return document;
@@ -568,8 +568,8 @@ const deleteRejectedDocument = async ({ document, user, reason }) => {
     food_truck_id: document.food_truck_id,
     vendor_user_id: document.vendor_user_id,
     action: 'DELETE_REJECTED',
-    actor_user_id: user._id,
-    actor_user_type: user.userType,
+    actor_user_id: user?._id || null,
+    actor_user_type: user?.userType || 'SYSTEM',
     notes: reason,
     metadata: { document_type: document.document_type },
   });
@@ -583,6 +583,28 @@ const deleteRejectedDocument = async ({ document, user, reason }) => {
   }
 
   return document;
+};
+
+const purgeRejectedDocuments = async ({
+  user = null,
+  reason = 'Rejected compliance document cleanup',
+} = {}) => {
+  const rejectedDocuments = await VendorComplianceDocumentService.getByData(
+    { review_status: 'rejected' },
+    {}
+  );
+
+  let purgedCount = 0;
+  for (const document of rejectedDocuments || []) {
+    await deleteRejectedDocument({
+      document,
+      user: user || { _id: null, userType: 'SYSTEM' },
+      reason,
+    });
+    purgedCount += 1;
+  }
+
+  return purgedCount;
 };
 
 const retainOrDeleteExistingDocument = async ({
@@ -1063,6 +1085,7 @@ module.exports = {
   syncLegacyFoodTruckDocuments,
   submitComplianceDocumentsForOcr,
   reviewComplianceDocument,
+  purgeRejectedDocuments,
   applyOcrResult,
   sendExpirationReminders,
   archiveExpiredDocuments,
