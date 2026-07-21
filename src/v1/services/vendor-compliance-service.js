@@ -6,6 +6,7 @@ const {
 } = require('./index');
 const {
   SUPPORT_PHONE_NUMBER,
+  GRANDFATHER_CUTOFF_DATE,
   REMINDER_DAYS,
   getComplianceRequirement,
   getComplianceRequirements,
@@ -39,6 +40,14 @@ const getDaysUntil = (date, now = new Date()) => {
   const parsed = asDate(date);
   if (!parsed) return null;
   return Math.ceil((parsed.getTime() - now.getTime()) / MS_PER_DAY);
+};
+
+const isGrandfatheredVendor = (foodTruck) => {
+  const cutoffDate = asDate(GRANDFATHER_CUTOFF_DATE);
+  if (!cutoffDate || !foodTruck?.createdAt) return false;
+
+  const createdAt = asDate(foodTruck.createdAt);
+  return !!createdAt && createdAt < cutoffDate;
 };
 
 const getFirstFieldValue = (fields = {}, names = []) => {
@@ -346,6 +355,7 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
       ? 'SSN'
       : 'EIN';
   const taxIdRequirementType = selectedTaxIdentifierType;
+  const grandfathered = isGrandfatheredVendor(foodTruck);
   let score = 0;
   const missingRequirements = [];
   const expiringRequirements = [];
@@ -411,11 +421,15 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   }
 
   score = Math.min(100, score);
-  const eligible = missingRequirements.length === 0 && rejectedRequirements.length === 0;
+  const eligible =
+    grandfathered ||
+    (missingRequirements.length === 0 && rejectedRequirements.length === 0);
   const hasPendingReview = pendingRequirements.length > 0;
   const scoreBand = getScoreBand({ score, eligible, hasPendingReview });
   const complianceMessage = eligible
-    ? 'Vendor compliance is eligible.'
+    ? grandfathered
+      ? 'Vendor is grandfathered under current compliance requirements.'
+      : 'Vendor compliance is eligible.'
     : `Vendor compliance must be completed before bidding or accepting orders. Contact support at ${SUPPORT_PHONE_NUMBER}.`;
 
   return {
@@ -428,6 +442,8 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     eligible,
     sanitation_grade: sanitationGrade,
     sanitation_grade_eligible: sanitationGradeEligible,
+    grandfathered,
+    grandfather_cutoff_date: GRANDFATHER_CUTOFF_DATE,
     can_bid: eligible,
     can_open_accepting_orders: eligible,
     support_phone_number: SUPPORT_PHONE_NUMBER,
