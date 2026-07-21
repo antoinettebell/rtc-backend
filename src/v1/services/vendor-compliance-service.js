@@ -503,6 +503,8 @@ const syncLegacyFoodTruckDocuments = async ({ foodTruckId = null } = {}) => {
         {
           food_truck_id: foodTruck._id,
           document_type: documentType,
+          review_status: { $ne: 'archived' },
+          archived_at: null,
           $or: [
             { file_url: legacyDocument.file_url },
             ...(legacyDocument.file_key

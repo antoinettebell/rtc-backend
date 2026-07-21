@@ -256,7 +256,7 @@ exports.adminDashboard = async (req, res, next) => {
       return days >= 0 && days <= 30;
     }).length;
     const foodTrucks = await FoodTruckService.getByData(
-      { inactive: false },
+      { inactive: { $ne: true } },
       {
         sort: { name: 1 },
         lean: true,
