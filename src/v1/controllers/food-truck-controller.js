@@ -42,7 +42,25 @@ const parseCsvParam = (value) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
-const DOCUMENT_TYPES = new Set(['PERMIT', 'LICENSE', 'INSURANCE', 'EIN', 'W9', 'OTHER']);
+const DOCUMENT_TYPES = new Set([
+  'PERMIT',
+  'LICENSE',
+  'INSURANCE',
+  'EIN',
+  'W9',
+  'OTHER',
+]);
+
+const DOCUMENT_TYPE_ALIASES = {
+  HEALTH_PERMIT: 'PERMIT',
+  SANITATION_GRADE: 'PERMIT',
+  BUSINESS_LICENSE: 'LICENSE',
+  BUSINESS_LICENSE_PERMIT: 'LICENSE',
+  COI: 'INSURANCE',
+  CERTIFICATE_OF_INSURANCE: 'INSURANCE',
+  LIQUOR_LICENSE: 'LICENSE',
+  W_9: 'W9',
+};
 
 const taxDigits = (value) => String(value || '').replace(/\D/g, '').slice(0, 9);
 const normalizeTaxIdType = (value) => {
@@ -89,8 +107,10 @@ const applyFoodTruckTaxId = (item, { ein, ssn, infoType }) => {
 const normalizeDocumentType = (value) => {
   const normalized = String(value || 'OTHER')
     .trim()
-    .toUpperCase();
-  return DOCUMENT_TYPES.has(normalized) ? normalized : 'OTHER';
+    .toUpperCase()
+    .replace(/[\s-]+/g, '_');
+  const aliased = DOCUMENT_TYPE_ALIASES[normalized] || normalized;
+  return DOCUMENT_TYPES.has(aliased) ? aliased : 'OTHER';
 };
 
 const normalizeDocumentName = (value) =>
@@ -466,6 +486,20 @@ const getScheduleOverrideUntilNextReset = (foodTruck) =>
     foodTruck?.schedule_time_zone || DEFAULT_VENDOR_SCHEDULE_TIME_ZONE
   );
 
+const normalizeAvailabilityChangeDay = (day) => {
+  const value = String(day || '').trim().toLowerCase();
+  const map = {
+    sunday: 'sun',
+    monday: 'mon',
+    tuesday: 'tue',
+    wednesday: 'wed',
+    thursday: 'thu',
+    friday: 'fri',
+    saturday: 'sat',
+  };
+  return map[value] || value || null;
+};
+
 const setTruckUnitLocationOpen = ({
   foodTruck,
   truckUnitId,
@@ -522,9 +556,17 @@ const setTruckUnitLocationOpen = ({
   return unit;
 };
 
-const clearScheduleOverridesForAvailability = (foodTruck, availability = []) => {
+const clearScheduleOverridesForAvailability = (
+  foodTruck,
+  availability = [],
+  changedDay = null
+) => {
+  const normalizedChangedDay = normalizeAvailabilityChangeDay(changedDay);
   const changedPairs = new Set();
   (availability || []).forEach((slot) => {
+    if (normalizedChangedDay && slot?.day !== normalizedChangedDay) {
+      return;
+    }
     const locationId = slot?.locationId?.toString();
     const truckUnitId = slot?.truckUnitId?.toString();
     if (locationId && truckUnitId) {
@@ -1068,31 +1110,34 @@ exports.update = async (req, res, next) => {
       syncOrderingLocationFlags(item);
     }
 
-		    if (availability) {
-		      const previousAvailability = cloneAvailability(item.availability);
-		      const nextAvailability = cloneAvailability(availability);
-		      const availabilityChanged =
-		        normalizeAvailabilityForCompare(previousAvailability) !==
-		        normalizeAvailabilityForCompare(nextAvailability);
-		      if (availabilityChanged) {
-		        item.availabilityHistory = [
-		          ...(item.availabilityHistory || []),
-		          {
-	            archivedAt: new Date(),
-	            changedByUserId: user?._id || null,
-	            changedDay: availabilityChangeDay || availabilityChangedDay || null,
-	            previousAvailability,
-	            newAvailability: nextAvailability,
-		          },
-		        ];
-            const vendor = await UserService.getById(item.userId);
-            applyVendorScheduleTimeZoneCache(item, vendor);
-            if (clearScheduleOverridesForAvailability(item, nextAvailability)) {
-              item.markModified('truck_units');
-            }
-			      }
-			      item.availability = availability;
-			    }
+    if (availability) {
+      const previousAvailability = cloneAvailability(item.availability);
+      const nextAvailability = cloneAvailability(availability);
+      const changedDay = availabilityChangeDay || availabilityChangedDay || null;
+      const availabilityChanged =
+        normalizeAvailabilityForCompare(previousAvailability) !==
+        normalizeAvailabilityForCompare(nextAvailability);
+
+      if (availabilityChanged) {
+        item.availabilityHistory = [
+          ...(item.availabilityHistory || []),
+          {
+            archivedAt: new Date(),
+            changedByUserId: user?._id || null,
+            changedDay,
+            previousAvailability,
+            newAvailability: nextAvailability,
+          },
+        ];
+        const vendor = await UserService.getById(item.userId);
+        applyVendorScheduleTimeZoneCache(item, vendor);
+      }
+
+      if (changedDay && clearScheduleOverridesForAvailability(item, nextAvailability, changedDay)) {
+        item.markModified('truck_units');
+      }
+      item.availability = availability;
+    }
 
     if (businessHours) {
       item.businessHours = businessHours;
@@ -1410,46 +1455,25 @@ exports.toggleLocationOrdering = async (req, res, next) => {
     }
 
     if (isOrderingOpen) {
-      await VendorComplianceService.assertEligible(item, 'open and accept orders');
-
-      const menuItemsCount = await MenuItemService.getCount({
-        userId: item.userId,
-        deletedAt: null,
-        available: true,
-      });
-
-      if (menuItemsCount <= 0) {
-        return res.error(
-          new Error('Cannot open location when no menu items are available'),
-          409
-        );
-      }
-
-      setTruckUnitLocationOpen({
-        foodTruck: item,
-        truckUnitId: truck_unit_id || user.assigned_truck_unit_id || null,
-        locationId,
-        isOpen: true,
-        closeOtherLocations: user.userType === 'EMPLOYEE',
-        statusSource: 'MANUAL',
-        scheduleOverrideReason:
-          schedule_override_reason ||
-          (user.userType === 'SUPER_ADMIN' ? 'ADMIN_OVERRIDE' : 'OPENING_EARLY'),
-        scheduleOverrideUntil: getScheduleOverrideUntilNextReset(item),
-      });
-    } else {
-      setTruckUnitLocationOpen({
-        foodTruck: item,
-        truckUnitId: truck_unit_id || user.assigned_truck_unit_id || null,
-        locationId,
-        isOpen: false,
-        statusSource: 'MANUAL',
-        scheduleOverrideReason:
-          schedule_override_reason ||
-          (user.userType === 'SUPER_ADMIN' ? 'ADMIN_OVERRIDE' : 'CLOSING_EARLY'),
-        scheduleOverrideUntil: getScheduleOverrideUntilNextReset(item),
-      });
+      return res.error(
+        new Error(
+          'To reopen, please update your weekly schedule. Manual closing is allowed for today, but reopening must be scheduled.'
+        ),
+        409
+      );
     }
+
+    setTruckUnitLocationOpen({
+      foodTruck: item,
+      truckUnitId: truck_unit_id || user.assigned_truck_unit_id || null,
+      locationId,
+      isOpen: false,
+      statusSource: 'MANUAL',
+      scheduleOverrideReason:
+        schedule_override_reason ||
+        (user.userType === 'SUPER_ADMIN' ? 'ADMIN_OVERRIDE' : 'CLOSING_EARLY'),
+      scheduleOverrideUntil: getScheduleOverrideUntilNextReset(item),
+    });
 
     await item.save();
 

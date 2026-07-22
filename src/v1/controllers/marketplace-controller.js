@@ -4399,6 +4399,56 @@ exports.withdrawBid = async (req, res, next) => {
   }
 };
 
+exports.deleteDraftBid = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only vendors can delete marketplace bid drafts', 403);
+    }
+
+    const bid = await MarketplaceBidService.getByData(
+      {
+        bid_id: req.params.bidId,
+        vendor_user_id: req.user._id,
+        archived_at: null,
+      },
+      { singleResult: true }
+    );
+
+    if (!bid) {
+      throw buildError('Marketplace bid not found', 404);
+    }
+
+    if (bid.bid_status !== 'DRAFT') {
+      throw buildError('Only draft bids can be deleted. Submitted bids can be withdrawn.', 400);
+    }
+
+    const attachments = await MarketplaceAttachmentService.getByData({
+      bid_id: bid.bid_id,
+      status: { $ne: 'DELETED' },
+    });
+    for (const attachment of attachments || []) {
+      if (attachment.file_key) {
+        try {
+          await removeObject(attachment.file_key);
+        } catch (error) {
+          console.warn('Failed to remove draft bid attachment from storage', {
+            attachment_id: attachment.attachment_id,
+            file_key: attachment.file_key,
+            message: error?.message,
+          });
+        }
+      }
+    }
+
+    await MarketplaceAttachmentService.destroyMany({ bid_id: bid.bid_id });
+    await MarketplaceBidService.destroy({ bid_id: bid.bid_id });
+
+    return res.data({ bid_id: req.params.bidId }, 'Marketplace bid draft deleted');
+  } catch (e) {
+    return next(e);
+  }
+};
+
 exports.vendorNotificationSummary = async (req, res, next) => {
   try {
     if (req.user.userType !== 'VENDOR') {
@@ -4766,6 +4816,66 @@ exports.withdrawApplication = async (req, res, next) => {
     return res.data(
       { marketplaceApplication: application },
       'Marketplace application withdrawn'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.deleteDraftApplication = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only vendors can delete marketplace application drafts', 403);
+    }
+
+    const application = await MarketplaceApplicationService.getByData(
+      {
+        application_id: req.params.applicationId,
+        vendor_user_id: req.user._id,
+        archived_at: null,
+      },
+      { singleResult: true }
+    );
+
+    if (!application) {
+      throw buildError('Marketplace application not found', 404);
+    }
+
+    if (application.application_status !== 'DRAFT') {
+      throw buildError(
+        'Only draft applications can be deleted. Submitted applications can be withdrawn.',
+        400
+      );
+    }
+
+    const attachments = await MarketplaceAttachmentService.getByData({
+      application_id: application.application_id,
+      status: { $ne: 'DELETED' },
+    });
+    for (const attachment of attachments || []) {
+      if (attachment.file_key) {
+        try {
+          await removeObject(attachment.file_key);
+        } catch (error) {
+          console.warn('Failed to remove draft application attachment from storage', {
+            attachment_id: attachment.attachment_id,
+            file_key: attachment.file_key,
+            message: error?.message,
+          });
+        }
+      }
+    }
+
+    await MarketplaceAttachmentService.destroyMany({
+      application_id: application.application_id,
+    });
+    await MarketplaceApplicationService.destroy({
+      application_id: application.application_id,
+    });
+
+    return res.data(
+      { application_id: req.params.applicationId },
+      'Marketplace application draft deleted'
     );
   } catch (e) {
     return next(e);

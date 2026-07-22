@@ -390,9 +390,25 @@ const reconcileFoodTruckWeeklySchedule = (
     foodTruck.markModified('currentLocation');
   }
 
+  let appliedOpenPairs = 0;
+  (foodTruck.truck_units || []).forEach((unit) => {
+    if (unit.is_archived) {
+      return;
+    }
+    (unit.open_locations || []).forEach((openLocation) => {
+      const locationId = getOpenLocationId(openLocation);
+      if (openLocation.isOrderingOpen && locationId) {
+        appliedOpenPairs += 1;
+      }
+    });
+  });
+
   return {
     changed,
     openedLocations: activeLocationIds.size,
+    scheduledOpenPairs: activeUnitLocationPairs.size,
+    manualOverridePairs: overrideUnitLocationPairs.size,
+    appliedOpenPairs,
     managedLocations: managedLocationIds.size,
   };
 };
@@ -518,6 +534,9 @@ exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
     let updated = 0;
 	    let openedLocations = 0;
 	    let managedLocations = 0;
+	    let scheduledOpenPairs = 0;
+	    let manualOverridePairs = 0;
+	    let appliedOpenPairs = 0;
 	    const processedByTimeZone = {};
 
 	    for (const foodTruck of foodTrucks) {
@@ -530,9 +549,12 @@ exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
       // Compliance remains visible/reviewable, but open/close automation is
       // intentionally schedule-driven while marketplace compliance is stabilized.
 
-	      const result = reconcileFoodTruckWeeklySchedule(foodTruck, new Date(), timeZone);
+      const result = reconcileFoodTruckWeeklySchedule(foodTruck, new Date(), timeZone);
       openedLocations += result.openedLocations;
       managedLocations += result.managedLocations;
+      scheduledOpenPairs += result.scheduledOpenPairs;
+      manualOverridePairs += result.manualOverridePairs;
+      appliedOpenPairs += result.appliedOpenPairs;
 
       if (result.changed || cacheChanged) {
         await foodTruck.save();
@@ -546,6 +568,9 @@ exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
         updated,
         managedLocations,
 	        openedLocations,
+	        scheduledOpenPairs,
+	        manualOverridePairs,
+	        appliedOpenPairs,
 	        openBufferMinutes: WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES,
         closeBufferMinutes: WEEKLY_SCHEDULE_CLOSE_BUFFER_MINUTES,
         fallbackScheduleTimeZone: DEFAULT_VENDOR_SCHEDULE_TIME_ZONE,

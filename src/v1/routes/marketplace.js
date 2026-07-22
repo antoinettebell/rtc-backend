@@ -251,14 +251,15 @@ router.post(
   '/bids/:bidId/attachments',
   allowedTo(['VENDOR']),
   MarketplaceUpload.single(),
+  validate(Validation.uploadBidAttachment),
   Controller.addBidAttachment
 );
 
 router.post(
   '/applications/:applicationId/attachments',
   allowedTo(['VENDOR']),
-  validate(Validation.uploadApplicationAttachment),
   MarketplaceUpload.single(),
+  validate(Validation.uploadApplicationAttachment),
   Controller.addApplicationAttachment
 );
 
@@ -274,6 +275,12 @@ router.delete(
   Controller.deleteBidAttachment
 );
 
+router.delete(
+  '/bids/:bidId',
+  allowedTo(['VENDOR']),
+  Controller.deleteDraftBid
+);
+
 router.patch(
   '/bids/:bidId/withdraw',
   allowedTo(['VENDOR']),
@@ -284,6 +291,12 @@ router.delete(
   '/applications/:applicationId/attachments/:attachmentId',
   allowedTo(['VENDOR']),
   Controller.deleteApplicationAttachment
+);
+
+router.delete(
+  '/applications/:applicationId',
+  allowedTo(['VENDOR']),
+  Controller.deleteDraftApplication
 );
 
 router.patch(
