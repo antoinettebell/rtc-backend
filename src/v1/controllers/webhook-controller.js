@@ -8,8 +8,8 @@ const {
   applyVendorScheduleTimeZoneCache,
 } = require('../../helper/vendor-schedule-timezone');
 
-const WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES = 60;
-const WEEKLY_SCHEDULE_CLOSE_BUFFER_MINUTES = 60;
+const WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES = 0;
+const WEEKLY_SCHEDULE_CLOSE_BUFFER_MINUTES = 20;
 const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
 const acceptedStatuses = new Set([
@@ -171,9 +171,13 @@ const getZonedScheduleParts = (date, timeZone = DEFAULT_VENDOR_SCHEDULE_TIME_ZON
 
 const isMinuteInsideScheduleWindow = ({ nowMinutes, startTime, endTime }) => {
   const startMinutes = parseTimeToMinutes(startTime);
-  const endMinutes = parseTimeToMinutes(endTime);
-  if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
+  let endMinutes = parseTimeToMinutes(endTime);
+  if (startMinutes === null || endMinutes === null) {
     return false;
+  }
+
+  if (endMinutes <= startMinutes) {
+    endMinutes += 24 * 60;
   }
 
   const effectiveStart = startMinutes + WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES;
@@ -182,7 +186,10 @@ const isMinuteInsideScheduleWindow = ({ nowMinutes, startTime, endTime }) => {
     return false;
   }
 
-  return nowMinutes >= effectiveStart && nowMinutes < effectiveEnd;
+  const normalizedNowMinutes =
+    nowMinutes < startMinutes ? nowMinutes + 24 * 60 : nowMinutes;
+
+  return normalizedNowMinutes >= effectiveStart && normalizedNowMinutes < effectiveEnd;
 };
 
 const getOpenLocationId = (openLocation) =>

@@ -522,6 +522,44 @@ const setTruckUnitLocationOpen = ({
   return unit;
 };
 
+const clearScheduleOverridesForAvailability = (foodTruck, availability = []) => {
+  const changedPairs = new Set();
+  (availability || []).forEach((slot) => {
+    const locationId = slot?.locationId?.toString();
+    const truckUnitId = slot?.truckUnitId?.toString();
+    if (locationId && truckUnitId) {
+      changedPairs.add(`${truckUnitId}:${locationId}`);
+    }
+  });
+
+  if (!changedPairs.size) {
+    return false;
+  }
+
+  let changed = false;
+  (foodTruck.truck_units || []).forEach((unit) => {
+    const truckUnitId = getTruckUnitId(unit);
+    if (!truckUnitId) {
+      return;
+    }
+
+    (unit.open_locations || []).forEach((openLocation) => {
+      const locationId = openLocation.locationId?.toString();
+      if (
+        openLocation.status_source === 'MANUAL' &&
+        changedPairs.has(`${truckUnitId}:${locationId}`)
+      ) {
+        openLocation.status_source = 'SCHEDULE';
+        openLocation.schedule_override_reason = null;
+        openLocation.schedule_override_until = null;
+        changed = true;
+      }
+    });
+  });
+
+  return changed;
+};
+
 const getActiveTruckUnits = (foodTruck) => {
   ensureDefaultTruckUnits(foodTruck);
   return (foodTruck.truck_units || []).filter((unit) => !unit.is_archived);
@@ -1049,9 +1087,12 @@ exports.update = async (req, res, next) => {
 		        ];
             const vendor = await UserService.getById(item.userId);
             applyVendorScheduleTimeZoneCache(item, vendor);
-		      }
-		      item.availability = availability;
-		    }
+            if (clearScheduleOverridesForAvailability(item, nextAvailability)) {
+              item.markModified('truck_units');
+            }
+			      }
+			      item.availability = availability;
+			    }
 
     if (businessHours) {
       item.businessHours = businessHours;
