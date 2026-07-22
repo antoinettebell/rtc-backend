@@ -530,6 +530,12 @@ class EmployeeSessionService extends BaseService {
       employee: {
         employee_internal_id: user.employee_internal_id,
         employee_login_id: user.employee_login_id,
+        phone_number: user.phone_number || null,
+        address_line1: user.address_line1 || null,
+        address_city: user.address_city || null,
+        address_state: user.address_state || null,
+        zip_code: user.zip_code || null,
+        employee_rate: user.employee_rate ?? null,
         is_working: !!user.is_working,
         name:
           [user.first_name, user.last_name].filter(Boolean).join(' ') ||
