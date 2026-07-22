@@ -152,7 +152,13 @@ module.exports = {
           'BID_IMAGE',
           'PERMIT_LICENSE',
           'AGREEMENT_DOCUMENT',
-          'REQUIREMENT_DOCUMENT'
+          'REQUIREMENT_DOCUMENT',
+          'HEALTH_PERMIT',
+          'BUSINESS_LICENSE',
+          'COI',
+          'LIQUOR_LICENSE',
+          'EIN',
+          'W9'
         )
         .required(),
       requirement_label: Joi.string().trim().max(100).allow(null, ''),
@@ -185,7 +191,13 @@ module.exports = {
           'APPLICATION_IMAGE',
           'PERMIT_LICENSE',
           'AGREEMENT_DOCUMENT',
-          'REQUIREMENT_DOCUMENT'
+          'REQUIREMENT_DOCUMENT',
+          'HEALTH_PERMIT',
+          'BUSINESS_LICENSE',
+          'COI',
+          'LIQUOR_LICENSE',
+          'EIN',
+          'W9'
         )
         .required(),
       requirement_label: Joi.string().trim().max(100).allow(null, ''),
@@ -252,7 +264,14 @@ module.exports = {
         'BID_MENU_PDF',
         'BID_IMAGE',
         'PERMIT_LICENSE',
-        'AGREEMENT_DOCUMENT'
+        'AGREEMENT_DOCUMENT',
+        'REQUIREMENT_DOCUMENT',
+        'HEALTH_PERMIT',
+        'BUSINESS_LICENSE',
+        'COI',
+        'LIQUOR_LICENSE',
+        'EIN',
+        'W9'
       ),
       event_id: Joi.string().allow(null, ''),
       bid_id: Joi.string().allow(null, ''),

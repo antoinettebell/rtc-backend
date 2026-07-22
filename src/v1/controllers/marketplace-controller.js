@@ -137,6 +137,29 @@ const ACTIVE_EVENT_STATUSES = ['OPEN', 'REOPENED'];
 const DRAFT_TTL_DAYS = 7;
 const VENDOR_AGREEMENT_VALID_DAYS = 365;
 const REQUIREMENT_ATTACHMENT_TYPE = 'REQUIREMENT_DOCUMENT';
+const MARKETPLACE_ATTACHMENT_REQUIREMENT_LABELS = {
+  HEALTH_PERMIT: 'Sanitation Grade',
+  BUSINESS_LICENSE: 'Business License/Permit',
+  COI: 'Insurance',
+  LIQUOR_LICENSE: 'Liquor License',
+  EIN: 'EIN',
+  W9: 'W-9',
+};
+const normalizeMarketplaceAttachmentRequest = (attachmentType, requirementLabel) => {
+  if (MARKETPLACE_ATTACHMENT_REQUIREMENT_LABELS[attachmentType]) {
+    return {
+      attachmentType: REQUIREMENT_ATTACHMENT_TYPE,
+      requirementLabel: normalizeRequirementLabel(
+        requirementLabel || MARKETPLACE_ATTACHMENT_REQUIREMENT_LABELS[attachmentType]
+      ),
+    };
+  }
+
+  return {
+    attachmentType,
+    requirementLabel: normalizeRequirementLabel(requirementLabel),
+  };
+};
 const DEFAULT_REQUIREMENT_LABELS = [
   'Insurance',
   'Sanitation Grade',
@@ -872,6 +895,52 @@ const normalizeRequirementLabel = (label) => {
 
 const getRequirementKey = (label) =>
   label ? label.toLowerCase().replace(/[^a-z0-9]+/g, '_') : null;
+
+const REQUIREMENT_LABEL_COMPLIANCE_TYPES = {
+  Insurance: 'COI',
+  'Certificate of Insurance': 'COI',
+  'Sanitation Grade': 'HEALTH_PERMIT',
+  'Business License/Permit': 'BUSINESS_LICENSE',
+  'Liquor License': 'LIQUOR_LICENSE',
+  EIN: 'EIN',
+  'W-9': 'W9',
+};
+
+const hasVerifiedProfileRequirementDocument = async (foodTruckId, label) => {
+  const requirementLabel = normalizeRequirementLabel(label);
+  const documentType = REQUIREMENT_LABEL_COMPLIANCE_TYPES[requirementLabel];
+  if (!foodTruckId || !documentType) return false;
+
+  const documents = await VendorComplianceDocumentService.getByData(
+    {
+      food_truck_id: foodTruckId,
+      document_type: documentType,
+      review_status: 'verified',
+      archived_at: null,
+    },
+    { lean: true, sort: { created_at: -1 } }
+  );
+
+  const now = new Date();
+  return (documents || []).some((document) => {
+    if (!document?.expiration_date) return true;
+    const expirationDate = new Date(document.expiration_date);
+    return (
+      !Number.isNaN(expirationDate.getTime()) &&
+      expirationDate.getTime() >= now.getTime()
+    );
+  });
+};
+
+const hasSatisfiedLiquorLicenseRequirement = async ({
+  event,
+  foodTruckId,
+  liquorLicenseConfirmed,
+}) => {
+  if (!event?.alcohol_required) return true;
+  if (liquorLicenseConfirmed) return true;
+  return hasVerifiedProfileRequirementDocument(foodTruckId, 'Liquor License');
+};
 
 const normalizeVendorDocumentName = (value) =>
   String(value || '')
@@ -4143,11 +4212,12 @@ exports.submitBid = async (req, res, next) => {
         'Full bid amount': req.body.full_bid_amount,
       });
     }
-    if (
-      requestedStatus !== 'DRAFT' &&
-      event.alcohol_required &&
-      !req.body.liquor_license_confirmed
-    ) {
+    const liquorLicenseSatisfied = await hasSatisfiedLiquorLicenseRequirement({
+      event,
+      foodTruckId: foodTruck._id,
+      liquorLicenseConfirmed: req.body.liquor_license_confirmed,
+    });
+    if (requestedStatus !== 'DRAFT' && !liquorLicenseSatisfied) {
       throw buildError(
         'Liquor license confirmation is required for this event',
         400
@@ -4531,11 +4601,12 @@ exports.submitApplication = async (req, res, next) => {
         'Food type / cuisine': req.body.food_type_cuisine,
       });
     }
-    if (
-      requestedStatus !== 'DRAFT' &&
-      event.alcohol_required &&
-      !req.body.liquor_license_confirmed
-    ) {
+    const liquorLicenseSatisfied = await hasSatisfiedLiquorLicenseRequirement({
+      event,
+      foodTruckId: foodTruck._id,
+      liquorLicenseConfirmed: req.body.liquor_license_confirmed,
+    });
+    if (requestedStatus !== 'DRAFT' && !liquorLicenseSatisfied) {
       throw buildError(
         'Liquor license confirmation is required for this event',
         400
@@ -6029,9 +6100,13 @@ exports.addBidAttachment = async (req, res, next) => {
 	    await getVendorMarketplaceFoodTruck(req.user._id);
 	    const bid = await getOwnedBid(req.params.bidId, req.user._id);
 	    await assertMarketplaceSubmissionEditable(bid.event_id);
-	    const attachmentType = req.body.attachment_type;
+	    const normalizedAttachment = normalizeMarketplaceAttachmentRequest(
+	      req.body.attachment_type,
+	      req.body.requirement_label
+	    );
+	    const attachmentType = normalizedAttachment.attachmentType;
     const config = validateAttachmentFile(req.file, attachmentType);
-    const requirementLabel = normalizeRequirementLabel(req.body.requirement_label);
+    const requirementLabel = normalizedAttachment.requirementLabel;
     const requirementKey = getRequirementKey(requirementLabel);
 
     const replacedAttachments = await archiveReplacementAttachments({
@@ -6130,9 +6205,13 @@ exports.addApplicationAttachment = async (req, res, next) => {
 	      req.user._id
 	    );
 	    await assertMarketplaceSubmissionEditable(application.event_id);
-	    const attachmentType = req.body.attachment_type;
+	    const normalizedAttachment = normalizeMarketplaceAttachmentRequest(
+	      req.body.attachment_type,
+	      req.body.requirement_label
+	    );
+	    const attachmentType = normalizedAttachment.attachmentType;
     const config = validateAttachmentFile(req.file, attachmentType);
-    const requirementLabel = normalizeRequirementLabel(req.body.requirement_label);
+    const requirementLabel = normalizedAttachment.requirementLabel;
     const requirementKey = getRequirementKey(requirementLabel);
 
     const replacedAttachments = await archiveReplacementAttachments({
