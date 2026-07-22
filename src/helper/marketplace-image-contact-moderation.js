@@ -97,6 +97,19 @@ const detectTextWithAzureFunction = async (bytes) => {
   return response.data;
 };
 
+const buildModerationFallback = (reason, error) => {
+  console.warn('Marketplace event image OCR unavailable; allowing upload', {
+    reason,
+    message: error?.message,
+    code: error?.code,
+  });
+
+  return {
+    moderation_status: 'PENDING_REVIEW',
+    moderation_reason: reason,
+  };
+};
+
 exports.assertMarketplaceEventImageHasNoContactInfo = async (file) => {
   const ocrEnabled = String(
     process.env.COMPLIANCE_OCR_ENABLED || 'false'
@@ -109,11 +122,24 @@ exports.assertMarketplaceEventImageHasNoContactInfo = async (file) => {
     };
   }
 
-  const bytes = await normalizeImageForOcr(file);
-  const remoteResult = await detectTextWithAzureFunction(bytes);
-  const detectedText = remoteResult
-    ? []
-    : await textract
+  let bytes;
+  try {
+    bytes = await normalizeImageForOcr(file);
+  } catch (error) {
+    return buildModerationFallback('IMAGE_NORMALIZATION_FAILED', error);
+  }
+
+  let remoteResult = null;
+  try {
+    remoteResult = await detectTextWithAzureFunction(bytes);
+  } catch (error) {
+    return buildModerationFallback('OCR_SERVICE_UNAVAILABLE', error);
+  }
+
+  let detectedText = [];
+  if (!remoteResult) {
+    try {
+      detectedText = await textract
         .detectDocumentText({
           Document: {
             Bytes: bytes,
@@ -130,6 +156,10 @@ exports.assertMarketplaceEventImageHasNoContactInfo = async (file) => {
             .map((item) => item.Text || '')
             .filter(Boolean)
         );
+    } catch (error) {
+      return buildModerationFallback('TEXTRACT_UNAVAILABLE', error);
+    }
+  }
   const matches = remoteResult
     ? remoteResult.matches || []
     : findContactInfoMatches(detectedText);
