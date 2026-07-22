@@ -1,5 +1,38 @@
 const { Joi } = require('express-validation');
 
+const scheduleChangeDayValidation = Joi.string()
+  .valid(
+    'Sun',
+    'Mon',
+    'Tue',
+    'Wed',
+    'Thu',
+    'Fri',
+    'Sat',
+    'Sunday',
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'sun',
+    'mon',
+    'tue',
+    'wed',
+    'thu',
+    'fri',
+    'sat',
+    'sunday',
+    'monday',
+    'tuesday',
+    'wednesday',
+    'thursday',
+    'friday',
+    'saturday'
+  )
+  .allow(null, '');
+
 module.exports = {
   list: {
     query: Joi.object({
@@ -208,12 +241,8 @@ module.exports = {
           truckUnitId: Joi.string().trim().allow(null, ''),
         }).min(0).allow(null),
       ),
-      availabilityChangeDay: Joi.string()
-        .valid('Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat')
-        .allow(null, ''),
-      availabilityChangedDay: Joi.string()
-        .valid('Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat')
-        .allow(null, ''),
+      availabilityChangeDay: scheduleChangeDayValidation,
+      availabilityChangedDay: scheduleChangeDayValidation,
       businessHours: Joi.array().items(
         Joi.object({
           _id: Joi.string(),
