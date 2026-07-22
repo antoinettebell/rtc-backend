@@ -314,12 +314,7 @@ module.exports = {
   },
 
   adminUpdateEvent: {
-    body: Joi.object({
-      event_name: Joi.string().trim().allow(null, ''),
-      event_description: Joi.string().allow(null, ''),
-      ticket_sales_enabled: Joi.boolean(),
-      ticket_url: Joi.string().uri().allow(null, ''),
-    }).min(1),
+    body: Joi.object(marketplaceEventBody).min(1).prefs({ noDefaults: true }),
   },
 
   adminWithdrawSubmission: {

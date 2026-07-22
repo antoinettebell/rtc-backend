@@ -5532,32 +5532,35 @@ exports.adminUpdateEvent = async (req, res, next) => {
       throw buildError('Only admins can update marketplace events', 403);
     }
 
-    const allowedFields = [
-      'event_name',
-      'event_description',
-      'ticket_sales_enabled',
-      'ticket_url',
-    ];
-    const update = allowedFields.reduce((acc, field) => {
-      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
-        acc[field] = req.body[field];
-      }
-      return acc;
-    }, {});
-
-    if (!Object.keys(update).length) {
+    if (!Object.keys(req.body || {}).length) {
       throw buildError('No marketplace event updates provided', 400);
     }
 
-    const marketplaceEvent = await MarketplaceEventService.update(
+    const event = await MarketplaceEventService.getByData(
       { event_id: req.params.eventId },
-      update,
-      { getNew: true }
+      { singleResult: true }
     );
-
-    if (!marketplaceEvent) {
+    if (!event) {
       throw buildError('Marketplace event not found', 404);
     }
+
+    const updatePayload = preserveSavedMarketplaceLocationFields(
+      {
+        ...toPlainObject(event),
+        ...req.body,
+        status: req.body.status || event.status,
+      },
+      event
+    );
+    const normalizedEvent = normalizeMarketplaceEventPayload(updatePayload, {
+      existingEvent: event,
+    });
+
+    const marketplaceEvent = await MarketplaceEventService.update(
+      { event_id: req.params.eventId },
+      normalizedEvent,
+      { getNew: true }
+    );
 
     return res.data({ marketplaceEvent }, 'Marketplace event updated');
   } catch (e) {
