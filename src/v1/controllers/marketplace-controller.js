@@ -152,6 +152,9 @@ const COMPLIANCE_DOCUMENT_LABELS = {
   HEALTH_PERMIT: 'Sanitation Grade',
   BUSINESS_LICENSE: 'Business License',
   COI: 'Insurance',
+  LIQUOR_LICENSE: 'Liquor License',
+  EIN: 'EIN',
+  W9: 'W-9',
 };
 
 const asArray = (value) => {
@@ -1664,6 +1667,7 @@ const attachVerifiedComplianceDocumentsToSubmission = async ({
       document_type: { $in: Object.keys(COMPLIANCE_DOCUMENT_LABELS) },
       review_status: 'verified',
       archived_at: null,
+      $or: [{ expiration_date: null }, { expiration_date: { $gte: new Date() } }],
     },
     { lean: true, sort: { created_at: -1 } }
   );
@@ -4251,6 +4255,40 @@ exports.myBids = async (req, res, next) => {
   }
 };
 
+exports.withdrawBid = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only vendors can withdraw marketplace bids', 403);
+    }
+
+    const bid = await MarketplaceBidService.getByData(
+      {
+        bid_id: req.params.bidId,
+        vendor_user_id: req.user._id,
+        archived_at: null,
+      },
+      { singleResult: true }
+    );
+
+    if (!bid) {
+      throw buildError('Marketplace bid not found', 404);
+    }
+
+    if (['AWARDED', 'NOT_AWARDED', 'WITHDRAWN'].includes(bid.bid_status)) {
+      throw buildError('This bid can no longer be withdrawn.', 400);
+    }
+
+    bid.bid_status = 'WITHDRAWN';
+    bid.withdrawn_at = new Date();
+    bid.withdrawn_by_user_id = req.user._id;
+    await bid.save();
+
+    return res.data({ marketplaceBid: bid }, 'Marketplace bid withdrawn');
+  } catch (e) {
+    return next(e);
+  }
+};
+
 exports.vendorNotificationSummary = async (req, res, next) => {
   try {
     if (req.user.userType !== 'VENDOR') {
@@ -4571,6 +4609,52 @@ exports.myApplications = async (req, res, next) => {
     return res.data(
       { marketplaceApplicationList },
       'Marketplace applications'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.withdrawApplication = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only vendors can withdraw marketplace applications', 403);
+    }
+
+    const application = await MarketplaceApplicationService.getByData(
+      {
+        application_id: req.params.applicationId,
+        vendor_user_id: req.user._id,
+        archived_at: null,
+      },
+      { singleResult: true }
+    );
+
+    if (!application) {
+      throw buildError('Marketplace application not found', 404);
+    }
+
+    if (
+      [
+        'ACCEPTED',
+        'PAYMENT_DUE',
+        'PAID',
+        'CONFIRMED',
+        'NOT_SELECTED',
+        'WITHDRAWN',
+      ].includes(application.application_status)
+    ) {
+      throw buildError('This application can no longer be withdrawn.', 400);
+    }
+
+    application.application_status = 'WITHDRAWN';
+    application.withdrawn_at = new Date();
+    application.withdrawn_by_user_id = req.user._id;
+    await application.save();
+
+    return res.data(
+      { marketplaceApplication: application },
+      'Marketplace application withdrawn'
     );
   } catch (e) {
     return next(e);

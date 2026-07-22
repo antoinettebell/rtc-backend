@@ -147,6 +147,15 @@ const mSchema = mongoose.Schema(
       type: Date,
       default: null,
     },
+    withdrawn_at: {
+      type: Date,
+      default: null,
+    },
+    withdrawn_by_user_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'users',
+      default: null,
+    },
     revision_requested_at: {
       type: Date,
       default: null,

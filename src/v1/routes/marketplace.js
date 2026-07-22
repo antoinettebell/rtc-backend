@@ -239,10 +239,22 @@ router.delete(
   Controller.deleteBidAttachment
 );
 
+router.patch(
+  '/bids/:bidId/withdraw',
+  allowedTo(['VENDOR']),
+  Controller.withdrawBid
+);
+
 router.delete(
   '/applications/:applicationId/attachments/:attachmentId',
   allowedTo(['VENDOR']),
   Controller.deleteApplicationAttachment
+);
+
+router.patch(
+  '/applications/:applicationId/withdraw',
+  allowedTo(['VENDOR']),
+  Controller.withdrawApplication
 );
 
 router.get(
