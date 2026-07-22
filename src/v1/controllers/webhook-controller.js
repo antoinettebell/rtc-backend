@@ -185,11 +185,6 @@ const isMinuteInsideScheduleWindow = ({ nowMinutes, startTime, endTime }) => {
   return nowMinutes >= effectiveStart && nowMinutes < effectiveEnd;
 };
 
-const getPrimaryTruckUnit = (foodTruck) =>
-  (foodTruck.truck_units || []).find((unit) => unit.is_primary && !unit.is_archived) ||
-  (foodTruck.truck_units || []).find((unit) => !unit.is_archived) ||
-  null;
-
 const getOpenLocationId = (openLocation) =>
   openLocation.locationId?.toString() ||
   openLocation.location_id?.toString() ||
@@ -201,44 +196,6 @@ const hasActiveScheduleOverride = (openLocation, now) =>
   openLocation?.schedule_override_until &&
   new Date(openLocation.schedule_override_until).getTime() > now.getTime();
 
-const closeFoodTruckForCompliance = (foodTruck, now = new Date()) => {
-  let changed = false;
-  (foodTruck.truck_units || []).forEach((unit) => {
-    const before = JSON.stringify(unit.open_locations || []);
-    unit.open_locations = (unit.open_locations || []).map((openLocation) => ({
-      ...openLocation,
-      isOrderingOpen: false,
-      updated_at: now,
-      status_source: 'COMPLIANCE',
-      schedule_override_reason: 'COMPLIANCE_BLOCK',
-      schedule_override_until: null,
-    }));
-    if (before !== JSON.stringify(unit.open_locations || [])) {
-      changed = true;
-    }
-  });
-
-  (foodTruck.locations || []).forEach((location) => {
-    if (location.isOrderingOpen) {
-      location.isOrderingOpen = false;
-      changed = true;
-    }
-  });
-
-  if (foodTruck.currentLocation) {
-    foodTruck.currentLocation = null;
-    changed = true;
-  }
-
-  if (changed) {
-    foodTruck.markModified('truck_units');
-    foodTruck.markModified('locations');
-    foodTruck.markModified('currentLocation');
-  }
-
-  return changed;
-};
-
 const reconcileFoodTruckWeeklySchedule = (
   foodTruck,
   now = new Date(),
@@ -247,7 +204,6 @@ const reconcileFoodTruckWeeklySchedule = (
   const scheduleParts = getZonedScheduleParts(now, timeZone);
   const today = scheduleParts.day;
   const nowMinutes = scheduleParts.minutes;
-  const primaryUnit = getPrimaryTruckUnit(foodTruck);
   const activeLocationIds = new Set();
   const managedLocationIds = new Set();
   const activeUnitLocationPairs = new Set();
@@ -257,8 +213,7 @@ const reconcileFoodTruckWeeklySchedule = (
     .filter((slot) => slot.locationId && slot.available)
     .forEach((slot) => {
       const locationId = slot.locationId?.toString();
-      const truckUnitId =
-        slot.truckUnitId?.toString() || primaryUnit?._id?.toString() || null;
+      const truckUnitId = slot.truckUnitId?.toString() || null;
       if (!locationId || !truckUnitId) {
         return;
       }
@@ -317,8 +272,7 @@ const reconcileFoodTruckWeeklySchedule = (
       .filter((slot) => slot.day === today && slot.locationId && slot.available)
       .forEach((slot) => {
         const locationId = slot.locationId?.toString();
-        const truckUnitId =
-          slot.truckUnitId?.toString() || primaryUnit?._id?.toString() || null;
+        const truckUnitId = slot.truckUnitId?.toString() || null;
 	        if (
 	          unit._id?.toString() === truckUnitId &&
 	          activeUnitLocationPairs.has(`${truckUnitId}:${locationId}`) &&
@@ -503,7 +457,6 @@ exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
     let updated = 0;
 	    let openedLocations = 0;
 	    let managedLocations = 0;
-    let complianceClosed = 0;
 	    const processedByTimeZone = {};
 
 	    for (const foodTruck of foodTrucks) {
@@ -513,19 +466,8 @@ exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
 	        foodTruck.schedule_time_zone || DEFAULT_VENDOR_SCHEDULE_TIME_ZONE;
 	      processedByTimeZone[timeZone] = (processedByTimeZone[timeZone] || 0) + 1;
 
-      const complianceSummary =
-        await VendorComplianceService.calculateComplianceSummary(foodTruck);
-      if (!complianceSummary.can_open_accepting_orders) {
-        const complianceChanged = closeFoodTruckForCompliance(foodTruck);
-        if (complianceChanged || cacheChanged) {
-          await foodTruck.save();
-          updated += 1;
-        }
-        if (complianceChanged) {
-          complianceClosed += 1;
-        }
-        continue;
-      }
+      // Compliance remains visible/reviewable, but open/close automation is
+      // intentionally schedule-driven while marketplace compliance is stabilized.
 
 	      const result = reconcileFoodTruckWeeklySchedule(foodTruck, new Date(), timeZone);
       openedLocations += result.openedLocations;
@@ -543,8 +485,7 @@ exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
         updated,
         managedLocations,
 	        openedLocations,
-        complianceClosed,
-        openBufferMinutes: WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES,
+	        openBufferMinutes: WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES,
         closeBufferMinutes: WEEKLY_SCHEDULE_CLOSE_BUFFER_MINUTES,
         fallbackScheduleTimeZone: DEFAULT_VENDOR_SCHEDULE_TIME_ZONE,
         processedByTimeZone,

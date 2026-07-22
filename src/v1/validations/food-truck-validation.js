@@ -238,7 +238,14 @@ module.exports = {
           startTime: Joi.string().required(),
           endTime: Joi.string().required(),
           available: Joi.boolean().required(),
-          truckUnitId: Joi.string().trim().allow(null, ''),
+          truckUnitId: Joi.when('available', {
+            is: true,
+            then: Joi.string().trim().required().messages({
+              'any.required': 'Please select a food truck for every active schedule row',
+              'string.empty': 'Please select a food truck for every active schedule row',
+            }),
+            otherwise: Joi.string().trim().allow(null, ''),
+          }),
         }).min(0).allow(null),
       ),
       availabilityChangeDay: scheduleChangeDayValidation,
