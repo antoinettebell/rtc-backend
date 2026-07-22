@@ -3,6 +3,7 @@ const allowedImageMimeTypes = new Set([
   'image/jpg',
   'image/jpeg',
   'image/heic',
+  'image/heif',
 ]);
 
 const isSupportedImageUpload = (file) =>

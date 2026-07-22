@@ -12,6 +12,7 @@ const allowedMarketplaceMimeTypes = new Set([
   'image/jpg',
   'image/jpeg',
   'image/heic',
+  'image/heif',
 ]);
 
 const storage = multer.diskStorage({
@@ -34,7 +35,7 @@ async function convertHEIC(filePath) {
     format: 'PNG',
     quality: 1,
   });
-  const newPath = filePath.replace(/\.heic$/i, '.jpg');
+  const newPath = filePath.replace(/\.(heic|heif)$/i, '.jpg');
   await sharp(pngBuffer).jpeg({ quality: 75 }).toFile(newPath);
   fs.unlinkSync(filePath);
   return newPath;
@@ -59,14 +60,14 @@ const uploadMiddleware = (req, res, next) => {
 
     if (isSupportedImageUpload(req.file)) {
       const originalExt = path.extname(req.file.originalname).toLowerCase();
-      if (originalExt === '.heic') {
+      if (originalExt === '.heic' || originalExt === '.heif') {
         try {
           const originalPath = req.file.path;
           const newPath = await convertHEIC(originalPath);
 
           req.file.filename = path.basename(newPath);
           req.file.originalname = req.file.originalname.replace(
-            /\.heic$/i,
+            /\.(heic|heif)$/i,
             '.jpg'
           );
           req.file.path = newPath;
