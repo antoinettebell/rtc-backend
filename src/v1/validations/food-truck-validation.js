@@ -208,6 +208,9 @@ module.exports = {
           truckUnitId: Joi.string().trim().allow(null, ''),
         }).min(0).allow(null),
       ),
+      availabilityChangeDay: Joi.string()
+        .valid('Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat')
+        .allow(null, ''),
       businessHours: Joi.array().items(
         Joi.object({
           _id: Joi.string(),
