@@ -169,7 +169,7 @@ exports.assertMarketplaceEventImageHasNoContactInfo = async (file) => {
     String(remoteResult?.moderation_status || '').toUpperCase() === 'BLOCKED'
   ) {
     const error = new Error(
-      'Event images cannot include contact information such as phone numbers, emails, websites, or social handles.'
+      'This image was not uploaded because it appears to include contact information. Please choose an event image without phone numbers, emails, websites, or social handles.'
     );
     error.code = 400;
     error.details = {
