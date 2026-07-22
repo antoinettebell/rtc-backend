@@ -5450,7 +5450,7 @@ exports.addEventImage = async (req, res, next) => {
       mime_type: req.file.mimetype,
       size_bytes: req.file.size,
       status_reason:
-        moderationResult?.moderation_status === 'PENDING_REVIEW'
+        moderationResult?.moderation_status === 'BLOCKED'
           ? moderationResult.moderation_reason
           : null,
     });
@@ -5465,7 +5465,7 @@ exports.addEventImage = async (req, res, next) => {
       size_bytes: req.file.size,
       uploaded_by_user_id: req.user._id,
       status_reason:
-        moderationResult?.moderation_status === 'PENDING_REVIEW'
+        moderationResult?.moderation_status === 'BLOCKED'
           ? moderationResult.moderation_reason
           : null,
     });

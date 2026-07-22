@@ -98,14 +98,14 @@ const detectTextWithAzureFunction = async (bytes) => {
 };
 
 const buildModerationFallback = (reason, error) => {
-  console.warn('Marketplace event image OCR unavailable; allowing upload', {
+  console.info('Marketplace event image OCR skipped; upload allowed', {
     reason,
     message: error?.message,
     code: error?.code,
   });
 
   return {
-    moderation_status: 'PENDING_REVIEW',
+    moderation_status: 'SKIPPED',
     moderation_reason: reason,
   };
 };
