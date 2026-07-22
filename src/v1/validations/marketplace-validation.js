@@ -158,7 +158,13 @@ module.exports = {
           'COI',
           'LIQUOR_LICENSE',
           'EIN',
-          'W9'
+          'W9',
+          'Insurance',
+          'Certificate of Insurance',
+          'Sanitation Grade',
+          'Business License/Permit',
+          'Liquor License',
+          'W-9'
         )
         .required(),
       requirement_label: Joi.string().trim().max(100).allow(null, ''),
@@ -197,7 +203,13 @@ module.exports = {
           'COI',
           'LIQUOR_LICENSE',
           'EIN',
-          'W9'
+          'W9',
+          'Insurance',
+          'Certificate of Insurance',
+          'Sanitation Grade',
+          'Business License/Permit',
+          'Liquor License',
+          'W-9'
         )
         .required(),
       requirement_label: Joi.string().trim().max(100).allow(null, ''),
@@ -271,7 +283,13 @@ module.exports = {
         'COI',
         'LIQUOR_LICENSE',
         'EIN',
-        'W9'
+        'W9',
+        'Insurance',
+        'Certificate of Insurance',
+        'Sanitation Grade',
+        'Business License/Permit',
+        'Liquor License',
+        'W-9'
       ),
       event_id: Joi.string().allow(null, ''),
       bid_id: Joi.string().allow(null, ''),

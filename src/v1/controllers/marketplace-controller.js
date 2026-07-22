@@ -155,6 +155,21 @@ const normalizeMarketplaceAttachmentRequest = (attachmentType, requirementLabel)
     };
   }
 
+  const normalizedAttachmentLabel = normalizeRequirementLabel(attachmentType);
+  if (
+    normalizedAttachmentLabel &&
+    DEFAULT_REQUIREMENT_LABELS.some(
+      (label) => label.toLowerCase() === normalizedAttachmentLabel.toLowerCase()
+    )
+  ) {
+    return {
+      attachmentType: REQUIREMENT_ATTACHMENT_TYPE,
+      requirementLabel: normalizeRequirementLabel(
+        requirementLabel || normalizedAttachmentLabel
+      ),
+    };
+  }
+
   return {
     attachmentType,
     requirementLabel: normalizeRequirementLabel(requirementLabel),
