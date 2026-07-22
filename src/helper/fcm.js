@@ -21,6 +21,16 @@ exports.sendNotification = (title, body, data, userFCMToken) => {
       console.log('===============notification sent');
     })
     .catch((error) => {
-      console.error('Error sending notification:', error);
+      if (error?.code === 'messaging/third-party-auth-error') {
+        console.warn('Push notification skipped: Firebase credentials need attention', {
+          code: error.code,
+          tokenPresent: !!userFCMToken,
+        });
+        return;
+      }
+      console.error('Error sending notification:', {
+        code: error?.code,
+        message: error?.message,
+      });
     });
 };
