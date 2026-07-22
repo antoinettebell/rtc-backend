@@ -12,6 +12,13 @@ router.post(
   Controller.createEvent
 );
 
+router.post(
+  '/repository/events',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.adminCreateEvent),
+  Controller.adminCreateEvent
+);
+
 router.put(
   '/events/:eventId',
   allowedTo(['CUSTOMER']),
@@ -63,6 +70,34 @@ router.get(
   allowedTo(['CUSTOMER', 'VENDOR', 'SUPER_ADMIN']),
   validate(Validation.repositoryFiles),
   Controller.repositoryFiles
+);
+
+router.get(
+  '/repository/events',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.adminMarketplaceEvents),
+  Controller.adminMarketplaceEvents
+);
+
+router.patch(
+  '/repository/events/:eventId',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.adminUpdateEvent),
+  Controller.adminUpdateEvent
+);
+
+router.patch(
+  '/repository/events/:eventId/submissions/withdraw',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.adminWithdrawSubmission),
+  Controller.adminWithdrawSubmission
+);
+
+router.post(
+  '/repository/events/:eventId/award',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.awardBids),
+  Controller.adminAwardBids
 );
 
 router.get(

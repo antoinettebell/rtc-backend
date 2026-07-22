@@ -3331,6 +3331,31 @@ exports.createEvent = async (req, res, next) => {
   }
 };
 
+exports.adminCreateEvent = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'SUPER_ADMIN') {
+      throw buildError('Only admins can create marketplace events', 403);
+    }
+
+    const customerUserId = req.body.customer_user_id;
+    if (!customerUserId) {
+      throw buildError('Select an existing event coordinator.', 400);
+    }
+    await assertCustomerEventCoordinator(customerUserId);
+
+    const { customer_user_id, ...eventPayload } = req.body;
+    const normalizedEvent = normalizeMarketplaceEventPayload(eventPayload);
+    const marketplaceEvent = await MarketplaceEventService.create({
+      ...normalizedEvent,
+      customer_user_id: customerUserId,
+    });
+
+    return res.data({ marketplaceEvent }, 'Marketplace event created');
+  } catch (e) {
+    return next(e);
+  }
+};
+
 exports.updateEvent = async (req, res, next) => {
   try {
     if (req.user.userType !== 'CUSTOMER') {
@@ -5029,6 +5054,152 @@ exports.awardBids = async (req, res, next) => {
   }
 };
 
+exports.adminAwardBids = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'SUPER_ADMIN') {
+      throw buildError('Only admins can award marketplace bids', 403);
+    }
+
+    const event = await MarketplaceEventService.getByData(
+      { event_id: req.params.eventId },
+      { singleResult: true }
+    );
+    if (!event) {
+      throw buildError('Marketplace event not found', 404);
+    }
+    if (['AWARDED', 'CANCELLED'].includes(event.status)) {
+      throw buildError('Awarded or cancelled events cannot be awarded again.', 400);
+    }
+
+    const selectedBidIds = req.body.bid_ids || [];
+    if (!selectedBidIds.length) {
+      throw buildError('At least one bid is required to award vendors', 400);
+    }
+
+    const vendorAwardLimit = Math.max(1, Number(event.number_of_vendors_needed || 1));
+    if (selectedBidIds.length > vendorAwardLimit) {
+      throw buildError(
+        `You can only award up to ${vendorAwardLimit} vendor(s) for this event.`,
+        400
+      );
+    }
+
+    const selectedBids = await MarketplaceBidService.getByData({
+      event_id: req.params.eventId,
+      bid_id: { $in: selectedBidIds },
+      bid_status: { $in: ['SUBMITTED', 'UNDER_REVIEW'] },
+      archived_at: null,
+    });
+
+    if (selectedBids.length !== selectedBidIds.length) {
+      throw buildError('One or more selected bids are invalid', 400);
+    }
+
+    const coordinatorUserId = event.customer_user_id;
+    const baseAmount = roundMoney(
+      selectedBids.reduce(
+        (total, bid) => total + Number(bid.full_bid_amount || 0),
+        0
+      ) || event.budgeted_amount
+    );
+    const feeAmount = roundMoney(baseAmount * COORDINATOR_AWARD_FEE_RATE);
+
+    if (feeAmount > 0) {
+      let marketplacePayment = await findActiveMarketplacePayment({
+        event_id: event.event_id,
+        payer_user_id: coordinatorUserId,
+        payment_type: 'COORDINATOR_AWARD_FEE',
+      });
+
+      if (!marketplacePayment) {
+        marketplacePayment = await MarketplacePaymentService.create({
+          event_id: event.event_id,
+          selected_bid_ids: selectedBidIds,
+          payer_user_id: coordinatorUserId,
+          payer_type: 'CUSTOMER',
+          payment_type: 'COORDINATOR_AWARD_FEE',
+          base_amount: baseAmount,
+          fee_rate: COORDINATOR_AWARD_FEE_RATE,
+          fee_amount: feeAmount,
+          total_amount: feeAmount,
+          payment_status: 'PENDING',
+          manually_marked_paid: false,
+        });
+        await createPaymentAudit(
+          marketplacePayment,
+          req,
+          'CREATE',
+          'Admin created coordinator award fee while awarding marketplace event'
+        );
+      } else if (marketplacePayment.payment_status === 'PENDING') {
+        marketplacePayment.selected_bid_ids = selectedBidIds;
+        marketplacePayment.base_amount = baseAmount;
+        marketplacePayment.fee_amount = feeAmount;
+        marketplacePayment.total_amount = feeAmount;
+        await marketplacePayment.save();
+      }
+
+      event.award_payment_id = marketplacePayment.payment_id;
+      event.award_payment_status = marketplacePayment.payment_status;
+      await event.save();
+
+      if (marketplacePayment.payment_status !== 'PAID') {
+        return res.data(
+          {
+            awarded_bid_ids: selectedBidIds,
+            marketplaceEvent: event,
+            marketplacePayment,
+            requires_payment: true,
+            rtc_phone_number: MARKETPLACE_PHONE_NUMBER,
+          },
+          'Marketplace award payment is required before vendors are awarded'
+        );
+      }
+
+      const finalized = await finalizePaidAwardPayment(marketplacePayment);
+      return res.data(
+        { ...finalized, marketplacePayment, requires_payment: false },
+        'Marketplace bids awarded'
+      );
+    }
+
+    await MarketplaceBidService.getModel().updateMany(
+      { event_id: req.params.eventId, bid_id: { $in: selectedBidIds }, archived_at: null },
+      { $set: { bid_status: 'AWARDED' } }
+    );
+
+    await MarketplaceBidService.getModel().updateMany(
+      { event_id: req.params.eventId, bid_id: { $nin: selectedBidIds }, archived_at: null },
+      { $set: { bid_status: 'NOT_AWARDED' } }
+    );
+
+    event.status = 'AWARDED';
+    await event.save();
+    await MarketplaceEventQuestionService.updateMany(
+      {
+        event_id: event.event_id,
+        status: { $in: ['PENDING', 'PUBLISHED'] },
+      },
+      { status: 'ARCHIVED', archived_at: new Date() }
+    );
+    await notifyCoordinatorOfMatchLocked(event);
+    await notifyBidAwardOutcomes(event, selectedBidIds);
+    for (const bid of selectedBids) {
+      await sendMarketplaceInformationEmailsIfUnlocked({
+        event,
+        bid,
+      });
+    }
+
+    return res.data(
+      { awarded_bid_ids: selectedBidIds, marketplaceEvent: event },
+      'Marketplace bids awarded'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
 exports.updateEventStatus = async (req, res, next) => {
   try {
     if (req.user.userType !== 'SUPER_ADMIN') {
@@ -5064,6 +5235,211 @@ exports.updateEventStatus = async (req, res, next) => {
     }
 
     return res.data({ marketplaceEvent }, 'Marketplace event status updated');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.adminMarketplaceEvents = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'SUPER_ADMIN') {
+      throw buildError('Only admins can view marketplace events', 403);
+    }
+
+    const page = Number(req.query.page || 1);
+    const limit = Number(req.query.limit || 25);
+    const query = {};
+    const search = String(req.query.search || '').trim();
+
+    if (req.query.status) {
+      query.status = req.query.status;
+    }
+    if (search) {
+      query.$or = [
+        { event_id: { $regex: search, $options: 'i' } },
+        { event_name: { $regex: search, $options: 'i' } },
+        { event_description: { $regex: search, $options: 'i' } },
+        { event_city: { $regex: search, $options: 'i' } },
+        { event_state: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    const skip = (page - 1) * limit;
+    const [events, total] = await Promise.all([
+      MarketplaceEventService.getModel()
+        .find(query)
+        .populate('customer_user_id', 'firstName lastName email mobileNumber countryCode')
+        .sort({ created_at: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      MarketplaceEventService.getModel().countDocuments(query),
+    ]);
+
+    const eventIds = events.map((event) => event.event_id).filter(Boolean);
+    const [eventsWithImages, bids, applications] = await Promise.all([
+      MarketplaceEventService.attachImages(events),
+      eventIds.length
+        ? MarketplaceBidService.getModel()
+            .find({ event_id: { $in: eventIds }, archived_at: null })
+            .populate('vendor_user_id', 'firstName lastName email')
+            .populate('food_truck_id', 'name logo')
+            .sort({ created_at: -1 })
+            .lean()
+        : [],
+      eventIds.length
+        ? MarketplaceApplicationService.getModel()
+            .find({ event_id: { $in: eventIds }, archived_at: null })
+            .populate('vendor_user_id', 'firstName lastName email')
+            .populate('food_truck_id', 'name logo')
+            .sort({ created_at: -1 })
+            .lean()
+        : [],
+    ]);
+
+    const bidsByEventId = bids.reduce((acc, bid) => {
+      acc[bid.event_id] = acc[bid.event_id] || [];
+      acc[bid.event_id].push(bid);
+      return acc;
+    }, {});
+    const applicationsByEventId = applications.reduce((acc, application) => {
+      acc[application.event_id] = acc[application.event_id] || [];
+      acc[application.event_id].push(application);
+      return acc;
+    }, {});
+
+    const marketplaceEventList = eventsWithImages.map((event) => ({
+      ...event,
+      bids: bidsByEventId[event.event_id] || [],
+      applications: applicationsByEventId[event.event_id] || [],
+      bid_count: (bidsByEventId[event.event_id] || []).length,
+      application_count: (applicationsByEventId[event.event_id] || []).length,
+    }));
+
+    return res.data(
+      {
+        marketplaceEventList,
+        total,
+        page,
+        totalPages: total < limit ? 1 : Math.ceil(total / limit),
+      },
+      'Marketplace events'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.adminUpdateEvent = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'SUPER_ADMIN') {
+      throw buildError('Only admins can update marketplace events', 403);
+    }
+
+    const allowedFields = [
+      'event_name',
+      'event_description',
+      'ticket_sales_enabled',
+      'ticket_url',
+    ];
+    const update = allowedFields.reduce((acc, field) => {
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+        acc[field] = req.body[field];
+      }
+      return acc;
+    }, {});
+
+    if (!Object.keys(update).length) {
+      throw buildError('No marketplace event updates provided', 400);
+    }
+
+    const marketplaceEvent = await MarketplaceEventService.update(
+      { event_id: req.params.eventId },
+      update,
+      { getNew: true }
+    );
+
+    if (!marketplaceEvent) {
+      throw buildError('Marketplace event not found', 404);
+    }
+
+    return res.data({ marketplaceEvent }, 'Marketplace event updated');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.adminWithdrawSubmission = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'SUPER_ADMIN') {
+      throw buildError('Only admins can withdraw marketplace submissions', 403);
+    }
+
+    const submissionType = String(req.body.submission_type || '').toUpperCase();
+    const submissionId = String(req.body.submission_id || '').trim();
+    const reason = String(req.body.reason || '').trim();
+
+    if (!['BID', 'APPLICATION'].includes(submissionType) || !submissionId) {
+      throw buildError('Select a valid bid or application to withdraw.', 400);
+    }
+
+    const now = new Date();
+    if (submissionType === 'BID') {
+      const bid = await MarketplaceBidService.getByData(
+        {
+          event_id: req.params.eventId,
+          bid_id: submissionId,
+          archived_at: null,
+        },
+        { singleResult: true }
+      );
+      if (!bid) {
+        throw buildError('Marketplace bid not found', 404);
+      }
+      if (['AWARDED', 'WITHDRAWN'].includes(bid.bid_status)) {
+        throw buildError('This bid can no longer be withdrawn.', 400);
+      }
+      bid.bid_status = 'WITHDRAWN';
+      bid.withdrawn_at = now;
+      bid.withdrawn_by_user_id = req.user._id;
+      bid.revision_requested_fields = [
+        ...(bid.revision_requested_fields || []),
+        reason ? `Admin withdrawal: ${reason}` : 'Admin withdrawal',
+      ];
+      await bid.save();
+      return res.data({ marketplaceBid: bid }, 'Marketplace bid withdrawn');
+    }
+
+    const application = await MarketplaceApplicationService.getByData(
+      {
+        event_id: req.params.eventId,
+        application_id: submissionId,
+        archived_at: null,
+      },
+      { singleResult: true }
+    );
+    if (!application) {
+      throw buildError('Marketplace application not found', 404);
+    }
+    if (
+      ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED', 'WITHDRAWN'].includes(
+        application.application_status
+      )
+    ) {
+      throw buildError('This application can no longer be withdrawn.', 400);
+    }
+    application.application_status = 'WITHDRAWN';
+    application.withdrawn_at = now;
+    application.withdrawn_by_user_id = req.user._id;
+    application.revision_requested_fields = [
+      ...(application.revision_requested_fields || []),
+      reason ? `Admin withdrawal: ${reason}` : 'Admin withdrawal',
+    ];
+    await application.save();
+    return res.data(
+      { marketplaceApplication: application },
+      'Marketplace application withdrawn'
+    );
   } catch (e) {
     return next(e);
   }

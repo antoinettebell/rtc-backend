@@ -98,6 +98,13 @@ module.exports = {
     body: Joi.object(marketplaceEventBody),
   },
 
+  adminCreateEvent: {
+    body: Joi.object({
+      customer_user_id: Joi.string().required(),
+      ...marketplaceEventBody,
+    }),
+  },
+
   updateEvent: {
     body: Joi.object(marketplaceEventBody),
   },
@@ -250,6 +257,39 @@ module.exports = {
       event_id: Joi.string().allow(null, ''),
       bid_id: Joi.string().allow(null, ''),
       search: Joi.string().allow(null, ''),
+    }),
+  },
+
+  adminMarketplaceEvents: {
+    query: Joi.object({
+      limit: Joi.number().integer().min(1),
+      page: Joi.number().integer().min(1),
+      status: Joi.string().valid(
+        'DRAFT',
+        'OPEN',
+        'CLOSED',
+        'AWARDED',
+        'REOPENED',
+        'CANCELLED'
+      ),
+      search: Joi.string().allow(null, ''),
+    }),
+  },
+
+  adminUpdateEvent: {
+    body: Joi.object({
+      event_name: Joi.string().trim().allow(null, ''),
+      event_description: Joi.string().allow(null, ''),
+      ticket_sales_enabled: Joi.boolean(),
+      ticket_url: Joi.string().uri().allow(null, ''),
+    }).min(1),
+  },
+
+  adminWithdrawSubmission: {
+    body: Joi.object({
+      submission_type: Joi.string().valid('BID', 'APPLICATION').required(),
+      submission_id: Joi.string().trim().required(),
+      reason: Joi.string().trim().max(500).allow(null, ''),
     }),
   },
 
