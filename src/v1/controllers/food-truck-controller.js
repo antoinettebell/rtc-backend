@@ -968,6 +968,7 @@ exports.update = async (req, res, next) => {
 	        addOns,
 	        documents,
 	        availabilityChangeDay,
+	        availabilityChangedDay,
 	      },
       params: { id },
       user,
@@ -1041,7 +1042,7 @@ exports.update = async (req, res, next) => {
 		          {
 	            archivedAt: new Date(),
 	            changedByUserId: user?._id || null,
-	            changedDay: availabilityChangeDay || null,
+	            changedDay: availabilityChangeDay || availabilityChangedDay || null,
 	            previousAvailability,
 	            newAvailability: nextAvailability,
 		          },
