@@ -129,6 +129,15 @@ const normalizeSanitationGrade = (value) => {
   return 'F';
 };
 
+const getManualSanitationGrade = (body = {}) =>
+  normalizeSanitationGrade(
+    body.sanitation_grade ||
+      body.sanitationGrade ||
+      body.grade ||
+      body.letter_grade ||
+      body.inspection_grade
+  );
+
 const getSanitationGradeFromFields = (fields = {}) => {
   for (const fieldName of SANITATION_GRADE_FIELDS) {
     const grade = normalizeSanitationGrade(fields?.[fieldName]);
@@ -294,6 +303,23 @@ const getLatestSanitationGradeDocument = (documents = [], now = new Date()) =>
       getSanitationGradeFromFields(document.extracted_fields)
   ) || null;
 
+const getLatestProvidedSanitationGradeDocument = (documents = [], now = new Date()) =>
+  documents.find((document) => {
+    if (
+      document.document_type !== 'HEALTH_PERMIT' ||
+      document.archived_at ||
+      document.review_status === 'rejected'
+    ) {
+      return false;
+    }
+
+    const expirationDate = asDate(document.expiration_date);
+    return (
+      (!expirationDate || expirationDate >= now) &&
+      getSanitationGradeFromFields(document.extracted_fields)
+    );
+  }) || null;
+
 const getSanitationGradeMap = async (foodTruckIds = []) => {
   const ids = [...new Set((foodTruckIds || []).filter(Boolean).map((id) => id.toString()))];
   if (!ids.length) return {};
@@ -336,11 +362,12 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   const now = new Date();
   const documents = await getCurrentDocuments(foodTruck._id);
   const latestByType = selectLatestByType(documents);
-  const sanitationGradeDocument = getLatestSanitationGradeDocument(documents, now);
+  const sanitationGradeDocument = getLatestProvidedSanitationGradeDocument(documents, now);
   const sanitationGrade = getSanitationGradeFromFields(
     sanitationGradeDocument?.extracted_fields
   );
   const sanitationGradeEligible = isSanitationGradeEligible(sanitationGrade);
+  const sanitationGradeBlocked = !!sanitationGrade && !sanitationGradeEligible;
   const hasSsnOnProfile =
     hasValidTaxIdentifier(foodTruck.ssn) ||
     hasMaskedTaxIdentifier(foodTruck.ssn) ||
@@ -421,15 +448,18 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   }
 
   score = Math.min(100, score);
-  const eligible =
+  const baseEligible =
     grandfathered ||
     (missingRequirements.length === 0 && rejectedRequirements.length === 0);
+  const eligible = baseEligible && !sanitationGradeBlocked;
   const hasPendingReview = pendingRequirements.length > 0;
   const scoreBand = getScoreBand({ score, eligible, hasPendingReview });
   const complianceMessage = eligible
     ? grandfathered
       ? 'Vendor is grandfathered under current compliance requirements.'
       : 'Vendor compliance is eligible.'
+    : sanitationGradeBlocked
+    ? 'Please work on increasing your Sanitation Score and resubmit your Rating.'
     : `Vendor compliance must be completed before bidding or accepting orders. Contact support at ${SUPPORT_PHONE_NUMBER}.`;
 
   return {
@@ -442,6 +472,7 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     eligible,
     sanitation_grade: sanitationGrade,
     sanitation_grade_eligible: sanitationGradeEligible,
+    sanitation_grade_blocked: sanitationGradeBlocked,
     grandfathered,
     grandfather_cutoff_date: GRANDFATHER_CUTOFF_DATE,
     can_bid: eligible,
@@ -668,6 +699,16 @@ const uploadComplianceDocument = async ({
     throw buildComplianceError('Unsupported compliance document type', 400);
   }
 
+  const manualSanitationGrade =
+    documentType === 'HEALTH_PERMIT' ? getManualSanitationGrade(body) : null;
+
+  if (documentType === 'HEALTH_PERMIT' && !manualSanitationGrade) {
+    throw buildComplianceError(
+      'Please enter the Sanitation Grade shown on the document.',
+      400
+    );
+  }
+
   const existingCount = await VendorComplianceDocumentService.getCount({
     food_truck_id: foodTruck._id,
     document_type: documentType,
@@ -686,6 +727,12 @@ const uploadComplianceDocument = async ({
     size_bytes: file.size,
     issue_date: asDate(body.issue_date),
     expiration_date: asDate(body.expiration_date),
+    extracted_fields: manualSanitationGrade
+      ? {
+          sanitation_grade: manualSanitationGrade,
+          manual_sanitation_grade: manualSanitationGrade,
+        }
+      : {},
     uploaded_by_user_id: user._id,
     review_status: user.userType === 'SUPER_ADMIN' ? 'verified' : 'pending_review',
     reviewed_by_user_id: user.userType === 'SUPER_ADMIN' ? user._id : null,
@@ -926,7 +973,10 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     throw buildComplianceError('Compliance document not found', 404);
   }
 
-  const normalizedExtractedFields = extractedFields || document.extracted_fields || {};
+  const normalizedExtractedFields = {
+    ...(document.extracted_fields || {}),
+    ...(extractedFields || {}),
+  };
   if (document.document_type === 'HEALTH_PERMIT') {
     const sanitationGrade = getSanitationGradeFromFields(normalizedExtractedFields);
     if (sanitationGrade) {

@@ -137,11 +137,12 @@ exports.uploadDocument = async (req, res, next) => {
         compliance_status:
           document.review_status === 'verified' ? 'VERIFIED' : 'PENDING_REVIEW',
         compliance_document_id: document.document_id,
-        compliance_document_type: document.document_type,
-        compliance_review_status: document.review_status,
-        compliance_ocr_status: document.ocr_status,
-        compliance_synced_at: new Date(),
-      },
+	        compliance_document_type: document.document_type,
+	        compliance_review_status: document.review_status,
+	        compliance_ocr_status: document.ocr_status,
+	        compliance_extracted_fields: document.extracted_fields || {},
+	        compliance_synced_at: new Date(),
+	      },
     ];
     await foodTruck.save();
 

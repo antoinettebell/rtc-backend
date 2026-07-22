@@ -196,6 +196,55 @@ const hasActiveScheduleOverride = (openLocation, now) =>
   openLocation?.schedule_override_until &&
   new Date(openLocation.schedule_override_until).getTime() > now.getTime();
 
+const getActiveTruckUnits = (foodTruck) =>
+  (foodTruck?.truck_units || []).filter((unit) => !unit.is_archived);
+
+const getScheduleTruckUnitId = (foodTruck, slot) => {
+  const explicitTruckUnitId = slot?.truckUnitId?.toString();
+  if (explicitTruckUnitId) {
+    return explicitTruckUnitId;
+  }
+
+  const activeTruckUnits = getActiveTruckUnits(foodTruck);
+  return activeTruckUnits.length === 1
+    ? activeTruckUnits[0]._id?.toString() || null
+    : null;
+};
+
+const syncCurrentLocationFromOpenTruckUnits = (foodTruck) => {
+  const openLocationIds = new Set();
+  (foodTruck.truck_units || []).forEach((unit) => {
+    if (unit.is_archived) {
+      return;
+    }
+    (unit.open_locations || []).forEach((openLocation) => {
+      const locationId = getOpenLocationId(openLocation);
+      if (openLocation.isOrderingOpen && locationId) {
+        openLocationIds.add(locationId);
+      }
+    });
+  });
+
+  let changed = false;
+  const nextCurrentLocation = openLocationIds.values().next().value || null;
+
+  (foodTruck.locations || []).forEach((location) => {
+    const locationId = location._id?.toString();
+    const nextOpen = openLocationIds.has(locationId);
+    if (location.isOrderingOpen !== nextOpen) {
+      location.isOrderingOpen = nextOpen;
+      changed = true;
+    }
+  });
+
+  if ((foodTruck.currentLocation?.toString() || null) !== nextCurrentLocation) {
+    foodTruck.currentLocation = nextCurrentLocation;
+    changed = true;
+  }
+
+  return changed;
+};
+
 const reconcileFoodTruckWeeklySchedule = (
   foodTruck,
   now = new Date(),
@@ -213,7 +262,7 @@ const reconcileFoodTruckWeeklySchedule = (
     .filter((slot) => slot.locationId && slot.available)
     .forEach((slot) => {
       const locationId = slot.locationId?.toString();
-      const truckUnitId = slot.truckUnitId?.toString() || null;
+      const truckUnitId = getScheduleTruckUnitId(foodTruck, slot);
       if (!locationId || !truckUnitId) {
         return;
       }
@@ -272,35 +321,35 @@ const reconcileFoodTruckWeeklySchedule = (
       .filter((slot) => slot.day === today && slot.locationId && slot.available)
       .forEach((slot) => {
         const locationId = slot.locationId?.toString();
-        const truckUnitId = slot.truckUnitId?.toString() || null;
-	        if (
-	          unit._id?.toString() === truckUnitId &&
-	          activeUnitLocationPairs.has(`${truckUnitId}:${locationId}`) &&
+        const truckUnitId = getScheduleTruckUnitId(foodTruck, slot);
+        if (
+          unit._id?.toString() === truckUnitId &&
+          activeUnitLocationPairs.has(`${truckUnitId}:${locationId}`) &&
           !overrideUnitLocationPairs.has(`${truckUnitId}:${locationId}`) &&
-	          !pushedLocationIds.has(locationId)
-	        ) {
-	          pushedLocationIds.add(locationId);
-	          unit.open_locations.push({
-	            locationId,
-	            isOrderingOpen: true,
-	            updated_at: now,
+          !pushedLocationIds.has(locationId)
+        ) {
+          pushedLocationIds.add(locationId);
+          unit.open_locations.push({
+            locationId,
+            isOrderingOpen: true,
+            updated_at: now,
             status_source: 'SCHEDULE',
             schedule_override_until: null,
             schedule_override_reason: null,
-	          });
-	        }
-	      });
+          });
+        }
+      });
 
     if (before !== JSON.stringify(unit.open_locations || [])) {
       changed = true;
     }
   });
 
-	  (foodTruck.locations || []).forEach((location) => {
-	    const locationId = location._id?.toString();
-	    if (!managedLocationIds.has(locationId)) {
-	      return;
-	    }
+  (foodTruck.locations || []).forEach((location) => {
+    const locationId = location._id?.toString();
+    if (!managedLocationIds.has(locationId)) {
+      return;
+    }
     const overrideOpen = (foodTruck.truck_units || []).some((unit) =>
       (unit.open_locations || []).some(
         (openLocation) =>
@@ -317,16 +366,21 @@ const reconcileFoodTruckWeeklySchedule = (
           !openLocation.isOrderingOpen
       )
     );
-	    const nextOpen = overrideClosed ? false : overrideOpen || activeLocationIds.has(locationId);
-	    if (location.isOrderingOpen !== nextOpen) {
-	      location.isOrderingOpen = nextOpen;
-	      changed = true;
+    const nextOpen = overrideClosed ? false : overrideOpen || activeLocationIds.has(locationId);
+    if (location.isOrderingOpen !== nextOpen) {
+      location.isOrderingOpen = nextOpen;
+      changed = true;
     }
   });
+
+  if (syncCurrentLocationFromOpenTruckUnits(foodTruck)) {
+    changed = true;
+  }
 
   if (changed) {
     foodTruck.markModified('truck_units');
     foodTruck.markModified('locations');
+    foodTruck.markModified('currentLocation');
   }
 
   return {

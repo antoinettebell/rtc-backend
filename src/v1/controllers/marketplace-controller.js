@@ -1640,7 +1640,7 @@ const getVendorMarketplaceFoodTruck = async (userId, options = {}) => {
 
   if (enforceCompliance) {
     const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
-    if (Number(summary.score || 0) < 100 || !summary.eligible || !summary.can_bid) {
+    if (!summary.eligible || !summary.can_bid) {
       const error = buildError(summary.message || 'Please update your compliance paperwork.', 409);
       error.compliance = summary;
       throw error;
