@@ -143,14 +143,14 @@ const DEFAULT_REQUIREMENT_LABELS = [
   'Fire Permit',
   'Liquor License',
   'Certificate of Insurance',
-  'Business License',
+  'Business License/Permit',
   'Food Handler Permit',
   'Other',
 ];
 
 const COMPLIANCE_DOCUMENT_LABELS = {
   HEALTH_PERMIT: 'Sanitation Grade',
-  BUSINESS_LICENSE: 'Business License',
+  BUSINESS_LICENSE: 'Business License/Permit',
   COI: 'Insurance',
   LIQUOR_LICENSE: 'Liquor License',
   EIN: 'EIN',

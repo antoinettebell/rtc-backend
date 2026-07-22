@@ -223,7 +223,9 @@ exports.adminList = async (req, res, next) => {
     });
 
     const query = {
-      ...(review_status ? { review_status } : {}),
+      review_status: review_status
+        ? review_status
+        : { $nin: ['archived', 'rejected'] },
       ...(document_type
         ? { document_type: normalizeComplianceDocumentType(document_type) }
         : {}),
@@ -258,7 +260,7 @@ exports.adminDashboard = async (req, res, next) => {
     await VendorComplianceService.syncLegacyFoodTruckDocuments();
 
     const documents = await VendorComplianceDocumentService.getByData(
-      { review_status: { $ne: 'archived' } },
+      { review_status: { $nin: ['archived', 'rejected'] } },
       { sort: { created_at: -1 }, populate: ['food_truck_id'], lean: true }
     );
     const byReviewStatus = documents.reduce((acc, document) => {
