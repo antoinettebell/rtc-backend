@@ -153,6 +153,17 @@ const getSanitationGradeFromFields = (fields = {}) => {
   );
 };
 
+const getSanitationGradeFromDocument = (document = {}) =>
+  getSanitationGradeFromFields({
+    ...(document.extracted_fields || {}),
+    ...(document.metadata || {}),
+    sanitation_grade: document.sanitation_grade,
+    sanitationGrade: document.sanitationGrade,
+    grade: document.grade,
+    letter_grade: document.letter_grade,
+    inspection_grade: document.inspection_grade,
+  });
+
 const getSanitationGradeRank = (grade) => {
   const normalized = normalizeSanitationGrade(grade);
   if (!normalized) return null;
@@ -300,7 +311,7 @@ const getLatestSanitationGradeDocument = (documents = [], now = new Date()) =>
     (document) =>
       document.document_type === 'HEALTH_PERMIT' &&
       isVerifiedActiveDocument(document, now) &&
-      getSanitationGradeFromFields(document.extracted_fields)
+      getSanitationGradeFromDocument(document)
   ) || null;
 
 const getLatestProvidedSanitationGradeDocument = (documents = [], now = new Date()) =>
@@ -316,7 +327,7 @@ const getLatestProvidedSanitationGradeDocument = (documents = [], now = new Date
     const expirationDate = asDate(document.expiration_date);
     return (
       (!expirationDate || expirationDate >= now) &&
-      getSanitationGradeFromFields(document.extracted_fields)
+      getSanitationGradeFromDocument(document)
     );
   }) || null;
 
@@ -338,7 +349,7 @@ const getSanitationGradeMap = async (foodTruckIds = []) => {
     const id = document.food_truck_id?.toString();
     if (!id || acc[id]) return acc;
 
-    const grade = getSanitationGradeFromFields(document.extracted_fields);
+    const grade = getSanitationGradeFromDocument(document);
     if (grade) {
       acc[id] = grade;
     }
@@ -363,9 +374,7 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   const documents = await getCurrentDocuments(foodTruck._id);
   const latestByType = selectLatestByType(documents);
   const sanitationGradeDocument = getLatestProvidedSanitationGradeDocument(documents, now);
-  const sanitationGrade = getSanitationGradeFromFields(
-    sanitationGradeDocument?.extracted_fields
-  );
+  const sanitationGrade = getSanitationGradeFromDocument(sanitationGradeDocument);
   const sanitationGradeEligible = isSanitationGradeEligible(sanitationGrade);
   const sanitationGradeBlocked = !!sanitationGrade && !sanitationGradeEligible;
   const hasSsnOnProfile =
@@ -773,9 +782,15 @@ const syncLegacyFoodTruckDocuments = async ({ foodTruckId = null } = {}) => {
     let foodTruckChanged = false;
 
     for (const legacyDocument of foodTruck.documents || []) {
+      const legacyComplianceStatus = String(
+        legacyDocument?.compliance_status ||
+          legacyDocument?.compliance_review_status ||
+          legacyDocument?.document_status ||
+          ''
+      ).toUpperCase();
       if (
         !legacyDocument?.file_url ||
-        legacyDocument?.document_status === 'ARCHIVED'
+        ['ARCHIVED', 'REJECTED', 'DELETED'].includes(legacyComplianceStatus)
       ) {
         continue;
       }

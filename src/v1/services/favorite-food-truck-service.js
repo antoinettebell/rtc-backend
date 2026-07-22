@@ -73,7 +73,7 @@ class FavoriteFoodTruckService extends BaseService {
               },
               { $sort: { created_at: -1 } },
               { $limit: 1 },
-              { $project: { extracted_fields: 1 } },
+              { $project: { extracted_fields: 1, metadata: 1 } },
             ],
             as: 'sanitationGradeDocument',
           },
@@ -88,7 +88,32 @@ class FavoriteFoodTruckService extends BaseService {
                     0,
                   ],
                 },
-                null,
+                {
+                  $ifNull: [
+                    {
+                      $arrayElemAt: [
+                        '$sanitationGradeDocument.extracted_fields.grade',
+                        0,
+                      ],
+                    },
+                    {
+                      $ifNull: [
+                        {
+                          $arrayElemAt: [
+                            '$sanitationGradeDocument.extracted_fields.letter_grade',
+                            0,
+                          ],
+                        },
+                        {
+                          $arrayElemAt: [
+                            '$sanitationGradeDocument.metadata.sanitation_grade',
+                            0,
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
               ],
             },
           },
