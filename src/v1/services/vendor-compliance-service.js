@@ -155,13 +155,13 @@ const getSanitationGradeFromFields = (fields = {}) => {
 
 const getSanitationGradeFromDocument = (document = {}) =>
   getSanitationGradeFromFields({
-    ...(document.extracted_fields || {}),
-    ...(document.metadata || {}),
-    sanitation_grade: document.sanitation_grade,
-    sanitationGrade: document.sanitationGrade,
-    grade: document.grade,
-    letter_grade: document.letter_grade,
-    inspection_grade: document.inspection_grade,
+    ...(document?.extracted_fields || {}),
+    ...(document?.metadata || {}),
+    sanitation_grade: document?.sanitation_grade,
+    sanitationGrade: document?.sanitationGrade,
+    grade: document?.grade,
+    letter_grade: document?.letter_grade,
+    inspection_grade: document?.inspection_grade,
   });
 
 const getSanitationGradeRank = (grade) => {
