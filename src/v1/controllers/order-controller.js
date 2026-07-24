@@ -4696,6 +4696,7 @@ exports.getVendorEarnings = async (req, res, next) => {
         employeeInternalId,
         paymentMethod,
         refundCancelStatus,
+        includeEmployeeAnalytics = 'true',
       },
       user,
     } = req;
@@ -4727,21 +4728,31 @@ exports.getVendorEarnings = async (req, res, next) => {
       fallbackVendorTierRate,
       truckUnitId
     );
+    const salesSummary = await Service.getVendorSalesSummary({
+      foodTruck,
+      startDate,
+      endDate,
+      locationId,
+      truckUnitId,
+      paymentMethod,
+    });
     const employeeAnalytics =
-      await EmployeeSessionService.getVendorEmployeeAnalytics({
-        vendorUserId: user._id,
-        foodTruck,
-        startDate,
-        endDate,
-        locationId,
-        truckUnitId,
-        employeeInternalId,
-        paymentMethod,
-        refundCancelStatus,
-      });
+      includeEmployeeAnalytics === 'false'
+        ? null
+        : await EmployeeSessionService.getVendorEmployeeAnalytics({
+            vendorUserId: user._id,
+            foodTruck,
+            startDate,
+            endDate,
+            locationId,
+            truckUnitId,
+            employeeInternalId,
+            paymentMethod,
+            refundCancelStatus,
+          });
 
     return res.data(
-      { earnings, earningsFulldata, employeeAnalytics },
+      { earnings, earningsFulldata, salesSummary, employeeAnalytics },
       'Vendor earnings retrieved successfully'
     );
   } catch (e) {

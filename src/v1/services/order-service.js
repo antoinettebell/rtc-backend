@@ -4,6 +4,9 @@ const mongoose = require('mongoose');
 const {
   buildVendorEarningExpression,
 } = require('../../helper/vendor-earnings-helper');
+const {
+  summarizeVendorSales,
+} = require('../../helper/vendor-sales-summary-helper');
 
 const deliveredOrderStatuses = ['DELIVERED', 'COMPLETED'];
 const cashPaymentMethods = ['COD', 'CASH'];
@@ -496,6 +499,54 @@ class OrderService extends BaseService {
     result.adminPayment = result.totalRevenue;
 
     return result;
+  }
+
+  async getVendorSalesSummary({
+    foodTruck,
+    startDate,
+    endDate,
+    locationId = null,
+    truckUnitId = null,
+    paymentMethod = null,
+  }) {
+    const matchQuery = {
+      foodTruckId: new mongoose.Types.ObjectId(foodTruck._id),
+      deletedAt: null,
+    };
+
+    if (startDate && endDate) {
+      const rangeStart = new Date(startDate);
+      const rangeEnd = new Date(endDate);
+      rangeEnd.setHours(23, 59, 59, 999);
+      matchQuery.createdAt = { $gte: rangeStart, $lte: rangeEnd };
+    }
+
+    if (truckUnitId) {
+      matchQuery.truck_unit_id = new mongoose.Types.ObjectId(truckUnitId);
+    }
+
+    if (locationId) {
+      matchQuery.$or = [{ locationId }, { location_id: locationId }];
+    }
+
+    if (paymentMethod) {
+      const paymentQuery = [
+        { paymentMethod },
+        { payment_method: paymentMethod },
+      ];
+      matchQuery.$and = [
+        ...(matchQuery.$and || []),
+        { $or: paymentQuery },
+      ];
+    }
+
+    const orders = await Model.find(matchQuery)
+      .select(
+        'subTotal subtotal totalAfterDiscount discount taxAmount tax tipsAmount foodTruckTip vendorTip orderStatus orderSource order_source paymentStatus refundStatus truck_unit_id truck_unit_name'
+      )
+      .lean();
+
+    return summarizeVendorSales({ orders, foodTruck });
   }
 
   async getVendorEarningsWithFreeDessertTest(
