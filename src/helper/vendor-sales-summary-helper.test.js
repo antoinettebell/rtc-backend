@@ -24,6 +24,8 @@ const summary = summarizeVendorSales({
       orderStatus: 'DELIVERED',
       paymentStatus: 'PAID',
       totalAfterDiscount: 30,
+      orderSource: 'VENDOR_POS',
+      taxAmount: 3,
       truck_unit_id: 'truck-2',
       truck_unit_name: 'Pizza House 2',
     },

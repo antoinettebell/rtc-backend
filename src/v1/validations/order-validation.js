@@ -155,6 +155,7 @@ module.exports = {
       refundCancelStatus: Joi.string()
         .valid('pending', 'approved', 'rejected')
         .optional(),
+      includeEmployeeAnalytics: Joi.boolean().optional(),
     }),
   },
   vendorDashboard: {

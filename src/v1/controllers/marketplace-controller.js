@@ -191,9 +191,17 @@ const COMPLIANCE_DOCUMENT_LABELS = {
   BUSINESS_LICENSE: 'Business License/Permit',
   COI: 'Insurance',
   LIQUOR_LICENSE: 'Liquor License',
-  EIN: 'EIN',
-  W9: 'W-9',
 };
+const EXCLUDED_MARKETPLACE_REQUIREMENT_KEYS = new Set([
+  'ein',
+  'w9',
+  'w_9',
+  'w-9',
+  'form w9',
+  'form w-9',
+  'tax_id',
+  'tax id',
+]);
 
 const asArray = (value) => {
   if (Array.isArray(value)) {
@@ -911,14 +919,24 @@ const normalizeRequirementLabel = (label) => {
 const getRequirementKey = (label) =>
   label ? label.toLowerCase().replace(/[^a-z0-9]+/g, '_') : null;
 
+const isExcludedMarketplaceRequirementLabel = (label) => {
+  const normalizedLabel = normalizeRequirementLabel(label);
+  const normalizedKey = String(normalizedLabel || '').trim().toLowerCase();
+  return EXCLUDED_MARKETPLACE_REQUIREMENT_KEYS.has(normalizedKey);
+};
+
+const assertMarketplaceRequirementAllowed = (label) => {
+  if (isExcludedMarketplaceRequirementLabel(label)) {
+    throw buildError('EIN and W-9 documents are not part of event submissions.', 400);
+  }
+};
+
 const REQUIREMENT_LABEL_COMPLIANCE_TYPES = {
   Insurance: 'COI',
   'Certificate of Insurance': 'COI',
   'Sanitation Grade': 'HEALTH_PERMIT',
   'Business License/Permit': 'BUSINESS_LICENSE',
   'Liquor License': 'LIQUOR_LICENSE',
-  EIN: 'EIN',
-  'W-9': 'W9',
 };
 
 const hasVerifiedProfileRequirementDocument = async (foodTruckId, label) => {
@@ -2352,6 +2370,13 @@ const hasOpenApplicationRevisionRequest = (application = {}) => {
   }
   return new Date(application.revision_requested_at) > new Date(application.revision_submitted_at);
 };
+
+const PRE_AWARD_EDITABLE_APPLICATION_STATUSES = [
+  'DRAFT',
+  'PENDING_SIGNATURE',
+  'SUBMITTED',
+  'UNDER_REVIEW',
+];
 
 const requestBidRevisionsForEventChanges = async (event, changes = []) => {
   const revisionFields = [
@@ -4459,7 +4484,7 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       enforceCompliance: false,
     });
 
-    const [questions, bids, applications] = await Promise.all([
+    const [questions, bids, applications, closedCandidateBids, closedCandidateApplications] = await Promise.all([
       MarketplaceEventQuestionService.getByData(
         {
           vendor_user_id: req.user._id,
@@ -4504,6 +4529,40 @@ exports.vendorNotificationSummary = async (req, res, next) => {
         },
         { sort: { updated_at: -1, submitted_at: -1, created_at: -1 }, lean: true }
       ),
+      MarketplaceBidService.getByData(
+        {
+          vendor_user_id: req.user._id,
+          bid_status: {
+            $nin: [
+              'DRAFT',
+              'WITHDRAWN',
+              'AWARDED',
+              'NOT_AWARDED',
+              'DECLINED',
+              'NOT_SELECTED',
+            ],
+          },
+        },
+        { sort: { updated_at: -1, submitted_at: -1, created_at: -1 }, lean: true }
+      ),
+      MarketplaceApplicationService.getByData(
+        {
+          vendor_user_id: req.user._id,
+          application_status: {
+            $nin: [
+              'DRAFT',
+              'WITHDRAWN',
+              'ACCEPTED',
+              'CONFIRMED',
+              'PAYMENT_DUE',
+              'PENDING_PAYMENT',
+              'DECLINED',
+              'NOT_SELECTED',
+            ],
+          },
+        },
+        { sort: { updated_at: -1, submitted_at: -1, created_at: -1 }, lean: true }
+      ),
     ]);
 
     const unreadQuestions = questions.filter((question) =>
@@ -4515,6 +4574,8 @@ exports.vendorNotificationSummary = async (req, res, next) => {
           ...unreadQuestions.map((question) => question.event_id),
           ...bids.map((bid) => bid.event_id),
           ...applications.map((application) => application.event_id),
+          ...closedCandidateBids.map((bid) => bid.event_id),
+          ...closedCandidateApplications.map((application) => application.event_id),
         ]
           .map((eventId) => String(eventId || '').trim())
           .filter(Boolean)
@@ -4583,10 +4644,44 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       })
       .filter(Boolean);
 
+    const closedBidNotifications = closedCandidateBids
+      .map((bid) => {
+        const event = eventById[String(bid.event_id)] || {};
+        if (event.status !== 'CLOSED') return null;
+        return buildVendorSubmissionNotification({
+          id: `marketplace-closed-bid-${bid.bid_id}`,
+          type: 'MARKETPLACE_EVENT_CLOSED',
+          event,
+          status: 'CLOSED',
+          title: 'Event closed',
+          subtitle: 'This event closed and no vendor was awarded.',
+          bidId: bid.bid_id,
+        });
+      })
+      .filter(Boolean);
+
+    const closedApplicationNotifications = closedCandidateApplications
+      .map((application) => {
+        const event = eventById[String(application.event_id)] || {};
+        if (event.status !== 'CLOSED') return null;
+        return buildVendorSubmissionNotification({
+          id: `marketplace-closed-application-${application.application_id}`,
+          type: 'MARKETPLACE_EVENT_CLOSED',
+          event,
+          status: 'CLOSED',
+          title: 'Event closed',
+          subtitle: 'This event closed and your application was not selected.',
+          applicationId: application.application_id,
+        });
+      })
+      .filter(Boolean);
+
     const marketplaceNotificationList = [
       ...messageNotifications,
       ...bidNotifications,
       ...applicationNotifications,
+      ...closedBidNotifications,
+      ...closedApplicationNotifications,
     ].slice(0, 50);
 
     return res.data(
@@ -4594,7 +4689,10 @@ exports.vendorNotificationSummary = async (req, res, next) => {
         marketplaceNotificationList,
         unread_message_count: messageNotifications.length,
         action_required_count:
-          bidNotifications.length + applicationNotifications.length,
+          bidNotifications.length +
+          applicationNotifications.length +
+          closedBidNotifications.length +
+          closedApplicationNotifications.length,
         total_count: marketplaceNotificationList.length,
       },
       'Vendor marketplace notifications'
@@ -4639,19 +4737,29 @@ exports.submitApplication = async (req, res, next) => {
     );
     const isApplicationRevision =
       existingApplication && hasOpenApplicationRevisionRequest(existingApplication);
+    const canEditPreAwardApplication =
+      existingApplication &&
+      PRE_AWARD_EDITABLE_APPLICATION_STATUSES.includes(
+        existingApplication.application_status
+      );
+    const isFinalApplicationStatus = ['SUBMITTED', 'UNDER_REVIEW'].includes(
+      requestedStatus
+    );
 
-    if (requestedStatus !== 'DRAFT' && !isApplicationRevision) {
+    if (
+      requestedStatus !== 'DRAFT' &&
+      !isApplicationRevision &&
+      !canEditPreAwardApplication
+    ) {
       await assertVendorCanSubmitRound(event, req.user._id);
     }
 
     if (
       existingApplication &&
-      !['DRAFT', 'PENDING_SIGNATURE'].includes(
-        existingApplication.application_status
-      ) &&
+      !canEditPreAwardApplication &&
       !isApplicationRevision
     ) {
-      throw buildError('An application has already been submitted for this event', 409);
+      throw buildError('This application can no longer be edited', 409);
     }
     if (isApplicationRevision && requestedStatus !== 'SUBMITTED') {
       throw buildError('Submit the revised application to update your response.', 400);
@@ -4678,12 +4786,11 @@ exports.submitApplication = async (req, res, next) => {
       );
     }
     assertMarketplaceTextAllowed(req.body.notes, 'Notes');
-    if (requestedStatus === 'SUBMITTED') {
+    if (isFinalApplicationStatus) {
       await requireSignedVendorAgreementForSubmission(req.user._id);
     }
 
-    const submittedAt =
-      requestedStatus === 'SUBMITTED' ? new Date() : null;
+    const submittedAt = isFinalApplicationStatus ? new Date() : null;
     const applicationPayload = {
       ...req.body,
       event_id: req.params.eventId,
@@ -4691,11 +4798,10 @@ exports.submitApplication = async (req, res, next) => {
       food_truck_id: foodTruck._id,
       submission_round: currentRound,
       nda_required: true,
-      nda_acknowledged: requestedStatus === 'SUBMITTED',
-      nda_acknowledged_at: requestedStatus === 'SUBMITTED' ? new Date() : null,
+      nda_acknowledged: isFinalApplicationStatus,
+      nda_acknowledged_at: isFinalApplicationStatus ? new Date() : null,
       agreement_provider: 'DOCUSIGN',
-      agreement_status:
-        requestedStatus === 'SUBMITTED' ? 'SIGNED' : 'PENDING_SIGNATURE',
+      agreement_status: isFinalApplicationStatus ? 'SIGNED' : 'PENDING_SIGNATURE',
       application_status: requestedStatus,
       payment_status: existingApplication?.payment_status || 'NOT_REQUIRED',
       submitted_at: submittedAt || existingApplication?.submitted_at || null,
@@ -4717,7 +4823,7 @@ exports.submitApplication = async (req, res, next) => {
         )
       : await MarketplaceApplicationService.create(applicationPayload);
 
-    if (requestedStatus === 'SUBMITTED') {
+    if (isFinalApplicationStatus) {
       await attachVerifiedComplianceDocumentsToSubmission({
         eventId: event.event_id,
         foodTruck,
@@ -4727,7 +4833,7 @@ exports.submitApplication = async (req, res, next) => {
       });
     }
 
-    if (requestedStatus === 'SUBMITTED') {
+    if (isFinalApplicationStatus) {
       await notifyMarketplaceSubmission({
         event,
         vendorUserId: req.user._id,
@@ -4766,9 +4872,47 @@ exports.myApplications = async (req, res, next) => {
       }),
       { fullAccess: true, redactRecord: false }
     );
+    const eventIds = [
+      ...new Set(
+        marketplaceApplicationList
+          .map((application) => String(application.event_id || '').trim())
+          .filter(Boolean)
+      ),
+    ];
+    const unreadMessageCounts = eventIds.length
+      ? await MarketplaceEventQuestionService.getModel().aggregate([
+          {
+            $match: {
+              event_id: { $in: eventIds },
+              vendor_user_id: req.user._id,
+              status: 'PUBLISHED',
+              answer_text_public: { $nin: [null, ''] },
+              answered_at: { $ne: null },
+              $or: [
+                { vendor_read_at: null },
+                { $expr: { $lt: ['$vendor_read_at', '$answered_at'] } },
+              ],
+            },
+          },
+          { $group: { _id: '$event_id', total: { $sum: 1 } } },
+        ])
+      : [];
+    const unreadMessageCountByEventId = unreadMessageCounts.reduce(
+      (acc, item) => {
+        acc[item._id] = item.total;
+        return acc;
+      },
+      {}
+    );
+    const marketplaceApplicationsWithUnreadMessages =
+      marketplaceApplicationList.map((application) => ({
+        ...application,
+        unread_message_count:
+          unreadMessageCountByEventId[application.event_id] || 0,
+      }));
 
     return res.data(
-      { marketplaceApplicationList },
+      { marketplaceApplicationList: marketplaceApplicationsWithUnreadMessages },
       'Marketplace applications'
     );
   } catch (e) {
@@ -6236,6 +6380,13 @@ exports.addBidAttachment = async (req, res, next) => {
     const config = validateAttachmentFile(req.file, attachmentType);
     const requirementLabel = normalizedAttachment.requirementLabel;
     const requirementKey = getRequirementKey(requirementLabel);
+    if (attachmentType === REQUIREMENT_ATTACHMENT_TYPE) {
+      assertMarketplaceRequirementAllowed(requirementLabel);
+    }
+
+    if (attachmentType === 'BID_IMAGE') {
+      await assertMarketplaceEventImageHasNoContactInfo(req.file);
+    }
 
     const replacedAttachments = await archiveReplacementAttachments({
       eventId: bid.event_id,
@@ -6341,6 +6492,13 @@ exports.addApplicationAttachment = async (req, res, next) => {
     const config = validateAttachmentFile(req.file, attachmentType);
     const requirementLabel = normalizedAttachment.requirementLabel;
     const requirementKey = getRequirementKey(requirementLabel);
+    if (attachmentType === REQUIREMENT_ATTACHMENT_TYPE) {
+      assertMarketplaceRequirementAllowed(requirementLabel);
+    }
+
+    if (attachmentType === 'APPLICATION_IMAGE') {
+      await assertMarketplaceEventImageHasNoContactInfo(req.file);
+    }
 
     const replacedAttachments = await archiveReplacementAttachments({
       eventId: application.event_id,

@@ -16,8 +16,8 @@ assert.deepStrictEqual(sample, {
   foodSalesBase: 10,
   foodTruckTip: 0,
   tierRate: 3.5,
-  tierFee: 0.35,
-  vendorEarnings: 9.65,
+  tierFee: 0,
+  vendorEarnings: 10,
 });
 
 const withTip = calculateVendorEarnings({
@@ -26,8 +26,8 @@ const withTip = calculateVendorEarnings({
   vendor_tier_at_transaction: { slug: 'SUB_BASIC', rate: 3.5 },
 });
 
-assert.strictEqual(withTip.tierFee, 0.35);
-assert.strictEqual(withTip.vendorEarnings, 11.65);
+assert.strictEqual(withTip.tierFee, 0);
+assert.strictEqual(withTip.vendorEarnings, 12);
 
 const legacyOrder = calculateVendorEarnings(
   {
@@ -40,7 +40,7 @@ const legacyOrder = calculateVendorEarnings(
 
 assert.strictEqual(legacyOrder.foodSalesBase, 10);
 assert.strictEqual(legacyOrder.tierRate, 4.5);
-assert.strictEqual(legacyOrder.vendorEarnings, 9.55);
+assert.strictEqual(legacyOrder.vendorEarnings, 10);
 
 assert.strictEqual(resolveVendorTierRate({ slug: 'SUB_ELITE' }), 5.5);
 

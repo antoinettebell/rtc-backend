@@ -4084,6 +4084,11 @@ exports.update = async (req, res, next) => {
       DELIVERED: 8,
       COMPLETED: 9,
     };
+    const vendorRejectCleanupStatuses = [
+      'ACCEPTED',
+      'PREPARING',
+      'READY_FOR_PICKUP',
+    ];
 
     const statusTimeKey = {
       PLACED: 'placedAt',
@@ -4175,7 +4180,16 @@ exports.update = async (req, res, next) => {
       return res.error(new Error(`This order is rejected by the vendor.`), 409);
     }
 
-    if (orderStatus && statusSort[orderStatus] < statusSort[item.orderStatus]) {
+    const isVendorRejectCleanup =
+      orderStatus === 'REJECTED' &&
+      user.userType === 'VENDOR' &&
+      vendorRejectCleanupStatuses.includes(item.orderStatus);
+
+    if (
+      orderStatus &&
+      !isVendorRejectCleanup &&
+      statusSort[orderStatus] < statusSort[item.orderStatus]
+    ) {
       return res.error(
         new Error(
           `Can not update status to "${orderStatus}" while it is "${item.orderStatus}"`

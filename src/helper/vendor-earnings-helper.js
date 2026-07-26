@@ -49,14 +49,13 @@ const calculateVendorEarnings = (order, fallbackRate = 0) => {
     order?.vendor_tier_at_transaction,
     fallbackRate
   );
-  const tierFee = roundMoney((foodSalesBase * tierRate) / 100);
 
   return {
     foodSalesBase: roundMoney(foodSalesBase),
     foodTruckTip: roundMoney(foodTruckTip),
     tierRate,
-    tierFee,
-    vendorEarnings: roundMoney(foodSalesBase + foodTruckTip - tierFee),
+    tierFee: 0,
+    vendorEarnings: roundMoney(foodSalesBase + foodTruckTip),
   };
 };
 
@@ -99,23 +98,10 @@ const buildVendorTierRateExpression = (fallbackRate = 0) => ({
 });
 
 const buildVendorEarningExpression = (fallbackRate = 0) => {
-  const tierRateExpression = buildVendorTierRateExpression(fallbackRate);
-  const tierFeeExpression = {
-    $multiply: [
-      vendorFoodSalesBaseExpression,
-      { $divide: [tierRateExpression, 100] },
-    ],
-  };
-
   return {
-    $subtract: [
-      {
-        $add: [
-          vendorFoodSalesBaseExpression,
-          toNumberExpression('$tipsAmount'),
-        ],
-      },
-      tierFeeExpression,
+    $add: [
+      vendorFoodSalesBaseExpression,
+      toNumberExpression('$tipsAmount'),
     ],
   };
 };

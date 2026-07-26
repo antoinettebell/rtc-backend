@@ -341,6 +341,7 @@ const getSanitationGradeMap = async (foodTruckIds = []) => {
       document_type: 'HEALTH_PERMIT',
       review_status: 'verified',
       archived_at: null,
+      $or: [{ expiration_date: null }, { expiration_date: { $gte: new Date() } }],
     },
     { lean: true, sort: { created_at: -1 } }
   );
@@ -371,6 +372,7 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   }
 
   const now = new Date();
+  await archiveExpiredDocuments({ foodTruckId: foodTruck._id, now });
   const documents = await getCurrentDocuments(foodTruck._id);
   const latestByType = selectLatestByType(documents);
   const sanitationGradeDocument = getLatestProvidedSanitationGradeDocument(documents, now);
@@ -708,16 +710,6 @@ const uploadComplianceDocument = async ({
     throw buildComplianceError('Unsupported compliance document type', 400);
   }
 
-  const manualSanitationGrade =
-    documentType === 'HEALTH_PERMIT' ? getManualSanitationGrade(body) : null;
-
-  if (documentType === 'HEALTH_PERMIT' && !manualSanitationGrade) {
-    throw buildComplianceError(
-      'Please enter the Sanitation Grade shown on the document.',
-      400
-    );
-  }
-
   const existingCount = await VendorComplianceDocumentService.getCount({
     food_truck_id: foodTruck._id,
     document_type: documentType,
@@ -736,12 +728,7 @@ const uploadComplianceDocument = async ({
     size_bytes: file.size,
     issue_date: asDate(body.issue_date),
     expiration_date: asDate(body.expiration_date),
-    extracted_fields: manualSanitationGrade
-      ? {
-          sanitation_grade: manualSanitationGrade,
-          manual_sanitation_grade: manualSanitationGrade,
-        }
-      : {},
+    extracted_fields: {},
     uploaded_by_user_id: user._id,
     review_status: user.userType === 'SUPER_ADMIN' ? 'verified' : 'pending_review',
     reviewed_by_user_id: user.userType === 'SUPER_ADMIN' ? user._id : null,
@@ -962,6 +949,20 @@ const reviewComplianceDocument = async ({
       ...extractedFields,
     };
   }
+  if (document.document_type === 'HEALTH_PERMIT') {
+    const sanitationGrade = getSanitationGradeFromDocument(document);
+    if (sanitationGrade) {
+      document.extracted_fields = {
+        ...(document.extracted_fields || {}),
+        sanitation_grade: sanitationGrade,
+      };
+    } else if (reviewStatus === 'verified') {
+      throw buildComplianceError(
+        'Sanitation grade must be verified before approving this document.',
+        400
+      );
+    }
+  }
   await document.save();
   await updateLinkedFoodTruckDocumentComplianceStatus(document);
 
@@ -992,17 +993,28 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     ...(document.extracted_fields || {}),
     ...(extractedFields || {}),
   };
+  let hasSanitationGrade = false;
   if (document.document_type === 'HEALTH_PERMIT') {
     const sanitationGrade = getSanitationGradeFromFields(normalizedExtractedFields);
     if (sanitationGrade) {
       normalizedExtractedFields.sanitation_grade = sanitationGrade;
+      hasSanitationGrade = true;
+    } else {
+      document.review_status = 'pending_review';
+      document.ocr_status = 'manual_review';
+      document.ocr_error_message =
+        errorMessage || 'OCR could not determine the sanitation grade.';
     }
   }
 
-  document.ocr_status = ocrStatus || 'completed';
+  if (document.ocr_status !== 'manual_review') {
+    document.ocr_status = ocrStatus || 'completed';
+  }
   document.extracted_fields = normalizedExtractedFields;
   document.ocr_completed_at = new Date();
-  document.ocr_error_message = errorMessage || null;
+  if (document.ocr_status !== 'manual_review') {
+    document.ocr_error_message = errorMessage || null;
+  }
   const extractedExpirationDate = getOcrExpirationDate(extractedFields);
   const extractedIssueDate = getOcrIssueDate(extractedFields);
   const vendorExpirationKey = getDateKey(document.expiration_date);
@@ -1029,15 +1041,24 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
       ? 'OCR expiration date does not match the vendor-entered expiration date.'
       : 'OCR could not confirm the vendor-entered expiration date.';
   }
+  if (
+    document.document_type === 'HEALTH_PERMIT' &&
+    hasSanitationGrade &&
+    document.ocr_status === 'completed'
+  ) {
+    document.review_status = 'verified';
+    document.reviewed_by_user_id = null;
+    document.reviewed_at = new Date();
+  }
   await document.save();
   await updateLinkedFoodTruckDocumentComplianceStatus(document);
   return document;
 };
 
-const archiveExpiredDocuments = async () => {
-  const now = new Date();
+const archiveExpiredDocuments = async ({ foodTruckId = null, now = new Date() } = {}) => {
   const expiredDocuments = await VendorComplianceDocumentService.getByData(
     {
+      ...(foodTruckId ? { food_truck_id: foodTruckId } : {}),
       expiration_date: { $lt: now },
       review_status: 'verified',
       archived_at: null,

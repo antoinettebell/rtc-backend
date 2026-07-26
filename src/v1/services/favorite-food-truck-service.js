@@ -69,6 +69,10 @@ class FavoriteFoodTruckService extends BaseService {
                   document_type: 'HEALTH_PERMIT',
                   review_status: 'verified',
                   archived_at: null,
+                  $or: [
+                    { expiration_date: null },
+                    { expiration_date: { $gte: new Date() } },
+                  ],
                 },
               },
               { $sort: { created_at: -1 } },

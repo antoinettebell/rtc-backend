@@ -8,16 +8,8 @@ const roundMoney = (value) => Number(toNumber(value).toFixed(2));
 const getOrderSubtotal = (order) =>
   toNumber(order?.subTotal ?? order?.subtotal ?? order?.sub_total);
 
-const getOrderTax = (order) =>
-  toNumber(order?.taxAmount ?? order?.tax ?? order?.tax_amount);
-
 const getOrderVendorTip = (order) =>
   toNumber(order?.tipsAmount ?? order?.foodTruckTip ?? order?.vendorTip);
-
-const isWalkUpOrder = (order) =>
-  ['VENDOR_POS', 'WALK_UP_EMPLOYEE'].includes(
-    String(order?.order_source || order?.orderSource || '').toUpperCase()
-  );
 
 const getOrderFoodSalesAmount = (order) => {
   const hasTotalAfterDiscount =
@@ -32,9 +24,7 @@ const getOrderFoodSalesAmount = (order) => {
       );
 
   return roundMoney(
-    foodSubtotal +
-      getOrderVendorTip(order) +
-      (isWalkUpOrder(order) ? getOrderTax(order) : 0)
+    foodSubtotal + getOrderVendorTip(order)
   );
 };
 

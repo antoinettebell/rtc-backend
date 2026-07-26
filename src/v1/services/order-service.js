@@ -11,6 +11,10 @@ const {
 const deliveredOrderStatuses = ['DELIVERED', 'COMPLETED'];
 const cashPaymentMethods = ['COD', 'CASH'];
 const digitalPaymentMethods = ['APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY'];
+const nonRefundedOrderMatch = {
+  paymentStatus: { $ne: 'REFUNDED' },
+  refundStatus: { $ne: 'SUCCESS' },
+};
 
 class OrderService extends BaseService {
   constructor() {
@@ -450,13 +454,17 @@ class OrderService extends BaseService {
       foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
       orderStatus: { $in: deliveredOrderStatuses },
       deletedAt: null,
+      ...nonRefundedOrderMatch,
       ...(truckUnitId ? { truck_unit_id: new mongoose.Types.ObjectId(truckUnitId) } : {}),
     };
 
     if (startDate && endDate) {
+      const rangeStart = new Date(startDate);
+      const rangeEnd = new Date(endDate);
+      rangeEnd.setHours(23, 59, 59, 999);
       matchQuery.createdAt = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate),
+        $gte: rangeStart,
+        $lte: rangeEnd,
       };
     }
 
@@ -560,6 +568,7 @@ class OrderService extends BaseService {
       foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
       orderStatus: { $in: deliveredOrderStatuses },
       deletedAt: null,
+      ...nonRefundedOrderMatch,
       ...(truckUnitId ? { truck_unit_id: new mongoose.Types.ObjectId(truckUnitId) } : {}),
     };
 
@@ -721,6 +730,7 @@ if (startDate && endDate) {
     foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
     orderStatus: { $in: deliveredOrderStatuses },
     deletedAt: null,
+    ...nonRefundedOrderMatch,
     createdAt: { $gte: startDate, $lte: endDate },
   };
 
