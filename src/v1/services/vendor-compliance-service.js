@@ -736,6 +736,16 @@ const uploadComplianceDocument = async ({
     ocr_status: user.userType === 'SUPER_ADMIN' ? 'not_configured' : undefined,
   });
 
+  const manualSanitationGrade = getManualSanitationGrade(body);
+  if (documentType === 'HEALTH_PERMIT' && manualSanitationGrade) {
+    document.extracted_fields = {
+      ...(document.extracted_fields || {}),
+      manual_sanitation_grade: manualSanitationGrade,
+      sanitation_grade: manualSanitationGrade,
+    };
+    await document.save();
+  }
+
   await retainOrDeleteExistingDocument({
     foodTruckId: foodTruck._id,
     documentType,

@@ -4089,6 +4089,13 @@ exports.update = async (req, res, next) => {
       'PREPARING',
       'READY_FOR_PICKUP',
     ];
+    const staleVendorCleanupStatuses = [
+      'PLACED',
+      'ACCEPTED',
+      'PREPARING',
+      'READY_FOR_PICKUP',
+    ];
+    const STALE_VENDOR_ORDER_CLEANUP_MS = 24 * 60 * 60 * 1000;
 
     const statusTimeKey = {
       PLACED: 'placedAt',
@@ -4184,6 +4191,13 @@ exports.update = async (req, res, next) => {
       orderStatus === 'REJECTED' &&
       user.userType === 'VENDOR' &&
       vendorRejectCleanupStatuses.includes(item.orderStatus);
+    const isStaleVendorOrderCleanup =
+      user.userType === 'VENDOR' &&
+      ['REJECTED', 'COMPLETED'].includes(orderStatus) &&
+      staleVendorCleanupStatuses.includes(item.orderStatus) &&
+      item.createdAt &&
+      Date.now() - new Date(item.createdAt).getTime() >=
+        STALE_VENDOR_ORDER_CLEANUP_MS;
 
     if (
       orderStatus &&
@@ -4226,94 +4240,102 @@ exports.update = async (req, res, next) => {
       // Process refund/void for paid gateway CANCEL/REJECTED orders before saving the status change.
       if (
         (orderStatus === 'CANCEL' || orderStatus === 'REJECTED') &&
-        isGatewayPaymentMethod(item.paymentMethod)
+        isGatewayPaymentMethod(item.paymentMethod) &&
+        item.paymentStatus === 'PAID'
       ) {
-        if (item.paymentStatus === 'PAID' && !item.transactionId) {
-          return res.error(
-            new Error(
-              'Can not update this order status because no payment transaction is available to refund'
-            ),
-            409
-          );
-        }
-
-        try {
-          const refundResp = await PaymentHelper.processRefund({
-            transactionId: item.transactionId,
-            amount: item.total,
-          });
-
-          // Log refund attempt if not skipLog
-          if (!refundResp.skipLog) {
-            await PaymentsLogService.create({
-              userId: item.userId,
-              orderId: item._id,
-              type: 'REFUND',
-              mode: refundResp.env,
-              level: refundResp?.level || null,
-              amount: Number(item.total),
-              requestPayload: {
-                orderId: item._id,
-                transactionId: item.transactionId,
-                amount: item.total,
-                reason: orderStatus,
-              },
-              responsePayload: sanitizePaymentLogPayload(refundResp),
-              transactionId: item.transactionId,
-              uniqueId: refundResp?.refundTransactionId || null,
-              authCode: refundResp?.authCode || null,
-              response_type: refundResp.success
-                ? refundResp?.mode === 'void'
-                  ? 'VOID'
-                  : 'REFUND'
-                : 'REFUND',
-              accountNumber: refundResp.accountNumber || null,
-              accountType: refundResp.accountType || null,
-              success: refundResp.success,
-              errorCode: refundResp.success ? null : refundResp.code,
-              errorMessage: refundResp.success ? null : refundResp.message,
-            });
-          }
-
-          // Update order with refund details
-          if (refundResp.success) {
-            item.paymentStatus = 'REFUNDED';
-            item.refundTransactionId = refundResp?.refundTransactionId;
-            item.refundDateTime = new Date();
-            item.refundStatus = 'SUCCESS';
-            item.refundReason =
-              orderStatus === 'CANCEL' ? 'Order cancelled' : 'Order rejected';
-            item.refundMode = refundResp?.mode === 'void' ? 'VOID' : 'REFUND';
-
-            // Update original payment log
-            try {
-              const paymentLog = await PaymentsLogService.getByData(
-                {
-                  transactionId: item.transactionId,
-                  orderId: item._id,
-                  type: 'CHECKOUT',
-                  deletedAt: null,
-                },
-                { singleResult: true }
-              );
-              if (paymentLog) {
-                paymentLog.orderPaymentStatus = 'REFUNDED';
-                await paymentLog.save();
-              }
-            } catch (err) {
-              console.error('Payment log update failed:', err);
-            }
+        if (!item.transactionId) {
+          if (isStaleVendorOrderCleanup) {
+            item.refundStatus = 'FAILED';
+            item.refundReason = 'Stale order cleanup';
+            item.refundErrorMessage =
+              'No payment transaction was available for automatic refund.';
           } else {
             return res.error(
-              new Error(refundResp.message || 'Refund/void failed'),
+              new Error(
+                'Can not update this order status because no payment transaction is available to refund'
+              ),
+              409
+            );
+          }
+        } else {
+          try {
+            const refundResp = await PaymentHelper.processRefund({
+              transactionId: item.transactionId,
+              amount: item.total,
+            });
+
+            // Log refund attempt if not skipLog
+            if (!refundResp.skipLog) {
+              await PaymentsLogService.create({
+                userId: item.userId,
+                orderId: item._id,
+                type: 'REFUND',
+                mode: refundResp.env,
+                level: refundResp?.level || null,
+                amount: Number(item.total),
+                requestPayload: {
+                  orderId: item._id,
+                  transactionId: item.transactionId,
+                  amount: item.total,
+                  reason: orderStatus,
+                },
+                responsePayload: sanitizePaymentLogPayload(refundResp),
+                transactionId: item.transactionId,
+                uniqueId: refundResp?.refundTransactionId || null,
+                authCode: refundResp?.authCode || null,
+                response_type: refundResp.success
+                  ? refundResp?.mode === 'void'
+                    ? 'VOID'
+                    : 'REFUND'
+                  : 'REFUND',
+                accountNumber: refundResp.accountNumber || null,
+                accountType: refundResp.accountType || null,
+                success: refundResp.success,
+                errorCode: refundResp.success ? null : refundResp.code,
+                errorMessage: refundResp.success ? null : refundResp.message,
+              });
+            }
+
+            // Update order with refund details
+            if (refundResp.success) {
+              item.paymentStatus = 'REFUNDED';
+              item.refundTransactionId = refundResp?.refundTransactionId;
+              item.refundDateTime = new Date();
+              item.refundStatus = 'SUCCESS';
+              item.refundReason =
+                orderStatus === 'CANCEL' ? 'Order cancelled' : 'Order rejected';
+              item.refundMode = refundResp?.mode === 'void' ? 'VOID' : 'REFUND';
+
+              // Update original payment log
+              try {
+                const paymentLog = await PaymentsLogService.getByData(
+                  {
+                    transactionId: item.transactionId,
+                    orderId: item._id,
+                    type: 'CHECKOUT',
+                    deletedAt: null,
+                  },
+                  { singleResult: true }
+                );
+                if (paymentLog) {
+                  paymentLog.orderPaymentStatus = 'REFUNDED';
+                  await paymentLog.save();
+                }
+              } catch (err) {
+                console.error('Payment log update failed:', err);
+              }
+            } else {
+              return res.error(
+                new Error(refundResp.message || 'Refund/void failed'),
+                400
+              );
+            }
+          } catch (refundError) {
+            return res.error(
+              new Error(refundError.message || 'Refund processing failed'),
               400
             );
           }
-        } catch (refundError) {
-          return res.error(
-            new Error(refundError.message || 'Refund processing failed'),
-            400
-          );
         }
       }
     }
