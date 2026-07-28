@@ -7,6 +7,7 @@ const {
 const {
   SUPPORT_PHONE_NUMBER,
   GRANDFATHER_CUTOFF_DATE,
+  VENDOR_COMPLIANCE_ENFORCEMENT_ENABLED,
   REMINDER_DAYS,
   getComplianceRequirement,
   getComplianceRequirements,
@@ -204,6 +205,36 @@ const getScoreBand = ({ score, eligible, hasPendingReview }) => {
     color: 'green',
     label: score >= 100 ? 'Complete' : 'On track',
     hex: '#188038',
+  };
+};
+
+const getEnforcementRolloutSummary = (summary) => {
+  if (VENDOR_COMPLIANCE_ENFORCEMENT_ENABLED) {
+    return {
+      ...summary,
+      enforcement_enabled: true,
+    };
+  }
+
+  return {
+    ...summary,
+    enforcement_enabled: false,
+    enforcement_paused: true,
+    reported_score: summary.score,
+    reported_score_color: summary.score_color,
+    reported_score_color_hex: summary.score_color_hex,
+    reported_score_label: summary.score_label,
+    reported_eligible: summary.eligible,
+    reported_can_bid: summary.can_bid,
+    reported_can_open_accepting_orders: summary.can_open_accepting_orders,
+    score: 100,
+    score_color: 'green',
+    score_color_hex: '#188038',
+    score_label: 'Available',
+    eligible: true,
+    can_bid: true,
+    can_open_accepting_orders: true,
+    message: 'Vendor compliance rollout is paused. Vendors may continue bidding and accepting orders.',
   };
 };
 
@@ -507,8 +538,13 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   };
 };
 
-const assertEligible = async (foodTruckOrId, actionLabel = 'continue') => {
+const calculateVendorFacingComplianceSummary = async (foodTruckOrId) => {
   const summary = await calculateComplianceSummary(foodTruckOrId);
+  return getEnforcementRolloutSummary(summary);
+};
+
+const assertEligible = async (foodTruckOrId, actionLabel = 'continue') => {
+  const summary = await calculateVendorFacingComplianceSummary(foodTruckOrId);
   const isOpenAcceptingOrdersAction = /open|accept orders/i.test(actionLabel);
   const isBlocked = isOpenAcceptingOrdersAction
     ? !summary.can_open_accepting_orders
@@ -1175,6 +1211,14 @@ const sendExpirationReminders = async () => {
 };
 
 const runComplianceMaintenance = async () => {
+  if (!VENDOR_COMPLIANCE_ENFORCEMENT_ENABLED) {
+    return {
+      reminders_sent: 0,
+      archived_count: 0,
+      enforcement_paused: true,
+    };
+  }
+
   const reminders_sent = await sendExpirationReminders();
   const archived_count = await archiveExpiredDocuments();
   return { reminders_sent, archived_count };
@@ -1183,6 +1227,7 @@ const runComplianceMaintenance = async () => {
 module.exports = {
   REMINDER_DAYS,
   calculateComplianceSummary,
+  calculateVendorFacingComplianceSummary,
   assertEligible,
   getSanitationGradeMap,
   getSanitationGradeFromFields,

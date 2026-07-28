@@ -107,6 +107,9 @@ const REVIEW_STATUSES = [
 
 const REMINDER_DAYS = [90, 60, 30, 10];
 const GRANDFATHER_CUTOFF_DATE = process.env.VENDOR_COMPLIANCE_GRANDFATHER_CUTOFF || '2026-08-01';
+const VENDOR_COMPLIANCE_ENFORCEMENT_ENABLED =
+  String(process.env.VENDOR_COMPLIANCE_ENFORCEMENT_ENABLED || 'false').toLowerCase() ===
+  'true';
 
 const normalizeComplianceDocumentType = (value = '') => {
   const key = String(value || '')
@@ -128,6 +131,7 @@ module.exports = {
   REVIEW_STATUSES,
   REMINDER_DAYS,
   GRANDFATHER_CUTOFF_DATE,
+  VENDOR_COMPLIANCE_ENFORCEMENT_ENABLED,
   normalizeComplianceDocumentType,
   getComplianceRequirement,
   getComplianceRequirements,

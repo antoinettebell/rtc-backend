@@ -1460,25 +1460,19 @@ exports.toggleLocationOrdering = async (req, res, next) => {
       return res.error(new Error('Location not found'), 404);
     }
 
-    if (isOrderingOpen) {
-      return res.error(
-        new Error(
-          'To reopen, please update your weekly schedule. Manual closing is allowed for today, but reopening must be scheduled.'
-        ),
-        409
-      );
-    }
-
     setTruckUnitLocationOpen({
       foodTruck: item,
       truckUnitId: truck_unit_id || user.assigned_truck_unit_id || null,
       locationId,
-      isOpen: false,
+      isOpen: !!isOrderingOpen,
       statusSource: 'MANUAL',
-      scheduleOverrideReason:
-        schedule_override_reason ||
-        (user.userType === 'SUPER_ADMIN' ? 'ADMIN_OVERRIDE' : 'CLOSING_EARLY'),
-      scheduleOverrideUntil: getScheduleOverrideUntilNextReset(item),
+      scheduleOverrideReason: isOrderingOpen
+        ? null
+        : schedule_override_reason ||
+          (user.userType === 'SUPER_ADMIN' ? 'ADMIN_OVERRIDE' : 'CLOSING_EARLY'),
+      scheduleOverrideUntil: isOrderingOpen
+        ? null
+        : getScheduleOverrideUntilNextReset(item),
     });
 
     await item.save();
