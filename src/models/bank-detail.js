@@ -38,7 +38,17 @@ const mSchema = mongoose.Schema(
     },
     paymentMethod: {
       type: String,
-      enum: ['ACH', 'CHECK', 'ECHECK', 'PAYPAL', 'WIRE'],
+      enum: [
+        'CASHAPP',
+        'ZELLE',
+        'PAYPAL',
+        'VENMO',
+        'DIRECT_DEPOSIT',
+        'ACH',
+        'CHECK',
+        'ECHECK',
+        'WIRE',
+      ],
       default: 'ACH',
       required: true,
     },

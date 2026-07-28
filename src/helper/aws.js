@@ -120,6 +120,16 @@ exports.addObjectWithKey = (file, folder = '') =>
     );
   });
 
+exports.getSignedObjectUrl = (key, expiresInSeconds = 15 * 60) => {
+  if (!key) return null;
+
+  return s3.getSignedUrl('getObject', {
+    Bucket: aws.s3Bucket,
+    Key: key,
+    Expires: expiresInSeconds,
+  });
+};
+
 exports.removeObject = (name) =>
   new Promise((resolve) => {
     s3.deleteObject(

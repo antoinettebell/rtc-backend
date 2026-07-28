@@ -34,9 +34,9 @@ const normalizeAddOn = (addOn) => {
   if (isPrinterAddOn(name)) {
     return {
       ...source,
-      name: 'Printer',
+      name: 'Bluetooth Order/Receipt Printing',
       priceLabel: source.priceLabel || '$50 one-time fee',
-      description: 'Printer setup add-on for vendor order ticket printing.',
+      description: 'Bluetooth setup for vendor order and receipt printing.',
     };
   }
 
