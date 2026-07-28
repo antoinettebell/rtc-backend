@@ -14,7 +14,7 @@ const {
 } = require('../../helper/vendor-compliance-config');
 const { enqueueComplianceOcr } = require('../../helper/vendor-compliance-ocr-helper');
 const CustomNotification = require('../../helper/custom-notification');
-const { removeObject } = require('../../helper/aws');
+const { getSignedObjectUrl, removeObject } = require('../../helper/aws');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -440,10 +440,19 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
       expiringRequirements.push(requirement.type);
     }
 
+    const accessUrl = document?.file_key
+      ? getSignedObjectUrl(document.file_key)
+      : document?.file_url || null;
+
     return {
       ...requirement,
       status,
-      document,
+      document: document
+        ? {
+            ...document,
+            access_url: accessUrl,
+          }
+        : null,
       days_until_expiration,
     };
   });

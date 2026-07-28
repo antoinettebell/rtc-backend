@@ -1465,6 +1465,12 @@ const getComboChildMenuItem = (subItem) => {
 };
 
 const getComboChildId = (subItem) => {
+  if (subItem?.menuItem && !subItem.menuItem?._id) {
+    return subItem.menuItem?.toString?.() || subItem.menuItem;
+  }
+  if (subItem?.itemId && !subItem.itemId?._id) {
+    return subItem.itemId?.toString?.() || subItem.itemId;
+  }
   const child = getComboChildMenuItem(subItem);
   return child?._id?.toString?.() || child?._id || subItem?._id?.toString?.() || subItem?._id;
 };
@@ -1480,8 +1486,26 @@ const findComboSubItem = (subItems = [], comboMenuItemId) => {
 
 const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName }) => {
   const subItems = Array.isArray(parentMenuItem?.subItem) ? parentMenuItem.subItem : [];
+  const requestedItems = Array.isArray(comboItems) ? comboItems : [];
+  const missingRequiredItem = subItems.find((subItem) => {
+    const requiredId = getComboChildId(subItem)?.toString?.() || getComboChildId(subItem);
+    return !requestedItems.some((comboItem) => {
+      const requestedId =
+        comboItem?.comboMenuItemId?.toString?.() || comboItem?.comboMenuItemId;
+      return requestedId === requiredId;
+    });
+  });
 
-  return comboItems
+  if (missingRequiredItem) {
+    const missingName = getComboChildMenuItem(missingRequiredItem)?.name;
+    throw new Error(
+      `Please complete all included items for the "${itemName}"${
+        missingName ? `, including "${missingName}"` : ''
+      }`
+    );
+  }
+
+  return requestedItems
     .map((comboItem) => {
       const subItemMatch = findComboSubItem(subItems, comboItem.comboMenuItemId);
       if (!subItemMatch) {
@@ -1782,14 +1806,10 @@ exports.validateOrder = async (req, res, next) => {
           // Handle combo items
           let comboItemsWithDetails = [];
           let comboSubtotal = 0;
-          if (
-            itemType === 'COMBO' &&
-            item.comboItems &&
-            item.comboItems.length > 0
-          ) {
+          if (itemType === 'COMBO') {
             comboItemsWithDetails = buildValidatedComboItems({
               parentMenuItem: menuIds[item.menuItemId],
-              comboItems: item.comboItems,
+              comboItems: item.comboItems || [],
               itemName: name,
             });
             comboSubtotal = comboItemsWithDetails.reduce(
@@ -3554,14 +3574,10 @@ exports.add = async (req, res, next) => {
           // Handle combo items
           let comboItemsWithDetails = [];
           let comboSubtotal = 0;
-          if (
-            itemType === 'COMBO' &&
-            item.comboItems &&
-            item.comboItems.length > 0
-          ) {
+          if (itemType === 'COMBO') {
             comboItemsWithDetails = buildValidatedComboItems({
               parentMenuItem: menuIds[item.menuItemId],
-              comboItems: item.comboItems,
+              comboItems: item.comboItems || [],
               itemName: name,
             });
             comboSubtotal = comboItemsWithDetails.reduce(

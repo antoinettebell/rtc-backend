@@ -42,6 +42,103 @@ const getFoodTruckDocumentTypeFromComplianceType = (documentType) => {
   return 'OTHER';
 };
 
+const applyUploadedDocumentToFoodTruck = ({
+  foodTruck,
+  document,
+  documentType,
+  req,
+  url,
+  key,
+}) => {
+  const foodTruckDocumentType =
+    getFoodTruckDocumentTypeFromComplianceType(documentType);
+  foodTruck.documents = (foodTruck.documents || [])
+    .map((existingDocument) => {
+      const sameType =
+        existingDocument?.document_type === foodTruckDocumentType &&
+        existingDocument?.document_status !== 'ARCHIVED';
+
+      if (!sameType) return existingDocument;
+
+      const isUploadedDocument =
+        existingDocument?.compliance_document_id === document.document_id;
+      if (isUploadedDocument) return null;
+
+      const isVerified =
+        existingDocument?.compliance_status === 'VERIFIED' ||
+        existingDocument?.compliance_review_status === 'verified';
+
+      if (!isVerified) return null;
+
+      existingDocument.document_status = 'ARCHIVED';
+      existingDocument.compliance_status = 'ARCHIVED';
+      existingDocument.archived_at = new Date();
+      return existingDocument;
+    })
+    .filter(Boolean);
+  foodTruck.documents.push({
+    title: req.body.title || document.title,
+    document_type: foodTruckDocumentType,
+    file_url: url,
+    file_key: key,
+    original_name: req.file.originalname,
+    mime_type: req.file.mimetype,
+    size_bytes: req.file.size,
+    uploaded_by_user_id: req.user._id,
+    uploaded_at: new Date(),
+    document_status: 'ACTIVE',
+    compliance_status:
+      document.review_status === 'verified' ? 'VERIFIED' : 'PENDING_REVIEW',
+    compliance_document_id: document.document_id,
+    compliance_document_type: document.document_type,
+    compliance_review_status: document.review_status,
+    compliance_ocr_status: document.ocr_status,
+    compliance_extracted_fields: document.extracted_fields || {},
+    compliance_synced_at: new Date(),
+  });
+};
+
+const saveUploadedDocumentToFoodTruck = async ({
+  foodTruckId,
+  document,
+  documentType,
+  req,
+  url,
+  key,
+}) => {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const foodTruck = await FoodTruckService.getByData(
+      { _id: foodTruckId },
+      { singleResult: true }
+    );
+    if (!foodTruck) {
+      const error = new Error('Food truck not found');
+      error.code = 404;
+      throw error;
+    }
+
+    applyUploadedDocumentToFoodTruck({
+      foodTruck,
+      document,
+      documentType,
+      req,
+      url,
+      key,
+    });
+
+    try {
+      await foodTruck.save();
+      return foodTruck;
+    } catch (error) {
+      const isVersionConflict =
+        error?.name === 'VersionError' || error?.constructor?.name === 'VersionError';
+      if (!isVersionConflict || attempt === 1) throw error;
+    }
+  }
+
+  return null;
+};
+
 exports.requirements = async (req, res, next) => {
   try {
     return res.data(
@@ -97,58 +194,20 @@ exports.uploadDocument = async (req, res, next) => {
       fileKey: key,
     });
 
-    const foodTruckDocumentType =
-      getFoodTruckDocumentTypeFromComplianceType(documentType);
-    foodTruck.documents = (foodTruck.documents || [])
-      .map((existingDocument) => {
-        const sameType =
-          existingDocument?.document_type === foodTruckDocumentType &&
-          existingDocument?.document_status !== 'ARCHIVED';
-
-        if (!sameType) return existingDocument;
-
-        const isVerified =
-          existingDocument?.compliance_status === 'VERIFIED' ||
-          existingDocument?.compliance_review_status === 'verified';
-
-        if (!isVerified) return null;
-
-        return {
-          ...existingDocument,
-          document_status: 'ARCHIVED',
-          compliance_status: 'ARCHIVED',
-          archived_at: new Date(),
-        };
-      })
-      .filter(Boolean);
-    foodTruck.documents = [
-      ...(foodTruck.documents || []),
-      {
-        title: req.body.title || document.title,
-        document_type: foodTruckDocumentType,
-        file_url: url,
-        file_key: key,
-        original_name: req.file.originalname,
-        mime_type: req.file.mimetype,
-        size_bytes: req.file.size,
-        uploaded_by_user_id: req.user._id,
-        uploaded_at: new Date(),
-        document_status: 'ACTIVE',
-        compliance_status:
-          document.review_status === 'verified' ? 'VERIFIED' : 'PENDING_REVIEW',
-        compliance_document_id: document.document_id,
-	        compliance_document_type: document.document_type,
-	        compliance_review_status: document.review_status,
-	        compliance_ocr_status: document.ocr_status,
-	        compliance_extracted_fields: document.extracted_fields || {},
-	        compliance_synced_at: new Date(),
-	      },
-    ];
-    await foodTruck.save();
+    const updatedFoodTruck = await saveUploadedDocumentToFoodTruck({
+      foodTruckId: foodTruck._id,
+      document,
+      documentType,
+      req,
+      url,
+      key,
+    });
 
     fs.unlink(req.file.path, () => {});
 
-    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
+    const summary = await VendorComplianceService.calculateComplianceSummary(
+      updatedFoodTruck
+    );
     return res.data(
       { complianceDocument: document, compliance: summary },
       'Compliance document uploaded'

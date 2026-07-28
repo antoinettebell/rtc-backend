@@ -175,7 +175,17 @@ module.exports = {
       // }),
 
       paymentMethod: Joi.string()
-        .valid('ACH', 'CHECK', 'ECHECK', 'PAYPAL', 'WIRE')
+        .valid(
+          'CASHAPP',
+          'ZELLE',
+          'PAYPAL',
+          'VENMO',
+          'DIRECT_DEPOSIT',
+          'ACH',
+          'CHECK',
+          'ECHECK',
+          'WIRE'
+        )
         .optional(),
     }),
   },
