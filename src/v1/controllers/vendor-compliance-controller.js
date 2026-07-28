@@ -155,8 +155,7 @@ exports.requirements = async (req, res, next) => {
 exports.mySummary = async (req, res, next) => {
   try {
     const foodTruck = await getVendorFoodTruck(req.user, req.query.food_truck_id);
-    const summary =
-      await VendorComplianceService.calculateVendorFacingComplianceSummary(foodTruck);
+    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
     return res.data({ compliance: summary }, 'Vendor compliance summary');
   } catch (e) {
     return handleError(e, next);
@@ -166,8 +165,7 @@ exports.mySummary = async (req, res, next) => {
 exports.foodTruckSummary = async (req, res, next) => {
   try {
     const foodTruck = await getVendorFoodTruck(req.user, req.params.foodTruckId);
-    const summary =
-      await VendorComplianceService.calculateVendorFacingComplianceSummary(foodTruck);
+    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
     return res.data({ compliance: summary }, 'Vendor compliance summary');
   } catch (e) {
     return handleError(e, next);
@@ -207,7 +205,7 @@ exports.uploadDocument = async (req, res, next) => {
 
     fs.unlink(req.file.path, () => {});
 
-    const summary = await VendorComplianceService.calculateVendorFacingComplianceSummary(
+    const summary = await VendorComplianceService.calculateComplianceSummary(
       updatedFoodTruck
     );
     return res.data(
@@ -230,8 +228,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
         foodTruck,
         user: req.user,
       });
-    const summary =
-      await VendorComplianceService.calculateVendorFacingComplianceSummary(foodTruck);
+    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
 
     return res.data(
       { complianceDocumentList: documents, compliance: summary },
