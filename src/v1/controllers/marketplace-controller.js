@@ -538,9 +538,8 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   }
   if (['COORDINATOR', 'BOTH'].includes(paymentResponsibility)) {
     const budgetGuestCount =
-      paymentResponsibility === 'BOTH' && cateredVipSectionEnabled
-        ? vipGuestCount
-        : Number(normalized.number_of_guests || 0);
+      Number(normalized.number_of_guests || 0) +
+      (cateredVipSectionEnabled ? vipGuestCount : 0);
     const minimumBudget = budgetGuestCount * 25;
     if (budgetedAmount < minimumBudget) {
       throw buildError(`Budget amount must be at least $${minimumBudget.toFixed(2)} for the paid guest count.`, 400);
@@ -3502,7 +3501,14 @@ exports.updateEvent = async (req, res, next) => {
       );
     }
 
-    return res.data({ marketplaceEvent }, 'Marketplace event updated');
+    const marketplaceEventWithImages = await MarketplaceEventService.getWithImages(
+      marketplaceEvent.event_id
+    );
+
+    return res.data(
+      { marketplaceEvent: marketplaceEventWithImages },
+      'Marketplace event updated'
+    );
   } catch (e) {
     return next(e);
   }
@@ -3565,14 +3571,25 @@ exports.reopenEvent = async (req, res, next) => {
         status: 'REOPENED',
       },
       { existingEvent: event }
-	    );
+    );
+	    const reopenableEventFields = { ...normalizedEvent };
+	    [
+	      '_id',
+	      '__v',
+	      'event_id',
+	      'customer_user_id',
+	      'reopen_count',
+	      'current_submission_round',
+	      'created_at',
+	      'updated_at',
+	    ].forEach((field) => delete reopenableEventFields[field]);
 	    const reopenedAt = new Date();
 	    await archiveMarketplaceSubmissionsForReopen(event.event_id, reopenedAt);
 	    const marketplaceEvent = await MarketplaceEventService.update(
 	      { event_id: req.params.eventId, customer_user_id: req.user._id },
 	      {
 	        $set: {
-	          ...normalizedEvent,
+	          ...reopenableEventFields,
 	          status: 'REOPENED',
 	          closed_at: null,
 	          archived_at: null,
@@ -3585,8 +3602,14 @@ exports.reopenEvent = async (req, res, next) => {
 	      { getNew: true, directApply: true }
 	    );
 	    await notifyVendorsOfEventReopen(marketplaceEvent);
+	    const marketplaceEventWithImages = await MarketplaceEventService.getWithImages(
+	      marketplaceEvent.event_id
+	    );
 
-	    return res.data({ marketplaceEvent }, 'Marketplace event reopened');
+	    return res.data(
+	      { marketplaceEvent: marketplaceEventWithImages },
+	      'Marketplace event reopened'
+	    );
   } catch (e) {
     return next(e);
   }
