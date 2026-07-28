@@ -7,6 +7,35 @@ const {
   commonDatalistModel,
   DietModel,
 } = require('../models');
+const { VENDOR_PLAN_TIERS } = require('./vendor-plan-helper');
+
+const syncVendorPlans = async () => {
+  try {
+    for (const [slug, plan] of Object.entries(VENDOR_PLAN_TIERS)) {
+      await PlanModel.updateOne(
+        { slug },
+        {
+          $set: {
+            name: plan.name,
+            titleColor: plan.titleColor,
+            rate: plan.rate,
+            rateType: plan.rateType,
+            isPopular: plan.isPopular,
+            payoutTimingLabel: plan.payoutTimingLabel,
+            capabilities: plan.capabilities,
+            details: plan.details,
+            deletedAt: null,
+          },
+        },
+        { upsert: true, setDefaultsOnInsert: true }
+      );
+    }
+
+    console.log('============ Vendor plans synchronized ============');
+  } catch (err) {
+    console.error('Error synchronizing vendor plans:', err);
+  }
+};
 
 const addAdminIfNotExist = async () => {
   const sudo = await UserModel.findOne({ userType: 'SUPER_ADMIN' });
@@ -328,6 +357,6 @@ exports.init = () => {
   void meattExistfNotExist();
   void seedMeatWellness();
   void dietsExistfNotExist();
-  // void addPlans();
+  void syncVendorPlans();
   void addAddOns();
 };
