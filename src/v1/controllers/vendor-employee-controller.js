@@ -153,6 +153,9 @@ exports.vendorShiftAction = async (req, res, next) => {
       employeeSession = await EmployeeSessionService.endSession({
         employeeInternalId: employee.employee_internal_id,
       });
+      if (!employeeSession) {
+        return res.error(new Error('No active shift found to end'), 409);
+      }
     } else if (action === 'REOPEN') {
       if (!employee.is_working) {
         return res.error(
@@ -623,6 +626,10 @@ exports.endSession = async (req, res, next) => {
       employeeInternalId: user.employee_internal_id,
     });
 
+    if (!employeeSession) {
+      return res.error(new Error('No active shift found to end'), 409);
+    }
+
     return res.data({ employeeSession }, 'Employee session ended');
   } catch (e) {
     return next(e);
@@ -754,6 +761,9 @@ exports.shiftAction = async (req, res, next) => {
         employeeSessionId: user.employee_session_id,
         employeeInternalId: user.employee_internal_id,
       });
+      if (!employeeSession) {
+        return res.error(new Error('No active shift found to end'), 409);
+      }
     } else {
       return res.error(new Error('Invalid shift action'), 409);
     }
