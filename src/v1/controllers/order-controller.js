@@ -2013,6 +2013,30 @@ exports.validateOrder = async (req, res, next) => {
         }
       });
     } catch (e) {
+      console.error('Order validation failed', {
+        message: e.message,
+        stack: e.stack,
+        foodTruckId: req.body?.foodTruckId,
+        locationId: req.body?.locationId,
+        orderSource: req.body?.orderSource,
+        items: Array.isArray(req.body?.items)
+          ? req.body.items.map((item) => ({
+              menuItemId: item.menuItemId,
+              qty: item.qty,
+              selectedFlavors: item.selectedFlavors,
+              selectedToppings: item.selectedToppings,
+              comboItems: Array.isArray(item.comboItems)
+                ? item.comboItems.map((comboItem) => ({
+                    comboMenuItemId: comboItem.comboMenuItemId,
+                    qty: comboItem.qty,
+                    selectedFlavors: comboItem.selectedFlavors,
+                    selectedToppings: comboItem.selectedToppings,
+                    selectedComboSides: comboItem.selectedComboSides,
+                  }))
+                : [],
+            }))
+          : [],
+      });
       return res.error(new Error(e.message), 409);
     }
 
