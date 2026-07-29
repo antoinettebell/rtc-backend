@@ -26,6 +26,9 @@ const {
   assertVendorPlanCapability,
   normalizeVendorPlan,
 } = require('../../helper/vendor-plan-helper');
+const {
+  getDiscountSourceItem,
+} = require('../../helper/order-discount-helper');
 const { OrderModel } = require('../../models');
 
 const { env } = require('../../config');
@@ -1435,23 +1438,6 @@ const validateComboSideSelections = ({ menuItem, selectedComboSides, itemName })
   }
 
   return selected;
-};
-
-const getDiscountSourceItem = (menuItem) => {
-  const bogoItems = Array.isArray(menuItem?.bogoItems)
-    ? menuItem.bogoItems
-    : [];
-  const sameItemReward = bogoItems.find((item) => item?.isSameItem);
-  const differentItemReward = bogoItems.find((item) => !item?.isSameItem);
-
-  if (
-    sameItemReward ||
-    (!bogoItems.length && Number(menuItem?.discountRules?.discount) > 0)
-  ) {
-    return menuItem;
-  }
-
-  return differentItemReward || menuItem;
 };
 
 const getComboChildMenuItem = (subItem) => {
