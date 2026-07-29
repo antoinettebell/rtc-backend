@@ -44,6 +44,18 @@ const maskPhoneNumber = (value) => {
   return `***${lastFour}`;
 };
 
+const parseTwilioResponse = (responseBody) => {
+  if (!responseBody) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(responseBody);
+  } catch (error) {
+    return { rawBody: responseBody };
+  }
+};
+
 const postTwilioMessage = ({ to, body }) =>
   new Promise((resolve, reject) => {
     const payload = new URLSearchParams({
@@ -71,14 +83,18 @@ const postTwilioMessage = ({ to, body }) =>
           responseBody += chunk;
         });
         res.on('end', () => {
+          const parsedResponse = parseTwilioResponse(responseBody);
           if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(responseBody ? JSON.parse(responseBody) : {});
+            resolve(parsedResponse);
             return;
           }
 
           const error = new Error(`Twilio SMS failed with status ${res.statusCode}`);
           error.statusCode = res.statusCode;
-          error.responseBody = responseBody;
+          error.twilioCode = parsedResponse.code;
+          error.twilioMessage = parsedResponse.message;
+          error.moreInfo = parsedResponse.more_info;
+          error.responseBody = parsedResponse.rawBody;
           reject(error);
         });
       }
@@ -109,17 +125,34 @@ exports.sendSms = async ({ to, body, metadata = {} }) => {
   }
 
   try {
-    return await postTwilioMessage({ to: normalizedTo, body });
+    const result = await postTwilioMessage({ to: normalizedTo, body });
+    console.log('Twilio SMS accepted', {
+      ...metadata,
+      messageSid: result.sid,
+      messageStatus: result.status,
+      maskedTo: maskPhoneNumber(normalizedTo),
+    });
+    return result;
   } catch (error) {
     console.error('Twilio SMS send failed', {
       ...metadata,
       statusCode: error.statusCode,
+      twilioCode: error.twilioCode,
+      twilioMessage: error.twilioMessage,
+      moreInfo: error.moreInfo,
       message: error.message,
     });
-    return { skipped: false, failed: true, reason: error.message };
+    return {
+      skipped: false,
+      failed: true,
+      reason: error.message,
+      statusCode: error.statusCode,
+      twilioCode: error.twilioCode,
+    };
   }
 };
 
 exports.normalizePhoneNumber = normalizePhoneNumber;
 exports.maskPhoneNumber = maskPhoneNumber;
 exports.isConfigured = isConfigured;
+exports.parseTwilioResponse = parseTwilioResponse;
