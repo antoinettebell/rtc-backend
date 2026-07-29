@@ -1488,11 +1488,10 @@ const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName })
   const subItems = Array.isArray(parentMenuItem?.subItem) ? parentMenuItem.subItem : [];
   const requestedItems = Array.isArray(comboItems) ? comboItems : [];
   const missingRequiredItem = subItems.find((subItem) => {
-    const requiredId = getComboChildId(subItem)?.toString?.() || getComboChildId(subItem);
     return !requestedItems.some((comboItem) => {
       const requestedId =
         comboItem?.comboMenuItemId?.toString?.() || comboItem?.comboMenuItemId;
-      return requestedId === requiredId;
+      return Boolean(findComboSubItem([subItem], requestedId));
     });
   });
 
