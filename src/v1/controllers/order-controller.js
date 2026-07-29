@@ -1464,24 +1464,53 @@ const getComboChildMenuItem = (subItem) => {
   return subItem;
 };
 
-const getComboChildId = (subItem) => {
-  if (subItem?.menuItem && !subItem.menuItem?._id) {
-    return subItem.menuItem?.toString?.() || subItem.menuItem;
+const normalizeComboItemId = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return null;
   }
-  if (subItem?.itemId && !subItem.itemId?._id) {
-    return subItem.itemId?.toString?.() || subItem.itemId;
+
+  if (typeof value === 'object') {
+    if (value._id && value._id !== value) {
+      return normalizeComboItemId(value._id);
+    }
+    if (value.$oid) {
+      return String(value.$oid);
+    }
   }
-  const child = getComboChildMenuItem(subItem);
-  return child?._id?.toString?.() || child?._id || subItem?._id?.toString?.() || subItem?._id;
+
+  const normalized = value?.toString?.() || value;
+  return normalized ? String(normalized) : null;
 };
 
+const getComboCandidateIds = (subItem) =>
+  [
+    subItem?.comboMenuItemId,
+    subItem?.menuItemId,
+    subItem?.menuItem?._id,
+    typeof subItem?.menuItem === 'object' ? null : subItem?.menuItem,
+    subItem?.itemId?._id,
+    typeof subItem?.itemId === 'object' ? null : subItem?.itemId,
+    subItem?._id,
+  ]
+    .map(normalizeComboItemId)
+    .filter(Boolean);
+
+const getComboChildId = (subItem) => getComboCandidateIds(subItem)[0] || null;
+
 const findComboSubItem = (subItems = [], comboMenuItemId) => {
-  const requestedId = comboMenuItemId?.toString?.() || comboMenuItemId;
-  return subItems.find((sub) => {
-    const wrapperId = sub?._id?.toString?.() || sub?._id;
-    const childId = getComboChildId(sub);
-    return wrapperId === requestedId || childId === requestedId;
-  });
+  const requestedIds = new Set(
+    getComboCandidateIds(
+      typeof comboMenuItemId === 'object'
+        ? comboMenuItemId
+        : { comboMenuItemId }
+    )
+  );
+
+  return subItems.find((subItem) =>
+    getComboCandidateIds(subItem).some((candidateId) =>
+      requestedIds.has(candidateId)
+    )
+  );
 };
 
 const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName }) => {
@@ -1528,8 +1557,10 @@ const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName })
             })
           : [];
 
+      let selectedOptionCost = 0;
+
       if (childMenuItem?.hasFlavors) {
-        validateSelectionsAndGetCost({
+        selectedOptionCost += validateSelectionsAndGetCost({
           menuItem: childMenuItem,
           selectedOptions: selectedFlavors,
           type: 'flavor',
@@ -1539,7 +1570,7 @@ const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName })
       }
 
       if (childMenuItem?.hasToppings) {
-        validateSelectionsAndGetCost({
+        selectedOptionCost += validateSelectionsAndGetCost({
           menuItem: childMenuItem,
           selectedOptions: selectedToppings,
           type: 'topping',
@@ -1553,7 +1584,8 @@ const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName })
         _id: getComboChildId(subItemMatch),
         comboMenuItemId: getComboChildId(subItemMatch),
         qty: comboItem.qty || 1,
-        total: 0,
+        total:
+          selectedOptionCost * Math.max(1, Number(comboItem.qty) || 1),
         selectedFlavors: childMenuItem?.hasFlavors ? selectedFlavors : [],
         selectedToppings: childMenuItem?.hasToppings ? selectedToppings : [],
         selectedComboSides,
@@ -1837,6 +1869,13 @@ exports.validateOrder = async (req, res, next) => {
                   itemName: discountSourceItem?.name || name,
                 })
               : [];
+          selectedDiscountOptionsCost += selectedDiscountSubItems.reduce(
+            (sum, comboItem) =>
+              sum +
+              (Number(comboItem.total) || 0) /
+                Math.max(1, Number(comboItem.qty) || 1),
+            0
+          );
           if (selectedDiscountSubItems.length > 0) {
             updatedFullMenuItemData.selectedDiscountSubItems =
               selectedDiscountSubItems;
@@ -1936,6 +1975,8 @@ exports.validateOrder = async (req, res, next) => {
               itemTotal = mainSubtotal;
             }
           }
+
+          itemTotal += comboSubtotal;
 
           menuItems.push({
             menuItemId: item.menuItemId,
@@ -3604,6 +3645,13 @@ exports.add = async (req, res, next) => {
                   itemName: discountSourceItem?.name || name,
                 })
               : [];
+          selectedDiscountOptionsCost += selectedDiscountSubItems.reduce(
+            (sum, comboItem) =>
+              sum +
+              (Number(comboItem.total) || 0) /
+                Math.max(1, Number(comboItem.qty) || 1),
+            0
+          );
           if (selectedDiscountSubItems.length > 0) {
             updatedFullMenuItemData.selectedDiscountSubItems =
               selectedDiscountSubItems;
@@ -3687,6 +3735,8 @@ exports.add = async (req, res, next) => {
                 (price * 0.5 + selectedDiscountOptionsCost) * item.qty;
             }
           }
+
+          itemTotal += comboSubtotal;
 
           menuItems.push({
             menuItemId: item.menuItemId,
