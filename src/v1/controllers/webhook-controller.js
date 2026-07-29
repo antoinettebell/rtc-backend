@@ -192,6 +192,29 @@ const isMinuteInsideScheduleWindow = ({ nowMinutes, startTime, endTime }) => {
   return normalizedNowMinutes >= effectiveStart && normalizedNowMinutes < effectiveEnd;
 };
 
+const isScheduleSlotActive = ({ slot, today, nowMinutes }) => {
+  const startMinutes = parseTimeToMinutes(slot?.startTime);
+  const endMinutes = parseTimeToMinutes(slot?.endTime);
+  if (startMinutes === null || endMinutes === null) {
+    return false;
+  }
+
+  const todayIndex = dayKeys.indexOf(today);
+  const previousDay = dayKeys[(todayIndex + dayKeys.length - 1) % dayKeys.length];
+  const crossesMidnight = endMinutes <= startMinutes;
+  const belongsToCurrentWindow =
+    slot.day === today || (crossesMidnight && slot.day === previousDay);
+
+  return (
+    belongsToCurrentWindow &&
+    isMinuteInsideScheduleWindow({
+      nowMinutes,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+    })
+  );
+};
+
 const getOpenLocationId = (openLocation) =>
   openLocation.locationId?.toString() ||
   openLocation.location_id?.toString() ||
@@ -275,15 +298,7 @@ const reconcileFoodTruckWeeklySchedule = (
       }
 
       managedLocationIds.add(locationId);
-      if (slot.day !== today) {
-        return;
-      }
-
-      const isActive = isMinuteInsideScheduleWindow({
-        nowMinutes,
-        startTime: slot.startTime,
-        endTime: slot.endTime,
-      });
+      const isActive = isScheduleSlotActive({ slot, today, nowMinutes });
 
       if (isActive) {
         activeLocationIds.add(locationId);
@@ -325,7 +340,12 @@ const reconcileFoodTruckWeeklySchedule = (
     });
 
     (foodTruck.availability || [])
-      .filter((slot) => slot.day === today && slot.locationId && slot.available)
+      .filter(
+        (slot) =>
+          slot.locationId &&
+          slot.available &&
+          isScheduleSlotActive({ slot, today, nowMinutes })
+      )
       .forEach((slot) => {
         const locationId = slot.locationId?.toString();
         const truckUnitId = getScheduleTruckUnitId(foodTruck, slot);
@@ -412,6 +432,10 @@ const reconcileFoodTruckWeeklySchedule = (
     managedLocations: managedLocationIds.size,
   };
 };
+
+// Also reconcile on vendor-facing reads and manual status changes so ordering
+// state does not depend on the maintenance webhook having run recently.
+exports.reconcileFoodTruckWeeklySchedule = reconcileFoodTruckWeeklySchedule;
 
 exports.vendorDailyLocationCheckReminders = async (req, res) => {
   if (!authorizeBackendWebhook(req, res)) {

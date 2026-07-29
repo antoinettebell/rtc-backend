@@ -25,6 +25,9 @@ const {
   getNextVendorScheduleResetAt,
 } = require('../../helper/vendor-schedule-timezone');
 const VendorComplianceService = require('../services/vendor-compliance-service');
+const {
+  reconcileFoodTruckWeeklySchedule,
+} = require('./webhook-controller');
 const EncryptionService = require('../../helper/encryption');
 const { maskTaxId } = require('../../helper/event-coordinator-profile');
 const { addObjectWithKey, removeObject } = require('../../helper/aws');
@@ -826,6 +829,15 @@ exports.list = async (req, res, next) => {
         return res.error(new Error('No food truck found'), 409);
       }
 
+      const scheduleResult = reconcileFoodTruckWeeklySchedule(
+        item,
+        new Date(),
+        item.schedule_time_zone || DEFAULT_VENDOR_SCHEDULE_TIME_ZONE
+      );
+      if (scheduleResult.changed) {
+        await item.save();
+      }
+
       if (item) {
         item = item.toObject();
       }
@@ -1434,6 +1446,12 @@ exports.toggleLocationOrdering = async (req, res, next) => {
 
     ensureDefaultTruckUnits(item);
 
+    reconcileFoodTruckWeeklySchedule(
+      item,
+      new Date(),
+      item.schedule_time_zone || DEFAULT_VENDOR_SCHEDULE_TIME_ZONE
+    );
+
     if (
       user.userType === 'EMPLOYEE' &&
       (item._id.toString() !== user.food_truck_id?.toString() ||
@@ -1460,24 +1478,19 @@ exports.toggleLocationOrdering = async (req, res, next) => {
       return res.error(new Error('Location not found'), 404);
     }
 
-    if (isOrderingOpen) {
-      return res.error(
-        new Error(
-          'To reopen, please update your weekly schedule. Manual closing is allowed for today, but reopening must be scheduled.'
-        ),
-        409
-      );
-    }
-
     setTruckUnitLocationOpen({
       foodTruck: item,
       truckUnitId: truck_unit_id || user.assigned_truck_unit_id || null,
       locationId,
-      isOpen: false,
+      isOpen: isOrderingOpen,
       statusSource: 'MANUAL',
       scheduleOverrideReason:
         schedule_override_reason ||
-        (user.userType === 'SUPER_ADMIN' ? 'ADMIN_OVERRIDE' : 'CLOSING_EARLY'),
+        (user.userType === 'SUPER_ADMIN'
+          ? 'ADMIN_OVERRIDE'
+          : isOrderingOpen
+          ? 'OPENING_EARLY'
+          : 'CLOSING_EARLY'),
       scheduleOverrideUntil: getScheduleOverrideUntilNextReset(item),
     });
 
