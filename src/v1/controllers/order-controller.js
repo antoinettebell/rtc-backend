@@ -1480,8 +1480,25 @@ const findComboSubItem = (subItems = [], comboMenuItemId) => {
 
 const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName }) => {
   const subItems = Array.isArray(parentMenuItem?.subItem) ? parentMenuItem.subItem : [];
+  const requestedItems = Array.isArray(comboItems) ? comboItems : [];
+  const missingRequiredItem = subItems.find((subItem) => {
+    return !requestedItems.some((comboItem) => {
+      const requestedId =
+        comboItem?.comboMenuItemId?.toString?.() || comboItem?.comboMenuItemId;
+      return Boolean(findComboSubItem([subItem], requestedId));
+    });
+  });
 
-  return comboItems
+  if (missingRequiredItem) {
+    const missingName = getComboChildMenuItem(missingRequiredItem)?.name;
+    throw new Error(
+      `Please complete all included items for the "${itemName}"${
+        missingName ? `, including "${missingName}"` : ''
+      }`
+    );
+  }
+
+  return requestedItems
     .map((comboItem) => {
       const subItemMatch = findComboSubItem(subItems, comboItem.comboMenuItemId);
       if (!subItemMatch) {
