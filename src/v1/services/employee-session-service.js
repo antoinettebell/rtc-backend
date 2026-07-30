@@ -5,6 +5,7 @@ const {
   EmployeeRefundCancelRequestModel,
 } = require('../../models');
 const { BaseService } = require('../../common-services');
+const { getOperationalDayKey } = require('../../helper/employee-operational-day-helper');
 
 const toNumber = (value) => {
   const amount = Number(value);
@@ -192,10 +193,18 @@ class EmployeeSessionService extends BaseService {
     );
   }
 
-  async startSessionForEmployee({ employee, foodTruck, assignedLocation }) {
+  async startSessionForEmployee({
+    employee,
+    foodTruck,
+    assignedLocation,
+    isVendorOverride = false,
+    overrideReason = null,
+    approvedByUserId = null,
+  }) {
     await this.endActiveSessions(employee.employee_internal_id);
 
     const now = new Date();
+    const timeZone = foodTruck?.schedule_time_zone || 'America/New_York';
     return this.create({
       employee_internal_id: employee.employee_internal_id,
       vendor_user_id: employee.vendor_user_id,
@@ -213,9 +222,34 @@ class EmployeeSessionService extends BaseService {
       gross_hours_worked: null,
       net_hours_worked: null,
       work_date_key: getWorkDateKey(now),
+      operational_day_key: getOperationalDayKey(now, timeZone),
+      time_zone: timeZone,
+      is_vendor_override: isVendorOverride,
+      override_reason: overrideReason,
+      override_approved_by_user_id: approvedByUserId,
+      override_approved_at: isVendorOverride ? now : null,
       shift_status: 'STARTED',
       is_active: true,
     });
+  }
+
+  async getLatestOperationalDaySession(employeeInternalId, foodTruckId, timeZone) {
+    const operationalDayKey = getOperationalDayKey(new Date(), timeZone);
+    const keyedSession = await Model.findOne({
+      employee_internal_id: employeeInternalId,
+      food_truck_id: foodTruckId,
+      operational_day_key: operationalDayKey,
+    }).sort({ started_at: -1 }).lean();
+    if (keyedSession) return keyedSession;
+
+    const legacySessions = await Model.find({
+      employee_internal_id: employeeInternalId,
+      food_truck_id: foodTruckId,
+      operational_day_key: null,
+    }).sort({ started_at: -1 }).limit(10).lean();
+    return legacySessions.find(
+      (session) => getOperationalDayKey(session.started_at, timeZone) === operationalDayKey
+    ) || null;
   }
 
   async touchSession(employeeSessionId, employeeInternalId) {
@@ -279,33 +313,6 @@ class EmployeeSessionService extends BaseService {
       .lean();
   }
 
-  async reopenLatestEndedSession(employeeInternalId) {
-    const session = await this.getLatestCurrentDaySession(employeeInternalId);
-    if (!session || session.is_active) {
-      return session;
-    }
-
-    const now = new Date();
-    return Model.findOneAndUpdate(
-      { _id: session._id },
-      {
-        $set: {
-          ended_at: null,
-          last_active_at: now,
-          break_started_at: null,
-          break_ended_at: null,
-          gross_work_minutes: null,
-          net_work_minutes: null,
-          gross_hours_worked: null,
-          net_hours_worked: null,
-          shift_status: 'STARTED',
-          is_active: true,
-        },
-      },
-      { new: true }
-    );
-  }
-
   async getActiveSession(employeeSessionId, employeeInternalId) {
     if (!employeeSessionId && !employeeInternalId) {
       return null;
@@ -343,7 +350,7 @@ class EmployeeSessionService extends BaseService {
 
     if (!session) {
       const error = new Error(
-        'Employee session is not active. Please go on duty before creating orders.'
+        'Your shift has ended. Please see your manager to be clocked back in.'
       );
       error.code = 403;
       throw error;
@@ -766,6 +773,11 @@ class EmployeeSessionService extends BaseService {
 	          (item) => item.employee_internal_id === employee.employee_internal_id
 	        );
 	        const shiftSummary = summarizeSessions(employeeSessions);
+	        const timeZone = foodTruck.schedule_time_zone || 'America/New_York';
+	        const currentOperationalDayKey = getOperationalDayKey(now, timeZone);
+	        const sessionOperationalDayKey = session
+	          ? session.operational_day_key || getOperationalDayKey(session.started_at, timeZone)
+	          : null;
 		        const assignedLocation =
 	          locationsById[employee.assigned_location_id?.toString()] || null;
 	        const assignedTruckUnit =
@@ -795,6 +807,15 @@ class EmployeeSessionService extends BaseService {
             started_at: session?.started_at || null,
             ended_at: session?.ended_at || null,
             is_active: !!session?.is_active,
+            operational_day_key: sessionOperationalDayKey,
+            can_override_clock_in:
+              !session?.is_active &&
+              !!session?.ended_at &&
+              sessionOperationalDayKey === currentOperationalDayKey,
+            is_vendor_override: !!session?.is_vendor_override,
+            override_reason: session?.override_reason || null,
+            override_approved_by_user_id:
+              session?.override_approved_by_user_id || null,
           },
           metrics: {
             orders_processed: filteredOrders.length,
@@ -854,7 +875,7 @@ class EmployeeSessionService extends BaseService {
       .sort({ started_at: -1 })
 	      .limit(100)
 	      .select(
-	        'employee_session_id started_at ended_at last_active_at shift_status is_active total_break_minutes gross_work_minutes net_work_minutes gross_hours_worked net_hours_worked work_date_key'
+	        'employee_session_id started_at ended_at last_active_at shift_status is_active total_break_minutes gross_work_minutes net_work_minutes gross_hours_worked net_hours_worked work_date_key operational_day_key time_zone is_vendor_override override_reason override_approved_by_user_id override_approved_at'
 	      )
 	      .lean();
 	  }
@@ -880,4 +901,5 @@ class EmployeeSessionService extends BaseService {
 	  }
 	}
 
-module.exports = new EmployeeSessionService();
+const employeeSessionService = new EmployeeSessionService();
+module.exports = employeeSessionService;
