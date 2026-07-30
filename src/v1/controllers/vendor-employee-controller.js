@@ -157,13 +157,6 @@ exports.vendorShiftAction = async (req, res, next) => {
         return res.error(new Error('No active shift found to end'), 409);
       }
     } else if (action === 'OVERRIDE_START') {
-      if (!employee.is_working) {
-        return res.error(
-          new Error('Employee must be marked Working before overriding clock-in'),
-          403
-        );
-      }
-
       const latestSession = await EmployeeSessionService.getLatestOperationalDaySession(
         employee.employee_internal_id,
         employee.food_truck_id,
@@ -182,6 +175,10 @@ exports.vendorShiftAction = async (req, res, next) => {
         overrideReason: reason,
         approvedByUserId: user._id,
       });
+      if (!employee.is_working) {
+        employee.is_working = true;
+        await employee.save();
+      }
     } else {
       return res.error(new Error('Invalid shift action'), 409);
     }
@@ -718,6 +715,9 @@ exports.shiftAction = async (req, res, next) => {
           ),
           403
         );
+      }
+      if (latestSession?.is_active) {
+        return res.error(new Error('Employee shift is already active'), 409);
       }
 
       employeeSession = await EmployeeSessionService.startSessionForEmployee({
