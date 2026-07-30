@@ -87,6 +87,16 @@ const mSchema = mongoose.Schema(
       default: null,
       index: true,
     },
+    operational_day_key: { type: String, default: null, index: true },
+    time_zone: { type: String, default: null },
+    is_vendor_override: { type: Boolean, default: false, index: true },
+    override_reason: { type: String, default: null },
+    override_approved_by_user_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'users',
+      default: null,
+    },
+    override_approved_at: { type: Date, default: null },
     break_count: {
       type: Number,
       default: 0,
@@ -118,6 +128,7 @@ mSchema.index(
     partialFilterExpression: { is_active: true },
   }
 );
+mSchema.index({ employee_internal_id: 1, food_truck_id: 1, operational_day_key: 1 });
 
 module.exports = mongoose.model(
   'employee-sessions',

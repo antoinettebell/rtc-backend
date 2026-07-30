@@ -3,7 +3,17 @@
  */
 const jwt = require('jsonwebtoken');
 const { JWT } = require('../config');
-const { UserModel: Model, VendorEmployeeModel } = require('../models');
+const {
+  UserModel: Model,
+  VendorEmployeeModel,
+  EmployeeSessionModel,
+} = require('../models');
+
+const EMPLOYEE_SHIFT_EXEMPT_ROUTES = [
+  '/vendor-employee/dashboard',
+  '/vendor-employee/session/action',
+  '/vendor-employee/session/end',
+];
 
 const IGNORE_ROUTES = [
   '/public/food-truck-filter',
@@ -63,12 +73,28 @@ const Authenticate = async (req, res, next) => {
         throw customError;
       }
 
+      const activeSession = await EmployeeSessionModel.findOne({
+        employee_internal_id: employee.employee_internal_id,
+        food_truck_id: employee.food_truck_id,
+        is_active: true,
+        shift_status: { $in: ['STARTED', 'ON_BREAK'] },
+      }).sort({ started_at: -1 }).lean();
+      const isShiftExempt = EMPLOYEE_SHIFT_EXEMPT_ROUTES.some((route) =>
+        req.originalUrl.includes(route)
+      );
+      if (!activeSession && !isShiftExempt) {
+        customError.code = 403;
+        customError.message =
+          'Your shift has ended. Please see your manager to be clocked back in.';
+        throw customError;
+      }
+
       req.user = {
         _id: employee._id,
         userType: 'EMPLOYEE',
         role: 'EMPLOYEE',
         employee_internal_id: employee.employee_internal_id,
-        employee_session_id: verifyToken.employee_session_id,
+        employee_session_id: activeSession?.employee_session_id || null,
         employee_login_id: employee.employee_login_id,
         first_name: employee.first_name,
         last_name: employee.last_name,
@@ -83,6 +109,7 @@ const Authenticate = async (req, res, next) => {
         assigned_location_id: employee.assigned_location_id,
         assigned_truck_unit_id: employee.assigned_truck_unit_id || null,
         is_working: !!employee.is_working,
+        is_shift_active: !!activeSession,
         authToken: authorization,
       };
       next();

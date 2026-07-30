@@ -151,7 +151,12 @@ module.exports = {
       id: Joi.string().trim().required(),
     }),
     body: Joi.object({
-      action: Joi.string().trim().uppercase().valid('END', 'REOPEN').required(),
+      action: Joi.string().trim().uppercase().valid('END', 'OVERRIDE_START').required(),
+      reason: Joi.string().trim().max(500).when('action', {
+        is: 'OVERRIDE_START',
+        then: Joi.required(),
+        otherwise: Joi.allow(null, ''),
+      }),
     }),
   },
 

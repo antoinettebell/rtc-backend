@@ -124,7 +124,7 @@ exports.vendorShiftAction = async (req, res, next) => {
   try {
     const {
       params: { id },
-      body: { action },
+      body: { action, reason },
       user,
     } = req;
 
@@ -156,21 +156,32 @@ exports.vendorShiftAction = async (req, res, next) => {
       if (!employeeSession) {
         return res.error(new Error('No active shift found to end'), 409);
       }
-    } else if (action === 'REOPEN') {
+    } else if (action === 'OVERRIDE_START') {
       if (!employee.is_working) {
         return res.error(
-          new Error('Employee must be marked Working before reopening a shift'),
+          new Error('Employee must be marked Working before overriding clock-in'),
           403
         );
       }
 
-      employeeSession = await EmployeeSessionService.reopenLatestEndedSession(
-        employee.employee_internal_id
+      const latestSession = await EmployeeSessionService.getLatestOperationalDaySession(
+        employee.employee_internal_id,
+        employee.food_truck_id,
+        foodTruck.schedule_time_zone || 'America/New_York'
       );
-
-      if (!employeeSession) {
-        return res.error(new Error('No ended shift found to reopen'), 404);
+      if (!latestSession?.ended_at || latestSession.is_active) {
+        return res.error(new Error('No clocked-out shift exists for this operational day'), 409);
       }
+      employeeSession = await EmployeeSessionService.startSessionForEmployee({
+        employee,
+        foodTruck,
+        assignedLocation: (foodTruck.locations || []).find(
+          (location) => location._id?.toString() === employee.assigned_location_id?.toString()
+        ),
+        isVendorOverride: true,
+        overrideReason: reason,
+        approvedByUserId: user._id,
+      });
     } else {
       return res.error(new Error('Invalid shift action'), 409);
     }
@@ -700,13 +711,15 @@ exports.shiftAction = async (req, res, next) => {
       }
 
       const latestSession =
-        await EmployeeSessionService.getLatestCurrentDaySession(
-          employee.employee_internal_id
+        await EmployeeSessionService.getLatestOperationalDaySession(
+          employee.employee_internal_id,
+          employee.food_truck_id,
+          foodTruck.schedule_time_zone || 'America/New_York'
         );
       if (latestSession?.ended_at && !latestSession?.is_active) {
         return res.error(
           new Error(
-            'This shift has already been ended. Ask the vendor to clock you back in.'
+            'Your shift has ended. Please see your manager to be clocked back in.'
           ),
           403
         );
