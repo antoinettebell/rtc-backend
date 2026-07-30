@@ -1,6 +1,12 @@
 const getOperationalDayKey = (value = new Date(), timeZone = 'America/New_York') => {
+  let safeTimeZone = timeZone || 'America/New_York';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: safeTimeZone }).format();
+  } catch (error) {
+    safeTimeZone = 'America/New_York';
+  }
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+    timeZone: safeTimeZone, year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', hourCycle: 'h23',
   }).formatToParts(new Date(value)).reduce((result, part) => {
     if (part.type !== 'literal') result[part.type] = part.value;

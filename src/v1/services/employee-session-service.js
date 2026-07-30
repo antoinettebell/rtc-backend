@@ -201,7 +201,15 @@ class EmployeeSessionService extends BaseService {
     overrideReason = null,
     approvedByUserId = null,
   }) {
-    await this.endActiveSessions(employee.employee_internal_id);
+    const existingActiveSession = await this.getActiveSession(
+      null,
+      employee.employee_internal_id
+    );
+    if (existingActiveSession) {
+      const error = new Error('Employee shift is already active');
+      error.code = 409;
+      throw error;
+    }
 
     const now = new Date();
     const timeZone = foodTruck?.schedule_time_zone || 'America/New_York';
@@ -452,7 +460,11 @@ class EmployeeSessionService extends BaseService {
     );
     const latestSession =
       activeSession ||
-      (await this.getLatestCurrentDaySession(user.employee_internal_id));
+      (await this.getLatestOperationalDaySession(
+        user.employee_internal_id,
+        user.food_truck_id,
+        foodTruck?.schedule_time_zone || 'America/New_York'
+      ));
 
     const [todayOrders, requests, todayShiftSummary, weekShiftSummary] = await Promise.all([
       OrderModel.find({

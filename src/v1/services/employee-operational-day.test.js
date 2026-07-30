@@ -25,5 +25,9 @@ assert.strictEqual(
   getOperationalDayKey('2026-11-01T09:00:00Z', 'America/New_York'),
   '2026-11-01'
 );
+assert.strictEqual(
+  getOperationalDayKey('2026-07-28T08:00:00Z', 'Not/A_Timezone'),
+  '2026-07-28'
+);
 
 console.log('employee operational-day tests passed');
