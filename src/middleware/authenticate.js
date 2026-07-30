@@ -82,6 +82,15 @@ const Authenticate = async (req, res, next) => {
       const isShiftExempt = EMPLOYEE_SHIFT_EXEMPT_ROUTES.some((route) =>
         req.originalUrl.includes(route)
       );
+      if (
+        activeSession?.shift_status === 'ON_BREAK' &&
+        !isShiftExempt
+      ) {
+        customError.code = 403;
+        customError.message =
+          'Your shift is paused for break. Please resume your shift to log back in.';
+        throw customError;
+      }
       if (!activeSession && !isShiftExempt) {
         customError.code = 403;
         customError.message =
