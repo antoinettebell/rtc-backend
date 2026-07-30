@@ -21,7 +21,8 @@ class OrderService extends BaseService {
     search,
     id,
     orderStatus = null,
-    advance = undefined
+    advance = undefined,
+    orderView = null
   ) {
     const skip = (+page - 1) * limit;
     let q = {};
@@ -52,7 +53,20 @@ class OrderService extends BaseService {
       q['_id'] = new mongoose.Types.ObjectId(id);
     }
     if (orderStatus && orderStatus.length) {
-      q['orderStatus'] = { $in: orderStatus };
+      if (orderView === 'past') {
+        q.$and = q.$and || [];
+        q.$and.push({
+          $or: [
+            { orderStatus: { $in: orderStatus } },
+            { paymentStatus: 'REFUNDED' },
+          ],
+        });
+      } else {
+        q['orderStatus'] = { $in: orderStatus };
+      }
+    }
+    if (orderView === 'active') {
+      q.paymentStatus = { $ne: 'REFUNDED' };
     }
     if (
       !id &&

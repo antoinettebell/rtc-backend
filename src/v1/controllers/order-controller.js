@@ -2965,7 +2965,14 @@ exports.refundPosOrder = async (req, res, next) => {
 exports.list = async (req, res, next) => {
   try {
     let {
-      query: { limit = 10, page = 1, search, orderStatus, advance },
+      query: {
+        limit = 10,
+        page = 1,
+        search,
+        orderStatus,
+        advance,
+        orderView,
+      },
       params: { id: _id },
       user,
     } = req;
@@ -3005,6 +3012,10 @@ exports.list = async (req, res, next) => {
       }
     }
 
+    if (orderView && !['active', 'past'].includes(orderView)) {
+      return res.error(new Error('Invalid "orderView"'), 409);
+    }
+
     const { data, total } = await Service.getWithAllDetails(
       limit,
       page,
@@ -3012,7 +3023,8 @@ exports.list = async (req, res, next) => {
       search,
       null,
       orderStatus,
-      advance
+      advance,
+      orderView
     );
 
     return res.data(
