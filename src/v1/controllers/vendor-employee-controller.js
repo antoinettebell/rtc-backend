@@ -120,6 +120,52 @@ exports.shiftHistory = async (req, res, next) => {
   }
 };
 
+exports.updateShiftHistory = async (req, res, next) => {
+  try {
+    const { id, sessionId } = req.params;
+    const employee = await Service.getByData(
+      { _id: id, vendor_user_id: req.user._id },
+      { singleResult: true }
+    );
+    if (!employee) return res.error(new Error('Employee not found'), 404);
+
+    const session = await EmployeeSessionService.updateCompletedTimecard({
+      foodTruckId: employee.food_truck_id,
+      employeeInternalId: employee.employee_internal_id,
+      sessionId,
+      vendorUserId: req.user._id,
+      startedAt: req.body.started_at,
+      endedAt: req.body.ended_at,
+      totalBreakMinutes: req.body.total_break_minutes,
+      reason: req.body.reason,
+    });
+    return res.data({ session }, 'Employee timecard updated');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.archiveShiftHistory = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const employee = await Service.getByData(
+      { _id: id, vendor_user_id: req.user._id },
+      { singleResult: true }
+    );
+    if (!employee) return res.error(new Error('Employee not found'), 404);
+
+    const result = await EmployeeSessionService.archiveCompletedTimecards({
+      foodTruckId: employee.food_truck_id,
+      employeeInternalId: employee.employee_internal_id,
+      sessionIds: req.body.session_ids,
+      vendorUserId: req.user._id,
+    });
+    return res.data(result, 'Employee timecards archived');
+  } catch (e) {
+    return next(e);
+  }
+};
+
 exports.vendorShiftAction = async (req, res, next) => {
   try {
     const {

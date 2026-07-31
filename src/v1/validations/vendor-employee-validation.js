@@ -146,6 +146,26 @@ module.exports = {
     }),
   },
 
+  updateShiftHistory: {
+    params: Joi.object({
+      id: Joi.string().trim().required(),
+      sessionId: Joi.string().trim().required(),
+    }),
+    body: Joi.object({
+      started_at: Joi.date().iso().required(),
+      ended_at: Joi.date().iso().required(),
+      total_break_minutes: Joi.number().min(0).required(),
+      reason: Joi.string().trim().min(3).max(500).required(),
+    }),
+  },
+
+  archiveShiftHistory: {
+    params: Joi.object({ id: Joi.string().trim().required() }),
+    body: Joi.object({
+      session_ids: Joi.array().items(Joi.string().trim()).min(1).required(),
+    }),
+  },
+
   vendorShiftAction: {
     params: Joi.object({
       id: Joi.string().trim().required(),
