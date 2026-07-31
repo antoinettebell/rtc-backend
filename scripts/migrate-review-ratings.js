@@ -93,8 +93,8 @@ const run = async () => {
     );
   }
 
-  await ReviewModel.syncIndexes();
-  await ReviewTokenModel.syncIndexes();
+  await ReviewModel.createIndexes();
+  await ReviewTokenModel.createIndexes();
   console.log('Review migration complete', {
     reviewsBackfilled: statusResult.modifiedCount,
     vendorsRated: summaries.length,

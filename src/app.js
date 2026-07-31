@@ -10,6 +10,8 @@ const cors = require('cors');
 const app = express();
 const { validatePublicReviewUrl } = require('./helper/review-url-helper');
 
+app.set('trust proxy', 'loopback');
+
 if (!validatePublicReviewUrl()) {
   console.error(
     'PUBLIC_REVIEW_URL is missing or invalid; completed-order review SMS links are disabled.'
