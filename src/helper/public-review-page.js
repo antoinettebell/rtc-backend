@@ -31,6 +31,10 @@ const PUBLIC_REVIEW_HTML = `<!doctype html>
     <div class="brand">ROUND DA' CORNER</div>
     <div id="loading" class="message">Loading your review…</div>
     <div id="error" class="message hidden" role="alert"></div>
+    <div id="complete" class="message hidden" role="status">
+      <h1>Thank you!</h1>
+      <p>Your review has been submitted. You may close this window.</p>
+    </div>
     <div id="form" class="hidden">
       <div class="vendor">
         <img id="logo" alt="" class="hidden">
@@ -48,13 +52,12 @@ const PUBLIC_REVIEW_HTML = `<!doctype html>
       const token = new URLSearchParams(location.search).get('token') || '';
       const loading = document.getElementById('loading');
       const errorBox = document.getElementById('error');
+      const complete = document.getElementById('complete');
       const form = document.getElementById('form');
       const submit = document.getElementById('submit');
       const status = document.getElementById('status');
       const comment = document.getElementById('comment');
       let rating = 0;
-      let alreadyReviewed = false;
-
       const showError = (message) => {
         loading.classList.add('hidden'); form.classList.add('hidden');
         errorBox.textContent = message; errorBox.classList.remove('hidden');
@@ -81,7 +84,11 @@ const PUBLIC_REVIEW_HTML = `<!doctype html>
         })
         .then((details) => {
           if (!details) throw new Error('Review details are temporarily unavailable.');
-          alreadyReviewed = !!details.alreadyReviewed;
+          if (details.alreadyReviewed) {
+            loading.classList.add('hidden');
+            complete.classList.remove('hidden');
+            return;
+          }
           rating = Number(details.review?.rating || 0);
           comment.value = details.review?.comment || '';
           document.getElementById('vendorName').textContent = details.foodTruckName || 'Food truck';
@@ -90,7 +97,6 @@ const PUBLIC_REVIEW_HTML = `<!doctype html>
           if (details.foodTruckLogo) {
             const logo = document.getElementById('logo'); logo.src = details.foodTruckLogo; logo.alt = (details.foodTruckName || 'Vendor') + ' logo'; logo.classList.remove('hidden');
           }
-          submit.textContent = alreadyReviewed ? 'Update review' : 'Submit review';
           submit.disabled = rating === 0; renderStars();
           loading.classList.add('hidden'); form.classList.remove('hidden');
         })
@@ -106,8 +112,9 @@ const PUBLIC_REVIEW_HTML = `<!doctype html>
           });
           const payload = await response.json().catch(() => ({}));
           if (!response.ok || payload.success === false) throw new Error(apiMessage(payload, 'Unable to save your review.'));
-          status.textContent = alreadyReviewed ? 'Your review has been updated.' : "Thanks for your feedback! Your review has been added to the vendor's rating.";
-          alreadyReviewed = true; submit.textContent = 'Update review';
+          form.classList.add('hidden');
+          complete.classList.remove('hidden');
+          setTimeout(() => window.close(), 500);
         } catch (error) { status.textContent = error.message; }
         finally { submit.disabled = false; }
       });

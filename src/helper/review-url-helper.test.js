@@ -20,6 +20,9 @@ assert.equal(buildPublicReviewUrl('', 'https://reviews.example.com'), null);
 assert.equal(validatePublicReviewUrl('not a url'), null);
 assert.match(PUBLIC_REVIEW_HTML, /1 to 5 stars/);
 assert.match(PUBLIC_REVIEW_HTML, /\/api\/v1\/public\/review-token\//);
+assert.match(PUBLIC_REVIEW_HTML, /Your review has been submitted/);
+assert.match(PUBLIC_REVIEW_HTML, /window\.close\(\)/);
+assert.doesNotMatch(PUBLIC_REVIEW_HTML, /Update review/);
 assert.doesNotMatch(PUBLIC_REVIEW_HTML, /TWILIO_AUTH_TOKEN/);
 
 console.log('review URL and public page tests passed');
