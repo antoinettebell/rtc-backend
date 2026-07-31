@@ -62,7 +62,7 @@ exports.list = async (req, res, next) => {
         }
       )
     ).map((item) => {
-      if (item && typeof item.userId === 'object') {
+      if (item?.userId && typeof item.userId === 'object') {
         item.user = item.userId;
         item.userId = item.user._id;
       }
@@ -272,31 +272,26 @@ exports.addByReviewToken = async (req, res, next) => {
       return res.error(new Error('This completed order is no longer eligible for review'), 409);
     }
 
-    let data = await Service.getByData(
+    const existingReview = await Service.getByData(
       { orderId: reviewToken.orderId, deletedAt: null },
       { singleResult: true }
     );
-    const wasExisting = !!data;
-    if (data) {
-      data.rate = rate;
-      data.review = review || null;
-      data.images = images || data.images || [];
-      data.status = 'PUBLISHED';
-      await data.save();
-    } else {
-      data = await Service.create({
-        foodTruckId: order.foodTruckId,
-        truckId: order.truck_unit_id || null,
-        orderId: order._id,
-        rate,
-        review,
-        images,
-        userId: null,
-        review_source: 'WALKUP_SMS',
-        guest_phone: reviewToken.guest_phone || null,
-        status: 'PUBLISHED',
-      });
+    if (existingReview) {
+      return res.error(new Error('A review has already been submitted for this order'), 409);
     }
+
+    const data = await Service.create({
+      foodTruckId: order.foodTruckId,
+      truckId: order.truck_unit_id || null,
+      orderId: order._id,
+      rate,
+      review,
+      images,
+      userId: null,
+      review_source: 'WALKUP_SMS',
+      guest_phone: reviewToken.guest_phone || null,
+      status: 'PUBLISHED',
+    });
 
     await ReviewTokenService.consume(token, data._id);
     const vendorRating = await Service.recalculateVendorRating(order.foodTruckId);
@@ -326,7 +321,7 @@ exports.addByReviewToken = async (req, res, next) => {
         },
         vendorRating,
       },
-      wasExisting ? 'Review updated' : 'Review added'
+      'Review added'
     );
   } catch (e) {
     return next(e);
