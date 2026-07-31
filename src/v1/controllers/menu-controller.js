@@ -6,11 +6,15 @@ const {
   PlanService,
   EmployeeSessionService,
 } = require('../services');
-const { EmployeeItemAvailabilityAuditModel } = require('../../models');
+const { EmployeeItemAvailabilityAuditModel, MenuItemModel } = require('../../models');
 const mongoose = require('mongoose');
 const {
   assertNewDishHighlightAllowed,
 } = require('../../helper/vendor-plan-helper');
+const {
+  ACTIVE_BOGO_TYPES,
+  getComboSubItemId,
+} = require('../../helper/combo-promotion-helper');
 const entityName = 'Menu';
 
 // Vendor/employee walk-up ordering needs the same nested option data as
@@ -83,6 +87,50 @@ const getVendorPlanForUser = async (userId) => {
 const assertNewDishAllowedForUser = async (userId) => {
   const plan = await getVendorPlanForUser(userId);
   assertNewDishHighlightAllowed(plan);
+};
+
+const assertComboChildrenDoNotHaveActiveBogo = async ({ itemType, subItem, userId }) => {
+  if (itemType !== 'COMBO') return;
+  const childIds = (Array.isArray(subItem) ? subItem : [])
+    .map(getComboSubItemId)
+    .filter((id) => mongoose.Types.ObjectId.isValid(id));
+  if (!childIds.length) return;
+
+  const promotionalChildren = await MenuItemModel.find({
+    _id: { $in: childIds },
+    userId,
+    deletedAt: null,
+    hasDiscount: true,
+    discountType: { $in: ACTIVE_BOGO_TYPES },
+  }).select('name discountType');
+  if (promotionalChildren.length) {
+    throw new Error(
+      `Items with an active BOGO/BOGOHO promotion cannot be included inside a combo: ${promotionalChildren
+        .map((item) => `${item.name} (${item.discountType})`)
+        .join(', ')}.`
+    );
+  }
+};
+
+const assertPromotionalItemIsNotAlreadyAComboChild = async ({
+  itemId,
+  itemName,
+  userId,
+  hasDiscount,
+  discountType,
+}) => {
+  if (!hasDiscount || !ACTIVE_BOGO_TYPES.includes(discountType) || !itemId) return;
+  const parentCombo = await MenuItemModel.findOne({
+    userId,
+    itemType: 'COMBO',
+    'subItem.menuItem': itemId,
+    deletedAt: null,
+  }).select('name');
+  if (parentCombo) {
+    throw new Error(
+      `${itemName || 'This item'} is included in the combo "${parentCombo.name}". Remove it from that combo before activating BOGO/BOGOHO.`
+    );
+  }
 };
 
 /**
@@ -617,6 +665,12 @@ exports.add = async (req, res, next) => {
           )
         : 1;
 
+    await assertComboChildrenDoNotHaveActiveBogo({
+      itemType,
+      subItem,
+      userId: user._id,
+    });
+
     let data = await Service.create({
       name,
       description,
@@ -840,6 +894,20 @@ exports.update = async (req, res, next) => {
           )
         : 1;
 
+    const nextSubItems = itemType === 'COMBO' ? subItem || item.subItem : [];
+    await assertComboChildrenDoNotHaveActiveBogo({
+      itemType,
+      subItem: nextSubItems,
+      userId: user._id,
+    });
+    await assertPromotionalItemIsNotAlreadyAComboChild({
+      itemId: item._id,
+      itemName: name || item.name,
+      userId: user._id,
+      hasDiscount,
+      discountType: finalDiscountType,
+    });
+
     // ---------- Update Fields ----------
     Object.assign(item, {
       name,
@@ -850,7 +918,7 @@ exports.update = async (req, res, next) => {
       minQty,
       maxQty,
       categoryId: categoryId || item.categoryId,
-      subItem: itemType === 'COMBO' ? subItem || item.subItem : [],
+      subItem: nextSubItems,
       allowCustomize,
       newDish,
       popularDish,
