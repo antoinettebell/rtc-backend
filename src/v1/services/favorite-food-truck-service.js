@@ -41,8 +41,17 @@ class FavoriteFoodTruckService extends BaseService {
         {
           $lookup: {
             from: 'reviews',
-            localField: 'foodTruck._id',
-            foreignField: 'foodTruckId',
+            let: { foodTruckId: '$foodTruck._id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ['$foodTruckId', '$$foodTruckId'] },
+                  status: 'PUBLISHED',
+                  deletedAt: null,
+                  rate: { $in: [1, 2, 3, 4, 5] },
+                },
+              },
+            ],
             as: 'reviews',
           },
         },
@@ -52,7 +61,7 @@ class FavoriteFoodTruckService extends BaseService {
               $cond: [
                 { $gt: [{ $size: '$reviews' }, 0] },
                 { $round: [{ $avg: '$reviews.rate' }, 1] },
-                0,
+                null,
               ],
             },
             'foodTruck.totalReviews': { $size: '$reviews' },

@@ -8,6 +8,13 @@ const route = require('./route');
 const { server } = require('./config');
 const cors = require('cors');
 const app = express();
+const { validatePublicReviewUrl } = require('./helper/review-url-helper');
+
+if (!validatePublicReviewUrl()) {
+  console.error(
+    'PUBLIC_REVIEW_URL is missing or invalid; completed-order review SMS links are disabled.'
+  );
+}
 
 const http = require('http').createServer(app);
 
@@ -53,7 +60,10 @@ app.use(bodyParser.json({ limit: '50mb', extended: true }));
 
 app.use((req, res, next) => {
   const now = new Date().toISOString();
-  console.log(`[${now}] [${req.method}] ${req.originalUrl}`);
+  const safeUrl = String(req.originalUrl || '')
+    .replace(/([?&]token=)[^&]+/gi, '$1[REDACTED]')
+    .replace(/(\/review-token\/)[^/?]+/gi, '$1[REDACTED]');
+  console.log(`[${now}] [${req.method}] ${safeUrl}`);
   next();
 });
 

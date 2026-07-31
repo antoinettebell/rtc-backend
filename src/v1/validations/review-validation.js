@@ -8,6 +8,7 @@ module.exports = {
       rate: Joi.number(),
       limit: Joi.number(),
       page: Joi.number(),
+      status: Joi.string().valid('PUBLISHED', 'HIDDEN', 'REJECTED'),
     }),
   },
 
@@ -19,9 +20,9 @@ module.exports = {
 
   add: {
     body: Joi.object({
-      foodTruckId: Joi.string().required(),
-      orderId: Joi.string(),
-      rate: Joi.number().min(1).max(5).required(),
+      foodTruckId: Joi.string(),
+      orderId: Joi.string().required(),
+      rate: Joi.number().integer().min(1).max(5).required(),
       review: Joi.string().allow(null),
       images: Joi.array().items(Joi.string()),
     }),
@@ -32,7 +33,7 @@ module.exports = {
       token: Joi.string().trim().required(),
     }),
     body: Joi.object({
-      rate: Joi.number().min(1).max(5).required(),
+      rate: Joi.number().integer().min(1).max(5).required(),
       review: Joi.string().allow(null, ''),
       images: Joi.array().items(Joi.string()),
     }),
@@ -46,9 +47,21 @@ module.exports = {
 
   update: {
     body: Joi.object({
-      rate: Joi.number().min(1).max(5),
+      rate: Joi.number().integer().min(1).max(5),
       review: Joi.string().allow(null),
       images: Joi.array().items(Joi.string()),
+    }),
+  },
+
+  moderate: {
+    params: Joi.object({ id: Joi.string().required() }),
+    body: Joi.object({
+      status: Joi.string().valid('PUBLISHED', 'HIDDEN', 'REJECTED').required(),
+      reason: Joi.when('status', {
+        is: 'PUBLISHED',
+        then: Joi.string().allow(null, ''),
+        otherwise: Joi.string().trim().required(),
+      }),
     }),
   },
 };
