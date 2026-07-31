@@ -112,6 +112,30 @@ const mSchema = mongoose.Schema(
       default: true,
       index: true,
     },
+    is_archived: { type: Boolean, default: false, index: true },
+    archived_at: { type: Date, default: null },
+    archived_by_user_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'users',
+      default: null,
+    },
+    timecard_adjustments: [
+      {
+        adjusted_at: { type: Date, required: true },
+        adjusted_by_user_id: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'users',
+          required: true,
+        },
+        reason: { type: String, required: true },
+        previous_started_at: { type: Date, required: true },
+        previous_ended_at: { type: Date, required: true },
+        previous_total_break_minutes: { type: Number, required: true },
+        updated_started_at: { type: Date, required: true },
+        updated_ended_at: { type: Date, required: true },
+        updated_total_break_minutes: { type: Number, required: true },
+      },
+    ],
   },
   {
     timestamps: {

@@ -17,6 +17,7 @@ module.exports = {
       limit: Joi.number(),
       page: Joi.number(),
       orderStatus: Joi.string(),
+      orderView: Joi.string().trim().lowercase().valid('active', 'past'),
     }),
   },
   paymentTransactionslist: {

@@ -7,6 +7,10 @@ const OrderService = require('./order-service');
 const PaymentsLogService = require('./payments-log');
 const PaymentHelper = require('../../helper/payment-helper');
 const CustomNotification = require('../../helper/custom-notification');
+const {
+  getRefundAmountExcludingTip,
+  sendWalkUpRefundSms,
+} = require('../../helper/walk-up-refund-sms-helper');
 
 const buildError = (message, code = 409) => {
   const error = new Error(message);
@@ -201,18 +205,20 @@ class EmployeeRefundCancelRequestService extends BaseService {
     truckUnitId,
     limit = 50,
   }) {
-    const foodTruck = await FoodTruckService.getByData(
-      { _id: foodTruckId, userId: vendorUserId },
-      { singleResult: true }
-    );
+    if (foodTruckId) {
+      const foodTruck = await FoodTruckService.getByData(
+        { _id: foodTruckId, userId: vendorUserId },
+        { singleResult: true }
+      );
 
-    if (!foodTruck) {
-      throw buildError('Food truck not found or access denied.', 404);
+      if (!foodTruck) {
+        throw buildError('Food truck not found or access denied.', 404);
+      }
     }
 
     const requests = await Model.find({
       vendor_user_id: vendorUserId,
-      food_truck_id: foodTruckId,
+      ...(foodTruckId ? { food_truck_id: foodTruckId } : {}),
       ...(status ? { request_status: status } : {}),
       ...(employeeInternalId ? { employee_internal_id: employeeInternalId } : {}),
       ...(locationId ? { location_id: locationId } : {}),
@@ -338,10 +344,7 @@ class EmployeeRefundCancelRequestService extends BaseService {
           throw buildError('Order transaction is missing.');
         }
 
-        const refundAmount = Math.max(
-          0,
-          toMoney((order.total || 0) - (order.tipsAmount || 0))
-        );
+        const refundAmount = getRefundAmountExcludingTip(order);
 
         if (refundAmount <= 0) {
           throw buildError('Refund amount must be greater than zero.');
@@ -424,6 +427,20 @@ class EmployeeRefundCancelRequestService extends BaseService {
       order.statusTime.canceledAt = new Date().toISOString();
     }
     await order.save();
+
+    if (request.request_type === 'REFUND') {
+      try {
+        await sendWalkUpRefundSms({
+          order,
+          amount: getRefundAmountExcludingTip(order),
+        });
+      } catch (error) {
+        console.error('Refund SMS send failed', {
+          orderId: order._id?.toString(),
+          message: error.message,
+        });
+      }
+    }
 
     return { order, refund: refundResponse };
   }

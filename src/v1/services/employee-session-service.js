@@ -642,29 +642,12 @@ class EmployeeSessionService extends BaseService {
     const employeeIds = employees.map(
       (employee) => employee.employee_internal_id
     );
-    if (!employeeIds.length) {
-      return {
-        filters: {
-          startDate: start,
-          endDate: end,
-          locationId: locationId || null,
-          truckUnitId: truckUnitId || null,
-          employeeInternalId: employeeInternalId || null,
-          paymentMethod: paymentMethod || null,
-          refundCancelStatus: refundCancelStatus || null,
-        },
-        employees: [],
-      };
-    }
-
     const sessionQuery = {
       employee_internal_id: { $in: employeeIds },
       food_truck_id: foodTruck._id,
       ...(locationId ? { location_id: locationId } : {}),
     };
     const orderQuery = {
-      created_by_type: 'EMPLOYEE',
-      employee_internal_id: { $in: employeeIds },
       food_truck_id: foodTruck._id,
       deletedAt: null,
       ...(locationId ? { location_id: locationId } : {}),
@@ -858,6 +841,19 @@ class EmployeeSessionService extends BaseService {
           employee.assigned_location_id?.toString() === locationId?.toString()
       );
 
+    const summaryOrders = refundCancelStatus
+      ? orders.filter((order) =>
+          requests.some(
+            (request) => request.order_id?.toString() === order._id?.toString()
+          )
+        )
+      : orders;
+    const summarySalesOrders = summaryOrders.filter(
+      (order) =>
+        !['CANCEL', 'REJECTED'].includes(order.orderStatus) &&
+        order.paymentStatus !== 'REFUNDED'
+    );
+
     return {
       filters: {
         startDate: start,
@@ -869,6 +865,19 @@ class EmployeeSessionService extends BaseService {
         refundCancelStatus: refundCancelStatus || null,
       },
       employees: employeesData,
+      summary: {
+        orders_processed: summaryOrders.length,
+        gross_sales: summarySalesOrders.reduce(
+          (sum, order) => sum + getOrderFoodSalesAmount(order),
+          0
+        ),
+        employee_orders: summaryOrders.filter(
+          (order) => order.created_by_type === 'EMPLOYEE'
+        ).length,
+        vendor_orders: summaryOrders.filter(
+          (order) => order.created_by_type !== 'EMPLOYEE'
+        ).length,
+      },
     };
   }
 
@@ -883,14 +892,104 @@ class EmployeeSessionService extends BaseService {
       food_truck_id: foodTruckId,
       employee_internal_id: employeeInternalId,
       started_at: { $gte: start, $lte: end },
+      is_archived: { $ne: true },
     })
       .sort({ started_at: -1 })
 	      .limit(100)
 	      .select(
-	        'employee_session_id started_at ended_at last_active_at shift_status is_active total_break_minutes gross_work_minutes net_work_minutes gross_hours_worked net_hours_worked work_date_key operational_day_key time_zone is_vendor_override override_reason override_approved_by_user_id override_approved_at'
+	        'employee_session_id started_at ended_at last_active_at shift_status is_active total_break_minutes gross_work_minutes net_work_minutes gross_hours_worked net_hours_worked work_date_key operational_day_key time_zone is_vendor_override override_reason override_approved_by_user_id override_approved_at is_archived timecard_adjustments'
 	      )
 	      .lean();
 	  }
+
+  async updateCompletedTimecard({
+    foodTruckId,
+    employeeInternalId,
+    sessionId,
+    vendorUserId,
+    startedAt,
+    endedAt,
+    totalBreakMinutes,
+    reason,
+  }) {
+    const session = await Model.findOne({
+      employee_session_id: sessionId,
+      food_truck_id: foodTruckId,
+      employee_internal_id: employeeInternalId,
+    });
+    if (!session) throw new Error('Shift record not found');
+    if (session.is_active || !session.ended_at) {
+      throw new Error('An active shift cannot be edited');
+    }
+    if (session.is_archived) throw new Error('An archived shift cannot be edited');
+
+    const nextStart = new Date(startedAt);
+    const nextEnd = new Date(endedAt);
+    const breakMinutes = Number(totalBreakMinutes);
+    if (
+      Number.isNaN(nextStart.getTime()) ||
+      Number.isNaN(nextEnd.getTime()) ||
+      nextEnd <= nextStart
+    ) {
+      throw new Error('Shift end must be after shift start');
+    }
+    const grossMinutes = Math.round((nextEnd - nextStart) / 60000);
+    if (!Number.isFinite(breakMinutes) || breakMinutes < 0 || breakMinutes > grossMinutes) {
+      throw new Error('Break minutes must be between zero and the shift duration');
+    }
+
+    session.timecard_adjustments.push({
+      adjusted_at: new Date(),
+      adjusted_by_user_id: vendorUserId,
+      reason,
+      previous_started_at: session.started_at,
+      previous_ended_at: session.ended_at,
+      previous_total_break_minutes: session.total_break_minutes || 0,
+      updated_started_at: nextStart,
+      updated_ended_at: nextEnd,
+      updated_total_break_minutes: breakMinutes,
+    });
+    session.started_at = nextStart;
+    session.ended_at = nextEnd;
+    session.total_break_minutes = breakMinutes;
+    session.gross_work_minutes = grossMinutes;
+    session.net_work_minutes = grossMinutes - breakMinutes;
+    session.gross_hours_worked = Number((grossMinutes / 60).toFixed(2));
+    session.net_hours_worked = Number(((grossMinutes - breakMinutes) / 60).toFixed(2));
+    session.operational_day_key = getOperationalDayKey(
+      nextStart,
+      session.time_zone || 'America/New_York'
+    );
+    session.work_date_key = session.operational_day_key;
+    await session.save();
+    return session;
+  }
+
+  async archiveCompletedTimecards({
+    foodTruckId,
+    employeeInternalId,
+    sessionIds,
+    vendorUserId,
+  }) {
+    const result = await Model.updateMany(
+      {
+        food_truck_id: foodTruckId,
+        employee_internal_id: employeeInternalId,
+        employee_session_id: { $in: sessionIds },
+        is_active: false,
+        ended_at: { $ne: null },
+        is_archived: { $ne: true },
+      },
+      {
+        $set: {
+          is_archived: true,
+          archived_at: new Date(),
+          archived_by_user_id: vendorUserId,
+        },
+      }
+    );
+    return { archived_count: result.modifiedCount || 0 };
+  }
 
 	  async getEmployeeShiftSummary({
 	    foodTruckId,

@@ -18,6 +18,10 @@ const https = require('https');
 const http = require('http');
 const CustomNotification = require('../../helper/custom-notification');
 const SmsHelper = require('../../helper/sms-helper');
+const {
+  getRefundAmountExcludingTip,
+  sendWalkUpRefundSms,
+} = require('../../helper/walk-up-refund-sms-helper');
 const { buildPublicReviewUrl } = require('../../helper/review-url-helper');
 const PaymentHelper = require('../../helper/payment-helper');
 const MailHelper = require('../../helper/mail-helper');
@@ -2830,10 +2834,7 @@ exports.refundPosOrder = async (req, res, next) => {
         }
       );
 
-      const refundAmount = Math.max(
-        0,
-        toMoney((order.total || 0) - (order.tipsAmount || 0))
-      );
+      const refundAmount = getRefundAmountExcludingTip(order);
 
       console.log(
         '[TapToPay Refund Diagnostics] Refund amount calculation completed',
@@ -2949,6 +2950,18 @@ exports.refundPosOrder = async (req, res, next) => {
     order.refundErrorMessage = null;
     await order.save();
 
+    try {
+      await sendWalkUpRefundSms({
+        order,
+        amount: getRefundAmountExcludingTip(order),
+      });
+    } catch (error) {
+      console.error('Refund SMS send failed', {
+        orderId: order._id?.toString(),
+        message: error.message,
+      });
+    }
+
     return res.data(
       { order, refund: refundResponse },
       'Order refund processed successfully'
@@ -2981,7 +2994,7 @@ exports.list = async (req, res, next) => {
         search,
         orderStatus,
         advance,
-        orderView,
+        orderView: rawOrderView,
       },
       params: { id: _id },
       user,
@@ -2999,6 +3012,10 @@ exports.list = async (req, res, next) => {
         `${entityName} item`
       );
     }
+
+    const orderView = rawOrderView
+      ? String(rawOrderView).trim().toLowerCase()
+      : null;
 
     if (orderStatus) {
       orderStatus = orderStatus.split(',').map((item) => item.trim());
