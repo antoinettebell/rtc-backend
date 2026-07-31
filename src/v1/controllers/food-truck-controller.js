@@ -20,6 +20,40 @@ const {
 } = require('../../helper/vendor-plan-helper');
 const entityName = 'FoodTruck';
 
+// Customer menu responses must include the same option metadata used by the
+// vendor POS so combo children and BOGO rewards can be customized.
+const customerNestedMenuItemSelect = {
+  _id: 1,
+  name: 1,
+  description: 1,
+  imgUrls: 1,
+  price: 1,
+  strikePrice: 1,
+  discountType: 1,
+  hasDiscount: 1,
+  discountRules: 1,
+  available: 1,
+  itemType: 1,
+  categoryId: 1,
+  meatId: 1,
+  diet: 1,
+  predefinedDiscountId: 1,
+  minQty: 1,
+  maxQty: 1,
+  allowCustomize: 1,
+  hasFlavors: 1,
+  flavors: 1,
+  flavorOptions: 1,
+  flavorsPerOrder: 1,
+  hasToppings: 1,
+  toppings: 1,
+  toppingOptions: 1,
+  toppingsPerOrder: 1,
+  comboSideOptions: 1,
+  comboSidesPerOrder: 1,
+  subItem: 1,
+};
+
 const toNumberOrNull = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -636,46 +670,18 @@ exports.getMenu = async (req, res, next) => {
           'diet',
           {
             path: 'subItem.menuItem',
-            select: {
-              _id: 1,
-              name: 1,
-              description: 1,
-              imgUrls: 1,
-              price: 1,
-              strikePrice: 1,
-              discountType: 1,
-              hasDiscount: 1,
-              discountRules: 1,
-              available: 1,
-              itemType: 1,
-              categoryId: 1,
-              meatId: 1,
-              diet: 1,
-              predefinedDiscountId: 1,
-              minQty: 1,
-              maxQty: 1,
+            select: customerNestedMenuItemSelect,
+            populate: {
+              path: 'subItem.menuItem',
+              select: customerNestedMenuItemSelect,
             },
           },
           {
             path: 'bogoItems.itemId',
-            select: {
-              _id: 1,
-              name: 1,
-              description: 1,
-              imgUrls: 1,
-              price: 1,
-              strikePrice: 1,
-              discountType: 1,
-              hasDiscount: 1,
-              discountRules: 1,
-              available: 1,
-              itemType: 1,
-              categoryId: 1,
-              meatId: 1,
-              diet: 1,
-              predefinedDiscountId: 1,
-              minQty: 1,
-              maxQty: 1,
+            select: customerNestedMenuItemSelect,
+            populate: {
+              path: 'subItem.menuItem',
+              select: customerNestedMenuItemSelect,
             },
           },
         ],
