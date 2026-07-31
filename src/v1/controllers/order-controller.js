@@ -18,6 +18,7 @@ const https = require('https');
 const http = require('http');
 const CustomNotification = require('../../helper/custom-notification');
 const SmsHelper = require('../../helper/sms-helper');
+const { buildPublicReviewUrl } = require('../../helper/review-url-helper');
 const PaymentHelper = require('../../helper/payment-helper');
 const MailHelper = require('../../helper/mail-helper');
 const TaxHelper = require('../../helper/tax-helper');
@@ -959,32 +960,7 @@ const getFoodTruckDisplayName = (foodTruck) =>
   'the food truck';
 
 const buildWalkUpReviewUrl = ({ order, reviewToken }) => {
-  const baseUrl =
-    process.env.WALKUP_REVIEW_BASE_URL ||
-    process.env.CUSTOMER_APP_REVIEW_BASE_URL ||
-    'rtc-customer://review';
-
-  if (!baseUrl) {
-    return null;
-  }
-
-  try {
-    const url = new URL(baseUrl);
-    if (reviewToken) {
-      url.searchParams.set('reviewToken', reviewToken);
-    } else {
-      url.searchParams.set('foodTruckId', order.foodTruckId?.toString());
-      url.searchParams.set('orderId', order._id?.toString());
-    }
-    url.searchParams.set('source', 'walkup_sms');
-    return url.toString();
-  } catch (error) {
-    console.error('Invalid walkup review URL configuration', {
-      baseUrl,
-      message: error.message,
-    });
-    return null;
-  }
+  return buildPublicReviewUrl(reviewToken);
 };
 
 const sendWalkUpGuestSms = async ({ order, status, foodTruck }) => {
@@ -1002,11 +978,45 @@ const sendWalkUpGuestSms = async ({ order, status, foodTruck }) => {
   }
 
   if (status === 'COMPLETED') {
-    const reviewToken = await ReviewTokenService.createForWalkUpOrder(order);
-    const reviewUrl = buildWalkUpReviewUrl({ order, reviewToken });
-    body = reviewUrl
-      ? `RTC: Thanks for ordering from ${truckName}. Please rate your visit: ${reviewUrl}`
-      : `RTC: Thanks for ordering from ${truckName}. Open the Round The Corner app to rate your visit.`;
+    const tokenClaim = await ReviewTokenService.createForWalkUpOrder(order);
+    if (!tokenClaim) {
+      return { skipped: true, reason: 'review_request_already_created' };
+    }
+    const reviewUrl = buildWalkUpReviewUrl({
+      order,
+      reviewToken: tokenClaim.rawToken,
+    });
+    if (!reviewUrl) {
+      await ReviewTokenService.markFailed(
+        tokenClaim.reviewRequest._id,
+        'PUBLIC_REVIEW_URL is invalid or missing'
+      );
+      return { skipped: true, reason: 'invalid_public_review_url' };
+    }
+    body = `Round Da' Corner: Your order from ${truckName} is complete.\n\nRate your experience:\n${reviewUrl}\n\nReply STOP to opt out.`;
+
+    const result = await SmsHelper.sendSms({
+      to: phone,
+      body,
+      metadata: {
+        orderId: order._id?.toString(),
+        orderNumber: order.orderNumber,
+        orderStatus: status,
+        orderSource: order.orderSource,
+        foodTruckId: order.foodTruckId?.toString(),
+        reviewUrlHost: new URL(reviewUrl).host,
+        tokenSuffix: tokenClaim.rawToken.slice(-4),
+      },
+    });
+    if (result?.failed || result?.skipped) {
+      await ReviewTokenService.markFailed(
+        tokenClaim.reviewRequest._id,
+        result?.reason || 'SMS was not sent'
+      );
+    } else {
+      await ReviewTokenService.markSent(tokenClaim.reviewRequest._id);
+    }
+    return result;
   }
 
   if (!body) {

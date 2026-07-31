@@ -7,7 +7,9 @@
     "start": "nodemon src/app.js",
     "test:earnings": "node src/helper/vendor-earnings-helper.test.js",
     "test:sms": "node src/helper/sms-helper.test.js",
-    "test:employee-shifts": "node src/v1/services/employee-operational-day.test.js"
+    "test:employee-shifts": "node src/v1/services/employee-operational-day.test.js",
+    "test:reviews": "node src/helper/review-url-helper.test.js",
+    "migrate:reviews": "node scripts/migrate-review-ratings.js"
   },
   "author": "Tailor",
   "license": "MIT",

@@ -41,9 +41,37 @@ const mSchema = mongoose.Schema(
       ref: 'reviews',
       default: null,
     },
+    sent_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    send_status: {
+      type: String,
+      enum: ['PENDING', 'SENT', 'FAILED'],
+      default: 'PENDING',
+      index: true,
+    },
+    send_error: {
+      type: String,
+      default: null,
+    },
+    send_active: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
   },
   {
     timestamps: true,
+  }
+);
+
+mSchema.index(
+  { orderId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { send_active: true },
   }
 );
 

@@ -32,6 +32,13 @@ router.put(
   Controller.update
 );
 
+router.patch(
+  '/:id/moderate',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.moderate),
+  Controller.moderate
+);
+
 /** [DELETE] /api/v1/review/:id */
 router.delete(
   '/:id',

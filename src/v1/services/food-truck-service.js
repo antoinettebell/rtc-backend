@@ -129,11 +129,20 @@ class FoodTruckService extends BaseService {
             },
           },
             {
-            $lookup: {
-              from: 'reviews',
-              localField: '_id',
-              foreignField: 'foodTruckId',
-              as: 'reviews',
+          $lookup: {
+            from: 'reviews',
+            let: { foodTruckId: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ['$foodTruckId', '$$foodTruckId'] },
+                  status: 'PUBLISHED',
+                  deletedAt: null,
+                  rate: { $in: [1, 2, 3, 4, 5] },
+                },
+              },
+            ],
+            as: 'reviews',
             },
           },
             {
@@ -142,7 +151,7 @@ class FoodTruckService extends BaseService {
                 $cond: [
                   { $gt: [{ $size: '$reviews' }, 0] },
                   { $round: [{ $avg: '$reviews.rate' }, 1] },
-                  0,
+                  null,
                 ],
               },
               totalReviews: { $size: '$reviews' },
@@ -227,8 +236,17 @@ class FoodTruckService extends BaseService {
         {
           $lookup: {
             from: 'reviews',
-            localField: '_id',
-            foreignField: 'foodTruckId',
+            let: { foodTruckId: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ['$foodTruckId', '$$foodTruckId'] },
+                  status: 'PUBLISHED',
+                  deletedAt: null,
+                  rate: { $in: [1, 2, 3, 4, 5] },
+                },
+              },
+            ],
             as: 'reviews',
           },
         },
@@ -238,7 +256,7 @@ class FoodTruckService extends BaseService {
               $cond: [
                 { $gt: [{ $size: '$reviews' }, 0] },
                 { $round: [{ $avg: '$reviews.rate' }, 1] },
-                0,
+                null,
               ],
             },
             totalReviews: { $size: '$reviews' },
@@ -249,6 +267,8 @@ class FoodTruckService extends BaseService {
       data[itm._id.toString()] = {
         avgRate: itm.avgRate,
         totalReviews: itm.totalReviews,
+        averageRating: itm.avgRate,
+        reviewCount: itm.totalReviews,
       };
     });
 
@@ -340,8 +360,17 @@ class FoodTruckService extends BaseService {
         {
           $lookup: {
             from: 'reviews',
-            localField: '_id',
-            foreignField: 'foodTruckId',
+            let: { foodTruckId: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ['$foodTruckId', '$$foodTruckId'] },
+                  status: 'PUBLISHED',
+                  deletedAt: null,
+                  rate: { $in: [1, 2, 3, 4, 5] },
+                },
+              },
+            ],
             as: 'reviews',
           },
         },
@@ -351,7 +380,7 @@ class FoodTruckService extends BaseService {
               $cond: [
                 { $gt: [{ $size: '$reviews' }, 0] },
                 { $round: [{ $avg: '$reviews.rate' }, 1] },
-                0,
+                null,
               ],
             },
             totalReviews: { $size: '$reviews' },
@@ -922,8 +951,17 @@ class FoodTruckService extends BaseService {
           {
             $lookup: {
               from: 'reviews',
-              localField: '_id',
-              foreignField: 'foodTruckId',
+              let: { foodTruckId: '$_id' },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: { $eq: ['$foodTruckId', '$$foodTruckId'] },
+                    status: 'PUBLISHED',
+                    deletedAt: null,
+                    rate: { $in: [1, 2, 3, 4, 5] },
+                  },
+                },
+              ],
               as: 'reviews',
             },
           },
@@ -933,7 +971,7 @@ class FoodTruckService extends BaseService {
                 $cond: [
                   { $gt: [{ $size: '$reviews' }, 0] },
                   { $round: [{ $avg: '$reviews.rate' }, 1] },
-                  0,
+                  null,
                 ],
               },
               totalReviews: { $size: '$reviews' },
@@ -1089,7 +1127,7 @@ class FoodTruckService extends BaseService {
                       },
                     },
                   },
-                  0,
+                  null,
                 ],
               },
               null,

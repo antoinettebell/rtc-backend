@@ -6,6 +6,7 @@ const v1Routes = require('./v1/routes');
 const { OrderController } = require('./v1/controllers');
 const router = express.Router();
 const { server } = require('./config');
+const { renderPublicReviewPage } = require('./helper/public-review-page');
 
 /**
  * Server status route
@@ -13,6 +14,8 @@ const { server } = require('./config');
 router.get('/', (req, res) => {
   res.message(`'${server.name}' started`);
 });
+
+router.get('/review', renderPublicReviewPage);
 
 /**
  * Image retrieve route

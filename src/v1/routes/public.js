@@ -27,6 +27,25 @@ const {
 } = require('../validations');
 const authenticate = require('../../middleware/authenticate');
 
+const reviewRateLimitBuckets = new Map();
+const publicReviewRateLimit = (req, res, next) => {
+  const now = Date.now();
+  const key = req.ip || req.socket?.remoteAddress || 'unknown';
+  const current = reviewRateLimitBuckets.get(key);
+  if (!current || current.resetAt <= now) {
+    reviewRateLimitBuckets.set(key, { count: 1, resetAt: now + 15 * 60 * 1000 });
+    return next();
+  }
+  current.count += 1;
+  if (current.count > 60) {
+    return res.status(429).json({
+      success: false,
+      message: 'Too many review requests. Please try again later.',
+    });
+  }
+  return next();
+};
+
 /** [GET] /api/v1/public/food-truck */
 router.get('/food-truck', FoodTruckController.list);
 
@@ -105,6 +124,7 @@ router.get(
 /** [GET] /api/v1/public/review-token/:token */
 router.get(
   '/review-token/:token',
+  publicReviewRateLimit,
   validate(ReviewValidation.tokenDetails),
   ReviewController.getReviewToken
 );
@@ -112,6 +132,7 @@ router.get(
 /** [POST] /api/v1/public/review-token/:token */
 router.post(
   '/review-token/:token',
+  publicReviewRateLimit,
   validate(ReviewValidation.addByToken),
   ReviewController.addByReviewToken
 );

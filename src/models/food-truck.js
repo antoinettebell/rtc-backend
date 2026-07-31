@@ -75,6 +75,15 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    averageRating: {
+      type: Number,
+      default: null,
+    },
+    reviewCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     currentLocation: {
       type: String,
       default: null,

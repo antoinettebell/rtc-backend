@@ -4,6 +4,7 @@ const {
   ReviewTokenService,
 } = require('../services');
 const CustomNotification = require('../../helper/custom-notification');
+const { OrderModel } = require('../../models');
 
 const entityName = 'Review';
 
@@ -19,7 +20,7 @@ const entityName = 'Review';
 exports.list = async (req, res, next) => {
   try {
     let {
-      query: { limit = 10, page = 1, search, foodTruckId, rate },
+      query: { limit = 10, page = 1, search, foodTruckId, rate, status },
       params: { id: _id },
     } = req;
     if (_id) {
@@ -40,6 +41,11 @@ exports.list = async (req, res, next) => {
       q['rate'] = rate;
     }
     q['foodTruckId'] = foodTruckId;
+    if (req.user?.userType === 'SUPER_ADMIN') {
+      if (status) q.status = status;
+    } else {
+      q.status = 'PUBLISHED';
+    }
     const data = (
       await Service.getByData(
         { ...q, deletedAt: null },
@@ -60,6 +66,7 @@ exports.list = async (req, res, next) => {
         item.user = item.userId;
         item.userId = item.user._id;
       }
+      delete item.guest_phone;
       return item;
     });
 
@@ -87,7 +94,17 @@ exports.stats = async (req, res, next) => {
       query: { foodTruckId },
     } = req;
 
-    const data = (await Service.getStats(foodTruckId))[0];
+    const data = (await Service.getStats(foodTruckId))[0] || {
+      avgRate: null,
+      totalReviews: 0,
+      star1: 0,
+      star2: 0,
+      star3: 0,
+      star4: 0,
+      star5: 0,
+    };
+    data.averageRating = data.avgRate;
+    data.reviewCount = data.totalReviews;
 
     return res.data(
       {
@@ -112,45 +129,51 @@ exports.stats = async (req, res, next) => {
 exports.add = async (req, res, next) => {
   try {
     const {
-      body: { foodTruckId, rate, review, images, orderId },
+      body: { rate, review, images, orderId },
       user,
     } = req;
 
-    if (orderId) {
-      const item = await Service.getByData(
-        {
-          userId: user._id,
-          orderId,
-          deletedAt: null,
-        },
-        { singleResult: true }
-      );
+    if (!orderId) {
+      return res.error(new Error('A completed order is required'), 400);
+    }
 
-      if (item) {
-        return res.error(
-          new Error('Can not review twice for the same order'),
-          409
-        );
-      }
+    const order = await OrderModel.findOne({
+      _id: orderId,
+      userId: user._id,
+      orderStatus: 'COMPLETED',
+    }).lean();
+    if (!order) {
+      return res.error(new Error('Completed order not found for this customer'), 403);
+    }
+
+    const existingReview = await Service.getByData(
+      { orderId: order._id, deletedAt: null },
+      { singleResult: true }
+    );
+    if (existingReview) {
+      return res.error(new Error('Can not review twice for the same order'), 409);
     }
 
     const data = await Service.create({
-      foodTruckId,
+      foodTruckId: order.foodTruckId,
+      truckId: order.truck_unit_id || null,
       rate,
       review,
       images,
       orderId: orderId || null,
       userId: user._id,
+      review_source: 'CUSTOMER_APP',
     });
+    const vendorRating = await Service.recalculateVendorRating(order.foodTruckId);
 
     if (rate <= 2) { 
     try {
-      const ft = await FoodTruckService.getById(foodTruckId);
+      const ft = await FoodTruckService.getById(order.foodTruckId);
       if (ft) {
           await CustomNotification.sendBadReviewNotificationToVendor(
             { _id: ft.userId },
             orderId,
-            foodTruckId
+            order.foodTruckId
           );
         }
         } catch (e) {}
@@ -158,7 +181,7 @@ exports.add = async (req, res, next) => {
     
 
     return res.data(
-      { [`${entityName.toLocaleLowerCase()}`]: data },
+      { [`${entityName.toLocaleLowerCase()}`]: data, vendorRating },
       `${entityName} added`
     );
   } catch (e) {
@@ -172,39 +195,53 @@ exports.getReviewToken = async (req, res, next) => {
       params: { token },
     } = req;
 
-    const reviewToken = await ReviewTokenService.getValidByToken(token);
+    const reviewToken = await ReviewTokenService.getByToken(token);
     if (!reviewToken) {
       return res.error(new Error('Review link is invalid or expired'), 409);
     }
 
-    const [foodTruck, existingReview] = await Promise.all([
+    const [foodTruck, order, existingReview] = await Promise.all([
       FoodTruckService.getById(reviewToken.foodTruckId),
+      OrderModel.findOne({
+        _id: reviewToken.orderId,
+        foodTruckId: reviewToken.foodTruckId,
+        orderStatus: 'COMPLETED',
+      }).lean(),
       Service.getByData(
         {
           orderId: reviewToken.orderId,
-          review_source: 'WALKUP_SMS',
           deletedAt: null,
         },
         { singleResult: true }
       ),
     ]);
 
-    if (existingReview) {
-      return res.error(new Error('This order has already been reviewed'), 409);
+    if (!foodTruck || !order) {
+      return res.error(new Error('This completed order is no longer eligible for review'), 409);
     }
 
     return res.data(
       {
         reviewToken: {
-          foodTruckId: reviewToken.foodTruckId,
-          orderId: reviewToken.orderId,
-          expires_at: reviewToken.expires_at,
+          expiresAt: reviewToken.expires_at,
           foodTruckName:
             foodTruck?.truckName ||
             foodTruck?.name ||
             foodTruck?.businessName ||
             foodTruck?.companyName ||
             'Food truck',
+          foodTruckLogo: foodTruck?.logo || null,
+          orderReference: order.orderNumber
+            ? `#${order.orderNumber}`
+            : `...${String(order._id).slice(-6)}`,
+          orderDate: order.completed_at || order.statusTime?.completedAt || order.updatedAt,
+          alreadyReviewed: !!existingReview,
+          review: existingReview
+            ? {
+                rating: existingReview.rate,
+                comment: existingReview.review || '',
+              }
+            : null,
         },
       },
       'Review link details'
@@ -221,37 +258,48 @@ exports.addByReviewToken = async (req, res, next) => {
       body: { rate, review, images },
     } = req;
 
-    const reviewToken = await ReviewTokenService.getValidByToken(token);
+    const reviewToken = await ReviewTokenService.getByToken(token);
     if (!reviewToken) {
       return res.error(new Error('Review link is invalid or expired'), 409);
     }
 
-    const existingReview = await Service.getByData(
-      {
-        orderId: reviewToken.orderId,
-        review_source: 'WALKUP_SMS',
-        deletedAt: null,
-      },
-      { singleResult: true }
-    );
-
-    if (existingReview) {
-      await ReviewTokenService.consume(token, existingReview._id);
-      return res.error(new Error('This order has already been reviewed'), 409);
+    const order = await OrderModel.findOne({
+      _id: reviewToken.orderId,
+      foodTruckId: reviewToken.foodTruckId,
+      orderStatus: 'COMPLETED',
+    }).lean();
+    if (!order) {
+      return res.error(new Error('This completed order is no longer eligible for review'), 409);
     }
 
-    const data = await Service.create({
-      foodTruckId: reviewToken.foodTruckId,
-      orderId: reviewToken.orderId,
-      rate,
-      review,
-      images,
-      userId: null,
-      review_source: 'WALKUP_SMS',
-      guest_phone: reviewToken.guest_phone || null,
-    });
+    let data = await Service.getByData(
+      { orderId: reviewToken.orderId, deletedAt: null },
+      { singleResult: true }
+    );
+    const wasExisting = !!data;
+    if (data) {
+      data.rate = rate;
+      data.review = review || null;
+      data.images = images || data.images || [];
+      data.status = 'PUBLISHED';
+      await data.save();
+    } else {
+      data = await Service.create({
+        foodTruckId: order.foodTruckId,
+        truckId: order.truck_unit_id || null,
+        orderId: order._id,
+        rate,
+        review,
+        images,
+        userId: null,
+        review_source: 'WALKUP_SMS',
+        guest_phone: reviewToken.guest_phone || null,
+        status: 'PUBLISHED',
+      });
+    }
 
     await ReviewTokenService.consume(token, data._id);
+    const vendorRating = await Service.recalculateVendorRating(order.foodTruckId);
 
     if (rate <= 2) {
       try {
@@ -266,7 +314,20 @@ exports.addByReviewToken = async (req, res, next) => {
       } catch (e) {}
     }
 
-    return res.data({ review: data }, 'Review added');
+    return res.data(
+      {
+        review: {
+          id: data._id,
+          rating: data.rate,
+          comment: data.review || '',
+          status: data.status,
+          createdAt: data.createdAt,
+          updatedAt: data.updatedAt,
+        },
+        vendorRating,
+      },
+      wasExisting ? 'Review updated' : 'Review added'
+    );
   } catch (e) {
     return next(e);
   }
@@ -305,7 +366,7 @@ exports.update = async (req, res, next) => {
       item.rate = rate;
     }
 
-    if (review) {
+    if (review !== undefined) {
       item.review = review;
     }
 
@@ -314,9 +375,10 @@ exports.update = async (req, res, next) => {
     }
 
     await item.save();
+    const vendorRating = await Service.recalculateVendorRating(item.foodTruckId);
 
     return res.data(
-      { [`${entityName.toLocaleLowerCase()}`]: item },
+      { [`${entityName.toLocaleLowerCase()}`]: item, vendorRating },
       `${entityName} updated`
     );
   } catch (e) {
@@ -355,10 +417,40 @@ exports.destroy = async (req, res, next) => {
     item.deletedAt = new Date().toISOString();
 
     await item.save();
+    const vendorRating = await Service.recalculateVendorRating(item.foodTruckId);
 
     return res.data(
-      { [`${entityName.toLocaleLowerCase()}`]: item },
+      { [`${entityName.toLocaleLowerCase()}`]: item, vendorRating },
       `${entityName} deleted`
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.moderate = async (req, res, next) => {
+  try {
+    const {
+      params: { id },
+      body: { status, reason },
+      user,
+    } = req;
+    const item = await Service.getByData(
+      { _id: id, deletedAt: null },
+      { singleResult: true }
+    );
+    if (!item) return res.error(new Error('No review found'), 404);
+
+    item.status = status;
+    item.moderation_reason = status === 'PUBLISHED' ? null : reason;
+    item.moderated_by = user._id;
+    item.moderated_at = new Date();
+    await item.save();
+    const vendorRating = await Service.recalculateVendorRating(item.foodTruckId);
+
+    return res.data(
+      { review: item, vendorRating },
+      status === 'PUBLISHED' ? 'Review restored' : 'Review moderated'
     );
   } catch (e) {
     return next(e);

@@ -1,4 +1,4 @@
-const { ReviewModel: Model } = require('../../models');
+const { ReviewModel: Model, FoodTruckModel } = require('../../models');
 const { BaseService } = require('../../common-services');
 const mongoose = require('mongoose');
 
@@ -12,6 +12,9 @@ class ReviewService extends BaseService {
       {
         $match: {
           foodTruckId: new mongoose.Types.ObjectId(ftId),
+          status: 'PUBLISHED',
+          deletedAt: null,
+          rate: { $in: [1, 2, 3, 4, 5] },
         },
       },
       {
@@ -39,6 +42,41 @@ class ReviewService extends BaseService {
         },
       },
     ]);
+  }
+
+  async recalculateVendorRating(foodTruckId) {
+    if (!mongoose.Types.ObjectId.isValid(foodTruckId)) {
+      throw new Error('Invalid food truck ID');
+    }
+
+    const [summary] = await Model.aggregate([
+      {
+        $match: {
+          foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
+          status: 'PUBLISHED',
+          deletedAt: null,
+          rate: { $in: [1, 2, 3, 4, 5] },
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          averageRating: { $avg: '$rate' },
+          reviewCount: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const vendorRating = {
+      averageRating: summary?.averageRating ?? null,
+      reviewCount: summary?.reviewCount || 0,
+    };
+
+    await FoodTruckModel.findByIdAndUpdate(foodTruckId, {
+      $set: vendorRating,
+    });
+
+    return vendorRating;
   }
 }
 

@@ -28,6 +28,9 @@ const mSchema = mongoose.Schema(
     rate: {
       type: Number,
       default: 1,
+      min: 1,
+      max: 5,
+      validate: Number.isInteger,
     },
     review: {
       type: String,
@@ -48,6 +51,29 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    truckId: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+    },
+    status: {
+      type: String,
+      enum: ['PUBLISHED', 'HIDDEN', 'REJECTED'],
+      default: 'PUBLISHED',
+      index: true,
+    },
+    moderation_reason: {
+      type: String,
+      default: null,
+    },
+    moderated_by: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'users',
+      default: null,
+    },
+    moderated_at: {
+      type: Date,
+      default: null,
+    },
     deletedAt: {
       type: Date,
       default: null,
@@ -57,5 +83,15 @@ const mSchema = mongoose.Schema(
     timestamps: true,
   }
 );
+
+mSchema.index(
+  { orderId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { orderId: { $type: 'objectId' } },
+  }
+);
+mSchema.index({ foodTruckId: 1, status: 1, deletedAt: 1 });
+mSchema.index({ userId: 1, createdAt: -1 });
 
 module.exports = new mongoose.model('reviews', mSchema);

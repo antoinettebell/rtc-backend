@@ -25,27 +25,64 @@ class ReviewTokenService extends BaseService {
       now.getTime() + TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000
     );
 
-    await Model.create({
-      token_hash: hashToken(rawToken),
-      orderId: order._id,
-      foodTruckId: order.foodTruckId,
-      guest_phone: order.guestCustomer?.phone || null,
-      expires_at: expiresAt,
-    });
+    try {
+      const reviewRequest = await Model.create({
+        token_hash: hashToken(rawToken),
+        orderId: order._id,
+        foodTruckId: order.foodTruckId,
+        guest_phone: order.guestCustomer?.phone || null,
+        expires_at: expiresAt,
+        send_status: 'PENDING',
+        send_active: true,
+      });
 
-    return rawToken;
+      return { rawToken, reviewRequest };
+    } catch (error) {
+      if (error?.code === 11000) {
+        return null;
+      }
+      throw error;
+    }
   }
 
-  async getValidByToken(rawToken) {
+  async getByToken(rawToken) {
     if (!rawToken) {
       return null;
     }
 
     return Model.findOne({
       token_hash: hashToken(rawToken),
-      used_at: null,
       expires_at: { $gt: new Date() },
     }).lean();
+  }
+
+  async getValidByToken(rawToken) {
+    return this.getByToken(rawToken);
+  }
+
+  async markSent(reviewRequestId) {
+    return Model.findByIdAndUpdate(
+      reviewRequestId,
+      {
+        $set: {
+          sent_at: new Date(),
+          send_status: 'SENT',
+          send_error: null,
+          send_active: true,
+        },
+      },
+      { new: true }
+    );
+  }
+
+  async markFailed(reviewRequestId, error) {
+    return Model.findByIdAndUpdate(reviewRequestId, {
+      $set: {
+        send_status: 'FAILED',
+        send_active: false,
+        send_error: String(error?.message || error || 'SMS send failed').slice(0, 250),
+      },
+    });
   }
 
   async consume(rawToken, reviewId) {
@@ -56,7 +93,6 @@ class ReviewTokenService extends BaseService {
     return Model.findOneAndUpdate(
       {
         token_hash: hashToken(rawToken),
-        used_at: null,
         expires_at: { $gt: new Date() },
       },
       {
