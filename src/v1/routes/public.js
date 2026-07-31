@@ -28,6 +28,14 @@ const {
 const authenticate = require('../../middleware/authenticate');
 
 const reviewRateLimitBuckets = new Map();
+const reviewRateLimitCleanup = setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of reviewRateLimitBuckets.entries()) {
+    if (bucket.resetAt <= now) reviewRateLimitBuckets.delete(key);
+  }
+}, 15 * 60 * 1000);
+reviewRateLimitCleanup.unref();
+
 const publicReviewRateLimit = (req, res, next) => {
   const now = Date.now();
   const key = req.ip || req.socket?.remoteAddress || 'unknown';

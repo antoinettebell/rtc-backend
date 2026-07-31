@@ -1,14 +1,12 @@
 const validatePublicReviewUrl = (
-  configuredUrl = process.env.PUBLIC_REVIEW_URL,
-  { production = process.env.NODE_ENV === 'production' } = {}
+  configuredUrl = process.env.PUBLIC_REVIEW_URL
 ) => {
   const baseUrl = String(configuredUrl || '').replace(/\/+$/, '');
   if (!baseUrl) return null;
   try {
     const url = new URL(baseUrl);
     if (
-      (production && url.protocol !== 'https:') ||
-      !['http:', 'https:'].includes(url.protocol) ||
+      url.protocol !== 'https:' ||
       ['localhost', '127.0.0.1', '::1'].includes(url.hostname)
     ) {
       return null;

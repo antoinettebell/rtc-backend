@@ -88,7 +88,10 @@ mSchema.index(
   { orderId: 1 },
   {
     unique: true,
-    partialFilterExpression: { orderId: { $type: 'objectId' } },
+    partialFilterExpression: {
+      orderId: { $type: 'objectId' },
+      deletedAt: null,
+    },
   }
 );
 mSchema.index({ foodTruckId: 1, status: 1, deletedAt: 1 });
