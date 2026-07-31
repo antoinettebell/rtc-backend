@@ -46,6 +46,14 @@ class MenuItemService extends BaseService {
       {
         $lookup: {
           from: 'menu-items',
+          localField: 'bogoItemDetails.subItem.menuItem',
+          foreignField: '_id',
+          as: 'bogoSubItemDetails',
+        },
+      },
+      {
+        $lookup: {
+          from: 'menu-items',
           localField: 'subItem.menuItem',
           foreignField: '_id',
           as: 'subItemDetails',
@@ -169,7 +177,58 @@ class MenuItemService extends BaseService {
           },
         },
       },
-      { $project: { bogoItemDetails: 0, subItemDetails: 0 } },
+      {
+        $addFields: {
+          bogoItems: {
+            $map: {
+              input: '$bogoItems',
+              as: 'bogo',
+              in: {
+                $mergeObjects: [
+                  '$$bogo',
+                  {
+                    subItem: {
+                      $map: {
+                        input: { $ifNull: ['$$bogo.subItem', []] },
+                        as: 'sub',
+                        in: {
+                          $mergeObjects: [
+                            {
+                              $arrayElemAt: [
+                                {
+                                  $filter: {
+                                    input: '$bogoSubItemDetails',
+                                    as: 'details',
+                                    cond: {
+                                      $eq: ['$$details._id', '$$sub.menuItem'],
+                                    },
+                                  },
+                                },
+                                0,
+                              ],
+                            },
+                            {
+                              _id: '$$sub.menuItem',
+                              qty: '$$sub.qty',
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          bogoItemDetails: 0,
+          bogoSubItemDetails: 0,
+          subItemDetails: 0,
+        },
+      },
     ]);
   }
 
@@ -222,6 +281,14 @@ class MenuItemService extends BaseService {
           localField: 'bogoItems.itemId',
           foreignField: '_id',
           as: 'bogoItemDetails',
+        },
+      },
+      {
+        $lookup: {
+          from: 'menu-items',
+          localField: 'bogoItemDetails.subItem.menuItem',
+          foreignField: '_id',
+          as: 'bogoSubItemDetails',
         },
       },
       {
@@ -293,7 +360,52 @@ class MenuItemService extends BaseService {
           },
         },
       },
-      { $project: { bogoItemDetails: 0 } },
+      {
+        $addFields: {
+          bogoItems: {
+            $map: {
+              input: '$bogoItems',
+              as: 'bogo',
+              in: {
+                $mergeObjects: [
+                  '$$bogo',
+                  {
+                    subItem: {
+                      $map: {
+                        input: { $ifNull: ['$$bogo.subItem', []] },
+                        as: 'sub',
+                        in: {
+                          $mergeObjects: [
+                            {
+                              $arrayElemAt: [
+                                {
+                                  $filter: {
+                                    input: '$bogoSubItemDetails',
+                                    as: 'details',
+                                    cond: {
+                                      $eq: ['$$details._id', '$$sub.menuItem'],
+                                    },
+                                  },
+                                },
+                                0,
+                              ],
+                            },
+                            {
+                              _id: '$$sub.menuItem',
+                              qty: '$$sub.qty',
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+      { $project: { bogoItemDetails: 0, bogoSubItemDetails: 0 } },
     ]);
   }
 }

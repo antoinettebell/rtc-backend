@@ -34,6 +34,10 @@ const {
 const {
   getDiscountSourceItem,
 } = require('../../helper/order-discount-helper');
+const {
+  calculateRuleBasedBogoPricing,
+  roundCurrency,
+} = require('../../helper/order-bogo-pricing-helper');
 const { OrderModel } = require('../../models');
 
 const { env } = require('../../config');
@@ -1886,45 +1890,41 @@ exports.validateOrder = async (req, res, next) => {
           }
 
           if (discountRules && discountRules.discount > 0) {
-            const {
-              buyQty = 1,
-              getQty = 1,
-              discount: discountVal = 0,
-              repeatable = true,
-            } = discountRules;
+            const rewardBasePrice = Number(
+              discountSourceItem?.price ?? price
+            ) || 0;
+            const bogoPricing = calculateRuleBasedBogoPricing({
+              primaryUnitPrice: unitPrice,
+              quantity: item.qty,
+              rewardBasePrice,
+              rewardOptionsCost: selectedDiscountOptionsCost,
+              discountRules,
+            });
+            const rewardItems = bogoPricing.rewardQuantity;
+            const rewardLinePrice = bogoPricing.rewardUnitPrice;
+            const discountVal = Number(discountRules.discount) || 0;
 
-            const eligibleSets = repeatable
-              ? Math.floor(item.qty / buyQty)
-              : item.qty >= buyQty
-              ? 1
-              : 0;
-
-            const rewardItems = eligibleSets * getQty;
-            const rewardTotal =
-              rewardItems * (price + selectedDiscountOptionsCost);
-            const discountAmount = rewardItems * price * discountVal;
-            const rewardLinePrice =
-              price * (1 - discountVal) + selectedDiscountOptionsCost;
-
-            itemTotal = mainSubtotal + rewardTotal - discountAmount;
+            itemTotal = bogoPricing.totalBeforeRounding;
 
             // Update bogoItems in updatedFullMenuItemData for front-end display
-            updatedFullMenuItemData.bogoItems = [
-              {
-                itemId: item.menuItemId,
-                name: name,
+            updatedFullMenuItemData.bogoItems = (
+              Array.isArray(bogoItemsatrray) && bogoItemsatrray.length
+                ? bogoItemsatrray
+                : [{ itemId: item.menuItemId, isSameItem: true }]
+            ).map((bogo) => ({
+                ...bogo,
+                itemId: bogo.isSameItem ? item.menuItemId : bogo.itemId,
+                name: bogo.isSameItem ? name : bogo.name,
                 price: rewardLinePrice,
                 qty: rewardItems,
-                isSameItem: true,
                 discountVal: discountVal,
-                allowCustomize,
-                hasFlavors,
-                hasToppings,
-                itemType,
-                comboSideOptions: menuIds[item.menuItemId].comboSideOptions,
-                comboSidesPerOrder: menuIds[item.menuItemId].comboSidesPerOrder,
-              },
-            ];
+                allowCustomize: discountSourceItem?.allowCustomize,
+                hasFlavors: discountSourceItem?.hasFlavors,
+                hasToppings: discountSourceItem?.hasToppings,
+                itemType: discountSourceItem?.itemType,
+                comboSideOptions: discountSourceItem?.comboSideOptions,
+                comboSidesPerOrder: discountSourceItem?.comboSidesPerOrder,
+              }));
           } else {
             // Fallback to old logic if no discountRules
             // ✅ Only replace bogoItems if discount type is "bogo"
@@ -1966,7 +1966,9 @@ exports.validateOrder = async (req, res, next) => {
               };
               itemTotal =
                 mainSubtotal +
-                (price * 0.5 + selectedDiscountOptionsCost) * item.qty;
+                ((Number(discountSourceItem?.price ?? price) || 0) * 0.5 +
+                  selectedDiscountOptionsCost) *
+                  item.qty;
             }
 
             if (discountType === 'BOGO') {
@@ -1974,13 +1976,15 @@ exports.validateOrder = async (req, res, next) => {
             } else if (discountType === 'BOGOHO') {
               itemTotal =
                 mainSubtotal +
-                (price * 0.5 + selectedDiscountOptionsCost) * item.qty;
+                ((Number(discountSourceItem?.price ?? price) || 0) * 0.5 +
+                  selectedDiscountOptionsCost) *
+                  item.qty;
             } else {
               itemTotal = mainSubtotal;
             }
           }
 
-          itemTotal += comboSubtotal;
+          itemTotal = roundCurrency(itemTotal + comboSubtotal);
 
           menuItems.push({
             menuItemId: item.menuItemId,
@@ -2120,7 +2124,7 @@ exports.validateOrder = async (req, res, next) => {
       normalizedTaxAmount +
       normalizedDriverTip;
     const loc = avalaraTax.loc;
-    total += normalizedFoodTruckTip;
+    total = roundCurrency(total + normalizedFoodTruckTip);
 
     // const counter = await OrderCounterService.updateTheCounter(foodTruck?._id);
 
@@ -3692,43 +3696,39 @@ exports.add = async (req, res, next) => {
 
           // ✅ Only replace bogoItems if discount type is "bogo"
           if (discountRules && discountRules.discount > 0) {
-            const {
-              buyQty = 1,
-              getQty = 1,
-              discount: discountVal = 0,
-              repeatable = true,
-            } = discountRules;
-            const normalizedBuyQty = Math.max(1, Number(buyQty) || 1);
-            const normalizedGetQty = Math.max(1, Number(getQty) || 1);
-            const eligibleSets = repeatable
-              ? Math.floor(item.qty / normalizedBuyQty)
-              : item.qty >= normalizedBuyQty
-              ? 1
-              : 0;
-            const rewardItems = eligibleSets * normalizedGetQty;
-            const rewardTotal =
-              rewardItems * (price + selectedDiscountOptionsCost);
-            const discountAmount = rewardItems * price * discountVal;
-            const rewardLinePrice =
-              price * (1 - discountVal) + selectedDiscountOptionsCost;
+            const rewardBasePrice = Number(
+              discountSourceItem?.price ?? price
+            ) || 0;
+            const bogoPricing = calculateRuleBasedBogoPricing({
+              primaryUnitPrice: unitPrice,
+              quantity: item.qty,
+              rewardBasePrice,
+              rewardOptionsCost: selectedDiscountOptionsCost,
+              discountRules,
+            });
+            const rewardItems = bogoPricing.rewardQuantity;
+            const rewardLinePrice = bogoPricing.rewardUnitPrice;
+            const discountVal = Number(discountRules.discount) || 0;
 
-            itemTotal = mainSubtotal + rewardTotal - discountAmount;
-            updatedFullMenuItemData.bogoItems = [
-              {
-                itemId: item.menuItemId,
-                name: name,
+            itemTotal = bogoPricing.totalBeforeRounding;
+            updatedFullMenuItemData.bogoItems = (
+              Array.isArray(bogoItemsatrray) && bogoItemsatrray.length
+                ? bogoItemsatrray
+                : [{ itemId: item.menuItemId, isSameItem: true }]
+            ).map((bogo) => ({
+                ...bogo,
+                itemId: bogo.isSameItem ? item.menuItemId : bogo.itemId,
+                name: bogo.isSameItem ? name : bogo.name,
                 price: rewardLinePrice,
                 qty: rewardItems,
-                isSameItem: true,
                 discountVal: discountVal,
-                allowCustomize,
-                hasFlavors,
-                hasToppings,
-                itemType,
-                comboSideOptions: menuIds[item.menuItemId].comboSideOptions,
-                comboSidesPerOrder: menuIds[item.menuItemId].comboSidesPerOrder,
-              },
-            ];
+                allowCustomize: discountSourceItem?.allowCustomize,
+                hasFlavors: discountSourceItem?.hasFlavors,
+                hasToppings: discountSourceItem?.hasToppings,
+                itemType: discountSourceItem?.itemType,
+                comboSideOptions: discountSourceItem?.comboSideOptions,
+                comboSidesPerOrder: discountSourceItem?.comboSidesPerOrder,
+              }));
           } else {
             if (discountType && discountType === 'BOGO') {
               updatedFullMenuItemData = {
@@ -3765,11 +3765,13 @@ exports.add = async (req, res, next) => {
               };
               itemTotal =
                 mainSubtotal +
-                (price * 0.5 + selectedDiscountOptionsCost) * item.qty;
+                ((Number(discountSourceItem?.price ?? price) || 0) * 0.5 +
+                  selectedDiscountOptionsCost) *
+                  item.qty;
             }
           }
 
-          itemTotal += comboSubtotal;
+          itemTotal = roundCurrency(itemTotal + comboSubtotal);
 
           menuItems.push({
             menuItemId: item.menuItemId,
@@ -3911,7 +3913,7 @@ exports.add = async (req, res, next) => {
       normalizedTaxAmount +
       normalizedDriverTip;
     const loc = avalaraEstimate.loc;
-    total += normalizedFoodTruckTip;
+    total = roundCurrency(total + normalizedFoodTruckTip);
 
     const counter = await OrderCounterService.updateTheCounter(foodTruck?._id);
 
