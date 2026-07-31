@@ -13,6 +13,11 @@ const { addObjectFromBuffer } = require('../../helper/aws');
 const {
   getVendorPlanCapabilities,
 } = require('../../helper/vendor-plan-helper');
+const {
+  ACTIVE_BOGO_TYPES,
+  getComboSubItemId,
+  hasActiveBogoPromotion,
+} = require('../../helper/combo-promotion-helper');
 
 const URL_PATTERN = /^https?:\/\//i;
 const WINDOWS_1252_REPLACEMENTS = {
@@ -607,6 +612,45 @@ class MenuCsvImportService {
     };
   }
 
+  async validateComboPromotionNesting({ menuItem, rowUserId, updateFilter, rowNumber }) {
+    if (menuItem.itemType === 'COMBO') {
+      const childIds = (Array.isArray(menuItem.subItem) ? menuItem.subItem : [])
+        .map(getComboSubItemId)
+        .filter((id) => Types.ObjectId.isValid(id));
+      const promotionalChildren = childIds.length
+        ? await MenuItemModel.find({
+            _id: { $in: childIds },
+            userId: rowUserId,
+            deletedAt: null,
+            hasDiscount: true,
+            discountType: { $in: ACTIVE_BOGO_TYPES },
+          }).select('name discountType')
+        : [];
+      if (promotionalChildren.length) {
+        throw new Error(
+          `Row ${rowNumber}: active BOGO/BOGOHO items cannot be included inside a combo: ${promotionalChildren
+            .map((item) => `${item.name} (${item.discountType})`)
+            .join(', ')}.`
+        );
+      }
+    }
+
+    if (!hasActiveBogoPromotion(menuItem)) return;
+    const existingItem = await MenuItemModel.findOne(updateFilter).select('_id name');
+    if (!existingItem) return;
+    const parentCombo = await MenuItemModel.findOne({
+      userId: rowUserId,
+      itemType: 'COMBO',
+      'subItem.menuItem': existingItem._id,
+      deletedAt: null,
+    }).select('name');
+    if (parentCombo) {
+      throw new Error(
+        `Row ${rowNumber}: ${menuItem.name} is included in the combo "${parentCombo.name}". Remove it from that combo before activating BOGO/BOGOHO.`
+      );
+    }
+  }
+
   async validateVendor(vendorUserId) {
     const vendor = await UserModel.findOne({
       _id: vendorUserId,
@@ -692,6 +736,12 @@ class MenuCsvImportService {
           menuItem,
           rowUserId
         );
+        await this.validateComboPromotionNesting({
+          menuItem,
+          rowUserId,
+          updateFilter,
+          rowNumber: row._rowNumber,
+        });
         const result = await MenuItemModel.updateOne(
           updateFilter,
           {
