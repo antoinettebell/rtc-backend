@@ -18,6 +18,7 @@ router.get('/', (req, res) => {
 router.get('/review', renderPublicReviewPage);
 
 router.get('/t/:token', MarketplaceTicketController.publicTicketPage);
+router.get('/events/:shareToken', MarketplaceTicketController.publicTicketInvitation);
 router.get(
   '/check-in/:sessionToken',
   MarketplaceTicketController.publicScannerPage

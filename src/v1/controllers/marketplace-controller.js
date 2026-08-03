@@ -29,6 +29,7 @@ const DocuSignHelper = require('../../helper/docusign-helper');
 const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
 const MailHelper = require('../../helper/mail-helper');
 const { docusign } = require('../../config');
+const { EventVendorApplicationModel } = require('../../models');
 const {
   moderateMarketplaceText,
 } = require('../../helper/marketplace-content-moderation');
@@ -3117,6 +3118,16 @@ const finalizePaidVendorPayment = async (payment) => {
   }
 
   if (payment.application_id) {
+    const eventVendorApplication = await EventVendorApplicationModel.findOne({
+      application_id: payment.application_id,
+      vendor_user_id: payment.payer_user_id,
+    });
+    if (eventVendorApplication) {
+      eventVendorApplication.status = 'PAID';
+      eventVendorApplication.payment_id = payment.payment_id;
+      await eventVendorApplication.save();
+      return { eventVendorApplication };
+    }
     const existingApplication = await MarketplaceApplicationService.getByData(
       { application_id: payment.application_id },
       { singleResult: true }
@@ -3860,7 +3871,7 @@ exports.trackPublicEventTicketClick = async (req, res, next) => {
         event_id: req.params.eventId,
         status: 'OPEN',
         ticket_sales_enabled: true,
-        ticket_url: { $nin: [null, ''] },
+        ticket_sales_closed_at: null,
       },
       { $inc: { ticket_click_count: 1 } },
       { directApply: true, getNew: true, lean: true }
@@ -4253,7 +4264,8 @@ exports.submitBid = async (req, res, next) => {
       throw buildError('Only vendors can submit marketplace bids', 403);
     }
 
-    const foodTruck = await getVendorMarketplaceFoodTruck(req.user._id);
+    const isEventVendor = req.user.vendorSubtype === 'EVENT_VENDOR';
+    const foodTruck = isEventVendor ? null : await getVendorMarketplaceFoodTruck(req.user._id);
     await closeExpiredMarketplaceEvents();
     const event = await MarketplaceEventService.getByData(
       { event_id: req.params.eventId, status: { $in: ACTIVE_EVENT_STATUSES } },
@@ -4370,7 +4382,7 @@ exports.submitBid = async (req, res, next) => {
         bid_id: marketplaceBid.bid_id,
         payer_user_id: req.user._id,
         payer_type: 'VENDOR',
-        food_truck_id: foodTruck._id,
+        food_truck_id: foodTruck?._id || null,
         payment_type: 'VENDOR_EVENT_FEE',
         base_amount: vendorFee,
         fee_rate: null,
@@ -5156,7 +5168,7 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
         envelopeId = envelope.envelopeId;
         agreement = await MarketplaceVendorAgreementService.create({
           vendor_user_id: req.user._id,
-          food_truck_id: foodTruck._id,
+          food_truck_id: foodTruck?._id || null,
           event_id: event.event_id,
           bid_id: bid?.bid_id || null,
           application_id: application?.application_id || null,

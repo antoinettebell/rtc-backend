@@ -63,6 +63,7 @@ exports.MarketplaceController = require('./marketplace-controller');
 
 /** Define marketplace ticket controller */
 exports.MarketplaceTicketController = require('./marketplace-ticket-controller');
+exports.EventVendorController = require('./event-vendor-controller');
 
 /** Define vendor compliance controller */
 exports.VendorComplianceController = require('./vendor-compliance-controller');

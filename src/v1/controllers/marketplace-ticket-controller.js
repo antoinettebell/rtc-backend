@@ -15,6 +15,7 @@ const {
   getEntityUseCode,
   cancellationDeadline,
   assertInventoryAvailable,
+  encodeWalletPaymentToken,
 } = require('../../helper/event-ticket-helper');
 const {
   hashTicketToken,
@@ -45,16 +46,6 @@ const addressFromEvent = (event) => ({
   latitude: event.latitude,
   longitude: event.longitude,
 });
-
-const normalizeOpaquePaymentData = (paymentData) => {
-  const source = paymentData?.opaqueToken || paymentData?.opaqueData || paymentData || {};
-  return {
-    token:
-      source.dataValue || source.opaqueToken || source.rawToken || source.token ||
-      (typeof paymentData === 'string' ? paymentData : null),
-    descriptor: source.dataDescriptor || paymentData?.dataDescriptor || null,
-  };
-};
 
 const responseTicketsForOrder = async (order) => {
   const tickets = await MarketplaceTicketModel.find({ ticket_order_id: order.ticket_order_id })
@@ -119,6 +110,7 @@ exports.quote = async (req, res, next) => {
       event_id: req.params.eventId,
       ticket_sales_enabled: true,
       status: { $nin: ['DRAFT', 'CANCELLED'] },
+      ticket_sales_closed_at: null,
       ticket_scanning_closed_at: null,
     }).lean();
     if (!event) throw buildError('Ticket sales are unavailable', 404);
@@ -196,8 +188,7 @@ exports.checkout = async (req, res, next) => {
       entityUseCode,
       transactionCode,
     } = quote;
-    const payment = normalizeOpaquePaymentData(req.body.payment_data);
-    if (!payment.token) throw buildError('Payment token missing');
+    const opaqueToken = encodeWalletPaymentToken(req.body.payment_data);
 
     order = await MarketplaceTicketOrderModel.create({
       event_id: event.event_id,
@@ -222,10 +213,9 @@ exports.checkout = async (req, res, next) => {
     });
 
     const charge = await PaymentHelper.chargePaymentUnified({
-      opaqueToken: payment.token,
+      opaqueToken,
       amount: totalAmount,
       paymentMethod: req.body.payment_method,
-      dataDescriptor: payment.descriptor,
       firstName: req.user.firstName || 'Ticket',
       lastName: req.user.lastName || 'Customer',
       email: req.user.email,
@@ -262,7 +252,7 @@ exports.checkout = async (req, res, next) => {
     const ticketLinks = tickets
       .map(({ ticket, url }) => `${ticket.attendee_label} (${ticket.ticket_type}): ${url}`)
       .join('\n');
-    await Promise.allSettled([
+    const [smsDelivery, emailDelivery] = await Promise.allSettled([
       SmsHelper.sendSms({
         to: order.purchaser_phone,
         body: `RTC tickets for ${event.event_name}:\n${ticketLinks}`,
@@ -279,6 +269,20 @@ exports.checkout = async (req, res, next) => {
           .join('')}`
       ),
     ]);
+    const smsResult = smsDelivery.status === 'fulfilled' ? smsDelivery.value : null;
+    const emailResult = emailDelivery.status === 'fulfilled' ? emailDelivery.value : null;
+    order.ticket_sms_status = smsDelivery.status === 'rejected' || smsResult?.failed
+      ? 'FAILED'
+      : smsResult?.skipped ? 'SKIPPED' : 'SENT';
+    order.ticket_email_status = emailDelivery.status === 'rejected' || emailResult?.failed
+      ? 'FAILED'
+      : 'SENT';
+    order.ticket_sms_failure_reason = smsDelivery.reason?.message || smsResult?.reason || null;
+    order.ticket_email_failure_reason = emailDelivery.reason?.message || emailResult?.reason || null;
+    if (order.ticket_sms_status === 'SENT' && order.ticket_email_status === 'SENT') {
+      order.ticket_delivery_sent_at = new Date();
+    }
+    await order.save();
 
     return res.data(
       {
@@ -673,6 +677,112 @@ exports.closeScanner = async (req, res, next) => {
     );
     if (!event) throw buildError('Event not found or scanner already closed', 404);
     return res.data({ marketplaceEvent: event }, 'Ticket scanning closed');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.closeTicketSales = async (req, res, next) => {
+  try {
+    const now = new Date();
+    const event = await MarketplaceEventModel.findOneAndUpdate(
+      {
+        event_id: req.params.eventId,
+        customer_user_id: req.user._id,
+        ticket_sales_enabled: true,
+        ticket_sales_closed_at: null,
+        status: { $ne: 'CANCELLED' },
+      },
+      { $set: { ticket_sales_closed_at: now, status: 'CLOSED', closed_at: now } },
+      { new: true }
+    );
+    if (!event) throw buildError('Event not found or ticket sales already closed', 404);
+    return res.data({ marketplaceEvent: event }, 'Ticket sales closed; check-in remains available');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.createTicketShareLink = async (req, res, next) => {
+  try {
+    const event = await MarketplaceEventModel.findOne({
+      event_id: req.params.eventId,
+      customer_user_id: req.user._id,
+      ticket_sales_enabled: true,
+      ticket_sales_closed_at: null,
+      status: { $nin: ['DRAFT', 'CANCELLED', 'CLOSED'] },
+    });
+    if (!event) throw buildError('Ticket sales are unavailable', 404);
+    const { token, tokenHash } = createTicketToken();
+    event.ticket_share_token_hash = tokenHash;
+    await event.save();
+    return res.data(
+      { share_url: `${server.publicTicketBaseURL}/events/${encodeURIComponent(token)}` },
+      'Private ticket invitation created'
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.coordinatorTicketSummary = async (req, res, next) => {
+  try {
+    const event = await MarketplaceEventModel.findOne({
+      event_id: req.params.eventId,
+      customer_user_id: req.user._id,
+    }).lean();
+    if (!event) throw buildError('Event not found', 404);
+    const [summary] = await MarketplaceTicketOrderModel.aggregate([
+      { $match: { event_id: event.event_id, status: { $in: ['PAID', 'REFUND_PENDING', 'REFUND_FAILED'] } } },
+      { $group: {
+        _id: null,
+        orders: { $sum: 1 },
+        tickets: { $sum: { $add: ['$ga_quantity', '$vip_quantity'] } },
+        gross_ticket_sales: { $sum: '$ticket_subtotal' },
+        rtc_processing_fee: { $sum: '$coordinator_processing_fee' },
+        collected_sales_tax: { $sum: '$sales_tax' },
+        estimated_net_payout: { $sum: '$net_coordinator_payout' },
+      } },
+    ]);
+    return res.data({
+      summary: summary || {
+        orders: 0, tickets: 0, gross_ticket_sales: 0, rtc_processing_fee: 0,
+        collected_sales_tax: 0, estimated_net_payout: 0,
+      },
+      payout_notice: "Round Da' Corner holds standard ticket funds until 3 business days after your event ends; please allow an additional 5 business days for bank deposits.",
+    }, 'Coordinator ticket summary');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.publicTicketInvitation = async (req, res, next) => {
+  try {
+    const event = await MarketplaceEventModel.findOne({
+      ticket_share_token_hash: hashTicketToken(req.params.shareToken),
+      ticket_sales_enabled: true,
+      ticket_sales_closed_at: null,
+      status: { $nin: ['DRAFT', 'CANCELLED', 'CLOSED'] },
+    }).select('event_id event_name event_date event_city event_state').lean();
+    if (!event) return res.status(404).send('Ticket invitation is unavailable');
+    const deepLink = `rtc-customer://invite/${encodeURIComponent(req.params.shareToken)}`;
+    res.set({ 'Cache-Control': 'no-store, private', 'X-Content-Type-Options': 'nosniff' });
+    return res.type('html').send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>RTC Event Invitation</title><style>body{font-family:-apple-system,sans-serif;background:#0f172a;color:#fff;padding:28px}.card{max-width:480px;margin:auto;background:#fff;color:#172033;padding:28px;border-radius:22px}a{display:block;text-align:center;background:#ea580c;color:#fff;padding:16px;border-radius:14px;text-decoration:none;font-weight:800}</style></head><body><main class="card"><p>ROUND DA' CORNER</p><h1>${String(event.event_name).replace(/[<>&]/g, '')}</h1><p>${String(event.event_city || '')}, ${String(event.event_state || '')}</p><p>Open Round Da' Corner, sign in or create your customer profile, then select your tickets.</p><a href="${deepLink}">Open Ticket Checkout</a></main></body></html>`);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.getTicketInvitationEvent = async (req, res, next) => {
+  try {
+    const event = await MarketplaceEventModel.findOne({
+      ticket_share_token_hash: hashTicketToken(req.params.shareToken),
+      ticket_sales_enabled: true,
+      ticket_sales_closed_at: null,
+      status: { $nin: ['DRAFT', 'CANCELLED', 'CLOSED'] },
+    }).lean();
+    if (!event) throw buildError('Ticket invitation is unavailable', 404);
+    return res.data({ marketplaceEvent: event }, 'Private ticket invitation');
   } catch (error) {
     return next(error);
   }

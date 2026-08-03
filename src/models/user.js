@@ -50,6 +50,13 @@ const mSchema = mongoose.Schema(
       enum: ['SUPER_ADMIN', 'VENDOR', 'CUSTOMER'],
       default: 'CUSTOMER',
     },
+    vendorSubtype: {
+      type: String,
+      enum: ['FOOD_VENDOR', 'EVENT_VENDOR', null],
+      default: null,
+      index: true,
+    },
+    eventVendorBusinessName: { type: String, default: null, trim: true, maxlength: 150 },
     requestStatus: {
       type: String,
       enum: ['PENDING', 'APPROVED', 'REJECTED'],

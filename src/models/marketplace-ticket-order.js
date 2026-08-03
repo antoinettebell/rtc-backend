@@ -54,6 +54,10 @@ const mSchema = mongoose.Schema(
     failure_reason: { type: String, default: null },
     refund_failure_reason: { type: String, default: null },
     ticket_delivery_sent_at: { type: Date, default: null },
+    ticket_sms_status: { type: String, enum: ['PENDING', 'SENT', 'SKIPPED', 'FAILED'], default: 'PENDING' },
+    ticket_email_status: { type: String, enum: ['PENDING', 'SENT', 'FAILED'], default: 'PENDING' },
+    ticket_sms_failure_reason: { type: String, default: null },
+    ticket_email_failure_reason: { type: String, default: null },
   },
   { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } }
 );

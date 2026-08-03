@@ -99,6 +99,9 @@ exports.MarketplaceBidModel = require('./marketplace-bid');
 
 /** Define marketplace application model */
 exports.MarketplaceApplicationModel = require('./marketplace-application');
+exports.EventVendorProfileModel = require('./event-vendor-profile');
+exports.EventVendorPhotoModel = require('./event-vendor-photo');
+exports.EventVendorApplicationModel = require('./event-vendor-application');
 
 /** Define marketplace event question model */
 exports.MarketplaceEventQuestionModel = require('./marketplace-event-question');

@@ -70,11 +70,28 @@ const mSchema = mongoose.Schema(
         type: Boolean,
         default: false,
       },
+      vendorSubtype: {
+        type: String,
+        enum: ['FOOD_VENDOR', 'EVENT_VENDOR', null],
+        default: null,
+      },
+      eventVendorOnly: {
+        type: Boolean,
+        default: false,
+      },
+      awardCheckoutFeeRate: {
+        type: Number,
+        default: 0,
+      },
       multipleTruckUnits: {
         type: Boolean,
         default: false,
       },
       maxSocialMediaLinks: {
+        type: Number,
+        default: 0,
+      },
+      maxGalleryPhotos: {
         type: Number,
         default: 0,
       },

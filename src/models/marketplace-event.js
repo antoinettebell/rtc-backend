@@ -22,6 +22,12 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    event_vendor_needs: [{
+      vendor_type: { type: String, enum: ['MERCHANDISE', 'SERVICE', 'OTHER'], required: true },
+      quantity: { type: Number, min: 1, required: true },
+      fee: { type: Number, min: 0, required: true },
+    }],
+    event_vendor_electricity_fee: { type: Number, min: 0, default: 0 },
     ticket_sales_enabled: {
       type: Boolean,
       default: false,
@@ -68,6 +74,12 @@ const mSchema = mongoose.Schema(
     },
     ticket_sales_closed_at: {
       type: Date,
+      default: null,
+      index: true,
+    },
+    ticket_share_token_hash: {
+      type: String,
+      select: false,
       default: null,
       index: true,
     },

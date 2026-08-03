@@ -2,6 +2,7 @@ const assert = require('assert');
 const { VENDOR_PLAN_TIERS } = require('./vendor-plan-helper');
 
 const basic = VENDOR_PLAN_TIERS.SUB_BASIC;
+const marketplace = VENDOR_PLAN_TIERS.SUB_MARKETPLACE_VENDOR;
 const platinum = VENDOR_PLAN_TIERS.SUB_PLATINUM;
 const elite = VENDOR_PLAN_TIERS.SUB_ELITE;
 const plans = [basic, platinum, elite];
@@ -20,6 +21,13 @@ assert(platinum.details.includes('1099 Reporting'));
 assert(elite.details.includes('1099 Reporting'));
 
 assert.strictEqual(basic.capabilities.employeeLogin, false);
+assert.strictEqual(marketplace.rate, 3.5);
+assert.strictEqual(marketplace.rateType, 'AWARD_CHECKOUT');
+assert.strictEqual(marketplace.capabilities.vendorSubtype, 'EVENT_VENDOR');
+assert.strictEqual(marketplace.capabilities.maxSocialMediaLinks, 2);
+assert.strictEqual(marketplace.capabilities.maxGalleryPhotos, 10);
+assert.strictEqual(marketplace.capabilities.employeeLogin, false);
+assert.strictEqual(marketplace.capabilities.deliveryAcceptance, false);
 assert.strictEqual(platinum.capabilities.employeeLogin, true);
 assert.strictEqual(elite.capabilities.eventMarketplace, true);
 assert.deepStrictEqual(elite.capabilities.walkUpPosPaymentMethods, [

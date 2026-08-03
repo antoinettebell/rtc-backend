@@ -203,6 +203,12 @@ router.post(
   MarketplaceTicketController.publicValidateTicket
 );
 
+router.get(
+  '/marketplace/ticket-invitations/:shareToken',
+  authenticate,
+  MarketplaceTicketController.getTicketInvitationEvent
+);
+
 /** [GET] /api/v1/public/diet */
 router.get('/common-list', CommonDataListController.list);
 

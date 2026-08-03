@@ -3,6 +3,12 @@ const { Joi } = require('express-validation');
 const marketplaceEventBody = {
   event_name: Joi.string().trim().allow(null, ''),
   event_description: Joi.string().allow(null, ''),
+  event_vendor_needs: Joi.array().items(Joi.object({
+    vendor_type: Joi.string().valid('MERCHANDISE', 'SERVICE', 'OTHER').required(),
+    quantity: Joi.number().integer().min(1).required(),
+    fee: Joi.number().min(0).required(),
+  })).default([]),
+  event_vendor_electricity_fee: Joi.number().min(0).default(0),
   ticket_sales_enabled: Joi.boolean().default(false),
   ticket_url: Joi.string().uri().allow(null, ''),
   ga_ticket_quantity: Joi.number().integer().min(0).default(0),

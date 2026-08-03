@@ -56,6 +56,10 @@ module.exports = {
       lastName: Joi.string().trim(),
 
       planId: Joi.string().trim(),
+      vendorSubtype: Joi.string().valid('FOOD_VENDOR', 'EVENT_VENDOR').default('FOOD_VENDOR'),
+      eventVendorBusinessName: Joi.string().trim().min(2).max(150).when('vendorSubtype', {
+        is: 'EVENT_VENDOR', then: Joi.required(), otherwise: Joi.optional(),
+      }),
       profilePic: Joi.string().trim(),
 
       addressLine1: Joi.string().trim().optional(),
@@ -98,7 +102,11 @@ module.exports = {
             mediaUrl: Joi.string().required(),
           })
         ),
-      }).required(),
+      }).when('vendorSubtype', {
+        is: 'FOOD_VENDOR',
+        then: Joi.required(),
+        otherwise: Joi.optional(),
+      }),
       email: Joi.string().required().lowercase().trim(),
       countryCode: Joi.string().required().trim(),
       mobileNumber: Joi.string().required().trim(),

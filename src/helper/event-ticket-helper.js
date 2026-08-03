@@ -23,6 +23,17 @@ const COORDINATOR_PER_TICKET_FEE = 1;
 
 const toMoney = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 
+const encodeWalletPaymentToken = (paymentData) => {
+  if (paymentData === null || paymentData === undefined || paymentData === '') {
+    throw new Error('Payment token missing');
+  }
+  const serialized = typeof paymentData === 'string'
+    ? paymentData
+    : JSON.stringify(paymentData);
+  if (!serialized) throw new Error('Payment token missing');
+  return Buffer.from(serialized).toString('base64');
+};
+
 const getAdmissionsTaxCode = (eventType) =>
   ADMISSIONS_TAX_CODES[String(eventType || '').trim().toLowerCase()] ||
   GENERAL_ADMISSIONS_TAX_CODE;
@@ -175,4 +186,5 @@ module.exports = {
   isScannerAvailable,
   eventStartUtc,
   cancellationDeadline,
+  encodeWalletPaymentToken,
 };

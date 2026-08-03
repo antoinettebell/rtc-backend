@@ -8,6 +8,7 @@ const {
   isScannerAvailable,
   eventStartUtc,
   cancellationDeadline,
+  encodeWalletPaymentToken,
 } = require('./event-ticket-helper');
 
 assert.strictEqual(getAdmissionsTaxCode('Live Music / Concerts'), 'OA020200');
@@ -87,6 +88,17 @@ assert.deepStrictEqual(calculateTicketAmounts({ unitPrice: 50, quantity: 2 }), {
   checkoutSubtotal: 103.5,
   grossCoordinatorPayoutBeforeTax: 96.5,
 });
+
+const appleToken = { data: 'encrypted', signature: 'signed', version: 'EC_v1' };
+assert.deepStrictEqual(
+  JSON.parse(Buffer.from(encodeWalletPaymentToken(appleToken), 'base64').toString()),
+  appleToken
+);
+assert.strictEqual(
+  Buffer.from(encodeWalletPaymentToken('{"google":"token"}'), 'base64').toString(),
+  '{"google":"token"}'
+);
+assert.throws(() => encodeWalletPaymentToken(null), /Payment token missing/);
 
 assert.strictEqual(
   assertInventoryAvailable({ capacity: 100, sold: 94, reserved: 2, requested: 4 }),

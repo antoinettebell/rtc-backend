@@ -19,6 +19,7 @@ const EncryptionService = require('../../helper/encryption');
 const disposableDomains = require('disposable-email-domains');
 const { addObject } = require('../../helper/aws');
 const fs = require('fs');
+const { PlanModel } = require('../../models');
 
 const vendorTaxDigits = (value) =>
   String(value || '').replace(/\D/g, '').slice(0, 9);
@@ -257,6 +258,9 @@ exports.addVendor = async (req, res, next) => {
         firstName,
         lastName,
         foodTruck,
+        planId,
+        vendorSubtype = 'FOOD_VENDOR',
+        eventVendorBusinessName,
         email,
         countryCode,
         mobileNumber,
@@ -275,6 +279,12 @@ exports.addVendor = async (req, res, next) => {
 
     const customError = new Error();
     customError.code = 422;
+
+    const selectedPlan = planId ? await PlanModel.findById(planId).lean() : null;
+    const resolvedVendorSubtype =
+      selectedPlan?.slug === 'SUB_MARKETPLACE_VENDOR' || vendorSubtype === 'EVENT_VENDOR'
+        ? 'EVENT_VENDOR'
+        : 'FOOD_VENDOR';
 
     const emailDomain = email.split('@')[1];
 
@@ -334,6 +344,8 @@ exports.addVendor = async (req, res, next) => {
       user.countryCode = countryCode;
       user.subscribedForOffGrid = subscribedForOffGrid;
       user.profilePic = profilePic || null;
+      user.vendorSubtype = resolvedVendorSubtype;
+      user.eventVendorBusinessName = resolvedVendorSubtype === 'EVENT_VENDOR' ? eventVendorBusinessName : null;
       user.deletedAt = null;
 
       await user.save();
@@ -348,6 +360,8 @@ exports.addVendor = async (req, res, next) => {
         profilePic: profilePic || null,
         subscribedForOffGrid: subscribedForOffGrid,
         userType: 'VENDOR',
+        vendorSubtype: resolvedVendorSubtype,
+        eventVendorBusinessName: resolvedVendorSubtype === 'EVENT_VENDOR' ? eventVendorBusinessName : null,
         verified: false,
         addOns: [],
         addressLine1: addressLine1 || 'NA',
@@ -371,7 +385,10 @@ exports.addVendor = async (req, res, next) => {
       { singleResult: true }
     );
 
-	    const vendorTaxFields = buildVendorTaxIdFields(foodTruck);
+    if (resolvedVendorSubtype === 'EVENT_VENDOR') {
+      fc = null;
+    } else {
+      const vendorTaxFields = buildVendorTaxIdFields(foodTruck);
 
 	    if (fc) {
 	      fc.name = foodTruck.name;
@@ -388,6 +405,7 @@ exports.addVendor = async (req, res, next) => {
 	        infoType: foodTruck.infoType,
         socialMedia: foodTruck.socialMedia || [],
       });
+    }
     }
 
     const otpVerificationToken = await MailHelper.sendOTP(

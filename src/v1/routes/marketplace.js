@@ -3,10 +3,23 @@ const router = express.Router();
 const {
   MarketplaceController: Controller,
   MarketplaceTicketController: TicketController,
+  EventVendorController,
 } = require('../controllers');
 const { validate, MarketplaceValidation: Validation } = require('../validations');
 const { allowedTo } = require('../../middleware/allow-route');
 const MarketplaceUpload = require('../../middleware/marketplace-upload');
+
+router.get('/event-vendor/profile', allowedTo(['VENDOR']), EventVendorController.getProfile);
+router.put('/event-vendor/profile', allowedTo(['VENDOR']), EventVendorController.saveProfile);
+router.get('/event-vendor/photos', allowedTo(['VENDOR']), EventVendorController.listPhotos);
+router.post('/event-vendor/photos', allowedTo(['VENDOR']), MarketplaceUpload.single(), EventVendorController.uploadPhoto);
+router.post('/event-vendor/logo', allowedTo(['VENDOR']), MarketplaceUpload.single(), EventVendorController.uploadLogo);
+router.delete('/event-vendor/photos/:photoId', allowedTo(['VENDOR']), EventVendorController.removePhoto);
+router.get('/event-vendor/events', allowedTo(['VENDOR']), EventVendorController.eligibleEvents);
+router.post('/event-vendor/events/:eventId/applications', allowedTo(['VENDOR']), EventVendorController.submitApplication);
+router.get('/event-vendor/applications/my', allowedTo(['VENDOR']), EventVendorController.myApplications);
+router.post('/event-vendor/applications/:applicationId/award', allowedTo(['CUSTOMER']), EventVendorController.awardApplication);
+router.get('/event-vendor/events/:eventId/applications', allowedTo(['CUSTOMER']), EventVendorController.eventApplications);
 
 router.post(
   '/events',
@@ -93,6 +106,24 @@ router.post(
   '/events/:eventId/tickets/close-scanner',
   allowedTo(['CUSTOMER']),
   TicketController.closeScanner
+);
+
+router.post(
+  '/events/:eventId/tickets/close-sales',
+  allowedTo(['CUSTOMER']),
+  TicketController.closeTicketSales
+);
+
+router.post(
+  '/events/:eventId/tickets/share-link',
+  allowedTo(['CUSTOMER']),
+  TicketController.createTicketShareLink
+);
+
+router.get(
+  '/events/:eventId/tickets/summary',
+  allowedTo(['CUSTOMER']),
+  TicketController.coordinatorTicketSummary
 );
 
 router.post(
