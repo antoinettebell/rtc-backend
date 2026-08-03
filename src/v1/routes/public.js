@@ -16,6 +16,7 @@ const {
   CouponController,
   AddOnsController,
   MarketplaceController,
+  MarketplaceTicketController,
 } = require('../controllers');
 const {
   FoodTruckValidation,
@@ -195,6 +196,11 @@ router.post(
   '/marketplace/events/:eventId/ticket-click',
   authenticate,
   MarketplaceController.trackPublicEventTicketClick
+);
+
+router.post(
+  '/marketplace/tickets/validate',
+  MarketplaceTicketController.publicValidateTicket
 );
 
 /** [GET] /api/v1/public/diet */

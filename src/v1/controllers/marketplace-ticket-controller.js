@@ -1,0 +1,834 @@
+const {
+  MarketplaceEventModel,
+  MarketplaceTicketOrderModel,
+  MarketplaceTicketModel,
+  MarketplaceScannerSessionModel,
+  MarketplaceAttachmentModel,
+  UserModel,
+} = require('../../models');
+const TicketService = require('../services/marketplace-ticket-service');
+const PaymentHelper = require('../../helper/payment-helper');
+const TaxHelper = require('../../helper/tax-helper');
+const {
+  calculateTicketAmounts,
+  getAdmissionsTaxCode,
+  getEntityUseCode,
+  cancellationDeadline,
+  assertInventoryAvailable,
+} = require('../../helper/event-ticket-helper');
+const {
+  hashTicketToken,
+  createTicketToken,
+  buildPublicTicketUrl,
+} = require('../../helper/ticket-token-helper');
+const { server } = require('../../config');
+const fs = require('fs');
+const { addObjectWithKey } = require('../../helper/aws');
+const EncryptionService = require('../../helper/encryption');
+const {
+  renderTicketPage,
+  renderScannerPage,
+} = require('../../helper/public-ticket-page');
+const SmsHelper = require('../../helper/sms-helper');
+const MailHelper = require('../../helper/mail-helper');
+const { isScannerAvailable } = require('../../helper/event-ticket-helper');
+
+const money = (value) => Number(Number(value || 0).toFixed(2));
+const buildError = (message, code = 400) => Object.assign(new Error(message), { code });
+
+const addressFromEvent = (event) => ({
+  line1: event.event_address,
+  city: event.event_city,
+  region: event.event_state,
+  postalCode: event.event_zip,
+  country: 'US',
+  latitude: event.latitude,
+  longitude: event.longitude,
+});
+
+const normalizeOpaquePaymentData = (paymentData) => {
+  const source = paymentData?.opaqueToken || paymentData?.opaqueData || paymentData || {};
+  return {
+    token:
+      source.dataValue || source.opaqueToken || source.rawToken || source.token ||
+      (typeof paymentData === 'string' ? paymentData : null),
+    descriptor: source.dataDescriptor || paymentData?.dataDescriptor || null,
+  };
+};
+
+const responseTicketsForOrder = async (order) => {
+  const tickets = await MarketplaceTicketModel.find({ ticket_order_id: order.ticket_order_id })
+    .select('+token_encrypted')
+    .sort({ created_at: 1 })
+    .lean();
+  return tickets.map((ticket) => {
+    const token = EncryptionService.decrypt(ticket.token_encrypted);
+    const safeTicket = { ...ticket };
+    delete safeTicket.token_encrypted;
+    return { ...safeTicket, ticket_url: buildPublicTicketUrl(server.publicTicketBaseURL, token) };
+  });
+};
+
+const buildTicketQuote = async ({ event, user, gaQuantity, vipQuantity, billingAddress }) => {
+  const gaAmounts = gaQuantity
+    ? calculateTicketAmounts({ unitPrice: event.ga_ticket_price, quantity: gaQuantity })
+    : null;
+  const vipAmounts = vipQuantity
+    ? calculateTicketAmounts({ unitPrice: event.vip_ticket_price, quantity: vipQuantity })
+    : null;
+  const ticketSubtotal = money((gaAmounts?.ticketSubtotal || 0) + (vipAmounts?.ticketSubtotal || 0));
+  const customerProcessingFee = money((gaAmounts?.customerProcessingFee || 0) + (vipAmounts?.customerProcessingFee || 0));
+  const coordinatorProcessingFee = money((gaAmounts?.coordinatorProcessingFee || 0) + (vipAmounts?.coordinatorProcessingFee || 0));
+  const transactionCode = `RTC-TICKET-${Date.now()}-${String(user._id).slice(-6)}`;
+  const exemptionApproved = event.tax_exemption_status === 'APPROVED' &&
+    (!event.tax_exemption_expires_at || event.tax_exemption_expires_at > new Date());
+  const entityUseCode = exemptionApproved
+    ? event.tax_exemption_entity_use_code || getEntityUseCode({
+        charitableEvent: event.charitable_event,
+        religiousOrganization: event.religious_organization,
+      })
+    : null;
+  const taxResult = await TaxHelper.calculateEventTicketTax({
+    shipFrom: addressFromEvent(event),
+    shipTo: billingAddress,
+    ticketAmount: ticketSubtotal,
+    serviceFee: customerProcessingFee,
+    admissionsTaxCode: getAdmissionsTaxCode(event.event_type),
+    customerCode: String(user._id),
+    merchantSellerIdentifier: String(event.customer_user_id),
+    entityUseCode,
+    transactionCode,
+  });
+  if (!taxResult.success) throw buildError(taxResult.message || 'Tax calculation failed', 502);
+  const salesTax = money(taxResult.totalTax);
+  return {
+    ticketSubtotal,
+    customerProcessingFee,
+    coordinatorProcessingFee,
+    salesTax,
+    totalAmount: money(ticketSubtotal + customerProcessingFee + salesTax),
+    netCoordinatorPayout: money(ticketSubtotal - coordinatorProcessingFee - salesTax),
+    entityUseCode,
+    transactionCode,
+  };
+};
+
+exports.quote = async (req, res, next) => {
+  try {
+    const event = await MarketplaceEventModel.findOne({
+      event_id: req.params.eventId,
+      ticket_sales_enabled: true,
+      status: { $nin: ['DRAFT', 'CANCELLED'] },
+      ticket_scanning_closed_at: null,
+    }).lean();
+    if (!event) throw buildError('Ticket sales are unavailable', 404);
+    const gaQuantity = Number(req.body.ga_quantity || 0);
+    const vipQuantity = Number(req.body.vip_quantity || 0);
+    if (gaQuantity) {
+      assertInventoryAvailable({
+        capacity: event.ga_ticket_quantity,
+        sold: event.ga_tickets_sold,
+        reserved: event.ga_tickets_reserved,
+        requested: gaQuantity,
+      });
+    }
+    if (vipQuantity) {
+      assertInventoryAvailable({
+        capacity: event.vip_ticket_quantity,
+        sold: event.vip_tickets_sold,
+        reserved: event.vip_tickets_reserved,
+        requested: vipQuantity,
+      });
+    }
+    const quote = await buildTicketQuote({
+      event,
+      user: req.user,
+      gaQuantity,
+      vipQuantity,
+      billingAddress: req.body.billing_address,
+    });
+    return res.data({ quote }, 'Ticket quote calculated');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.checkout = async (req, res, next) => {
+  let order = null;
+  let inventoryReserved = false;
+  try {
+    const priorOrder = await MarketplaceTicketOrderModel.findOne({
+      customer_user_id: req.user._id,
+      idempotency_key: req.body.idempotency_key,
+    });
+    if (priorOrder) {
+      if (priorOrder.status === 'PAID') {
+        return res.data(
+          { ticketOrder: priorOrder, tickets: await responseTicketsForOrder(priorOrder) },
+          'Ticket purchase already confirmed'
+        );
+      }
+      throw buildError('This ticket purchase is already being processed. Check My Tickets before retrying.', 409);
+    }
+    const gaQuantity = Number(req.body.ga_quantity || 0);
+    const vipQuantity = Number(req.body.vip_quantity || 0);
+    const event = await TicketService.reserveEventInventory({
+      eventId: req.params.eventId,
+      gaQuantity,
+      vipQuantity,
+    });
+    inventoryReserved = true;
+
+    const quote = await buildTicketQuote({
+      event,
+      user: req.user,
+      gaQuantity,
+      vipQuantity,
+      billingAddress: req.body.billing_address,
+    });
+    const {
+      ticketSubtotal,
+      customerProcessingFee,
+      coordinatorProcessingFee,
+      salesTax,
+      totalAmount,
+      netCoordinatorPayout,
+      entityUseCode,
+      transactionCode,
+    } = quote;
+    const payment = normalizeOpaquePaymentData(req.body.payment_data);
+    if (!payment.token) throw buildError('Payment token missing');
+
+    order = await MarketplaceTicketOrderModel.create({
+      event_id: event.event_id,
+      customer_user_id: req.user._id,
+      idempotency_key: req.body.idempotency_key,
+      purchaser_name: `${req.user.firstName || ''} ${req.user.lastName || ''}`.trim() || 'Customer',
+      purchaser_email: req.user.email,
+      purchaser_phone: `${req.user.countryCode || ''}${req.user.mobileNumber || ''}`,
+      ga_quantity: gaQuantity,
+      vip_quantity: vipQuantity,
+      ticket_subtotal: ticketSubtotal,
+      customer_processing_fee: customerProcessingFee,
+      coordinator_processing_fee: coordinatorProcessingFee,
+      sales_tax: salesTax,
+      total_amount: totalAmount,
+      net_coordinator_payout: netCoordinatorPayout,
+      avalara_transaction_code: transactionCode,
+      avalara_entity_use_code: entityUseCode,
+      payment_method: req.body.payment_method,
+      reservation_expires_at: TicketService.reservationExpiry(),
+      status: 'PAYMENT_PROCESSING',
+    });
+
+    const charge = await PaymentHelper.chargePaymentUnified({
+      opaqueToken: payment.token,
+      amount: totalAmount,
+      paymentMethod: req.body.payment_method,
+      dataDescriptor: payment.descriptor,
+      firstName: req.user.firstName || 'Ticket',
+      lastName: req.user.lastName || 'Customer',
+      email: req.user.email,
+      subTotal: money(ticketSubtotal + customerProcessingFee),
+      taxAmount: salesTax,
+      userId: req.user._id,
+    });
+    if (!charge.success) {
+      order.status = 'PAYMENT_FAILED';
+      order.failure_reason = charge.message || 'Payment failed';
+      await order.save();
+      await TicketService.releaseReservation(order);
+      inventoryReserved = false;
+      throw buildError(order.failure_reason);
+    }
+
+    order.gateway_transaction_id =
+      charge.transactionId || charge?.fullResponse?.transId || null;
+    order.status = 'PAID';
+    order.paid_at = new Date();
+    await order.save();
+    await TicketService.confirmReservation(order);
+    inventoryReserved = false;
+    const avalaraCommit = await TaxHelper.commitAvalaraTransaction(transactionCode);
+    if (!avalaraCommit.success) {
+      console.error('Ticket Avalara commit requires reconciliation', {
+        ticketOrderId: order.ticket_order_id,
+        transactionCode,
+        message: avalaraCommit.message,
+      });
+    }
+    const tickets = await TicketService.createTicketsForPaidOrder(order);
+
+    const ticketLinks = tickets
+      .map(({ ticket, url }) => `${ticket.attendee_label} (${ticket.ticket_type}): ${url}`)
+      .join('\n');
+    await Promise.allSettled([
+      SmsHelper.sendSms({
+        to: order.purchaser_phone,
+        body: `RTC tickets for ${event.event_name}:\n${ticketLinks}`,
+        metadata: { ticketOrderId: order.ticket_order_id },
+      }),
+      MailHelper.sendMail(
+        order.purchaser_email,
+        `Your tickets for ${event.event_name}`,
+        `<h2>Your event tickets</h2>${tickets
+          .map(
+            ({ ticket, url }) =>
+              `<p><strong>${ticket.attendee_label} (${ticket.ticket_type})</strong><br><a href="${url}">View secure QR ticket</a></p>`
+          )
+          .join('')}`
+      ),
+    ]);
+
+    return res.data(
+      {
+        ticketOrder: order,
+        tickets: tickets.map(({ ticket, url }) => ({ ...ticket, ticket_url: url })),
+      },
+      'Ticket purchase confirmed'
+    );
+  } catch (error) {
+    if (inventoryReserved) {
+      await TicketService.releaseReservation(
+        order || {
+          event_id: req.params.eventId,
+          ga_quantity: Number(req.body.ga_quantity || 0),
+          vip_quantity: Number(req.body.vip_quantity || 0),
+        }
+      );
+    }
+    if (error?.code === 11000 && req.body.idempotency_key) {
+      const priorOrder = await MarketplaceTicketOrderModel.findOne({
+        customer_user_id: req.user._id,
+        idempotency_key: req.body.idempotency_key,
+      });
+      if (priorOrder?.status === 'PAID') {
+        return res.data(
+          { ticketOrder: priorOrder, tickets: await responseTicketsForOrder(priorOrder) },
+          'Ticket purchase already confirmed'
+        );
+      }
+      return next(buildError('This ticket purchase is already being processed. Check My Tickets before retrying.', 409));
+    }
+    return next(error);
+  }
+};
+
+exports.myTickets = async (req, res, next) => {
+  try {
+    const orders = await MarketplaceTicketOrderModel.find({
+      customer_user_id: req.user._id,
+      status: { $in: ['PAID', 'REFUND_PENDING', 'REFUNDED', 'REFUND_FAILED'] },
+    })
+      .sort({ created_at: -1 })
+      .lean();
+    const orderIds = orders.map((order) => order.ticket_order_id);
+    const eventIds = [...new Set(orders.map((order) => order.event_id))];
+    const [tickets, events] = await Promise.all([
+      MarketplaceTicketModel.find({ ticket_order_id: { $in: orderIds } })
+        .select('+token_encrypted')
+        .sort({ created_at: 1 })
+        .lean(),
+      MarketplaceEventModel.find({ event_id: { $in: eventIds } }).lean(),
+    ]);
+    const eventMap = Object.fromEntries(events.map((event) => [event.event_id, event]));
+    const ticketsByOrder = tickets.reduce((result, ticket) => {
+      const token = EncryptionService.decrypt(ticket.token_encrypted);
+      const safeTicket = { ...ticket };
+      delete safeTicket.token_encrypted;
+      result[ticket.ticket_order_id] = result[ticket.ticket_order_id] || [];
+      result[ticket.ticket_order_id].push({
+        ...safeTicket,
+        ticket_url: buildPublicTicketUrl(server.publicTicketBaseURL, token),
+      });
+      return result;
+    }, {});
+    return res.data(
+      {
+        ticketOrders: orders.map((order) => ({
+          ...order,
+          event: eventMap[order.event_id] || null,
+          tickets: ticketsByOrder[order.ticket_order_id] || [],
+        })),
+      },
+      'My tickets'
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.uploadExemptionCertificate = async (req, res, next) => {
+  try {
+    const event = await MarketplaceEventModel.findOne({
+      event_id: req.params.eventId,
+      customer_user_id: req.user._id,
+    });
+    if (!event) throw buildError('Event not found', 404);
+    if (!event.charitable_event && !event.religious_organization) {
+      throw buildError('This event did not request a tax exemption');
+    }
+    if (!req.file) throw buildError('State Sales Tax Exemption Certificate is required');
+    await MarketplaceAttachmentModel.updateMany(
+      {
+        event_id: event.event_id,
+        attachment_type: 'TAX_EXEMPTION_CERTIFICATE',
+        status: 'ACTIVE',
+      },
+      { $set: { status: 'ARCHIVED', status_reason: 'Replaced by coordinator' } }
+    );
+    const { url, key } = await addObjectWithKey(
+      req.file,
+      'marketplace/events/tax-exemption-certificates'
+    );
+    fs.unlink(req.file.path, () => {});
+    const certificate = await MarketplaceAttachmentModel.create({
+      event_id: event.event_id,
+      attachment_type: 'TAX_EXEMPTION_CERTIFICATE',
+      requirement_label: 'State Sales Tax Exemption Certificate',
+      file_url: url,
+      file_key: key,
+      original_name: req.file.originalname,
+      mime_type: req.file.mimetype,
+      size_bytes: req.file.size,
+      uploaded_by_user_id: req.user._id,
+    });
+    event.tax_exemption_certificate_url = url;
+    event.tax_exemption_status = 'PENDING';
+    event.tax_exemption_entity_use_code = null;
+    event.tax_exemption_reviewed_at = null;
+    event.tax_exemption_reviewed_by_user_id = null;
+    await event.save();
+    return res.data({ certificate, marketplaceEvent: event }, 'Certificate submitted for admin review');
+  } catch (error) {
+    if (req.file?.path) fs.unlink(req.file.path, () => {});
+    return next(error);
+  }
+};
+
+exports.adminListTaxExemptions = async (req, res, next) => {
+  try {
+    const query = {
+      tax_exemption_status: req.query.status || 'PENDING',
+      $or: [{ charitable_event: true }, { religious_organization: true }],
+    };
+    const events = await MarketplaceEventModel.find(query)
+      .populate('customer_user_id', 'firstName lastName email eventCoordinatorCompanyName')
+      .sort({ updated_at: -1 })
+      .lean();
+    const eventIds = events.map((event) => event.event_id);
+    const certificates = await MarketplaceAttachmentModel.find({
+      event_id: { $in: eventIds },
+      attachment_type: 'TAX_EXEMPTION_CERTIFICATE',
+      status: 'ACTIVE',
+    })
+      .sort({ created_at: -1 })
+      .lean();
+    const certificateMap = Object.fromEntries(
+      certificates.map((certificate) => [certificate.event_id, certificate])
+    );
+    return res.data(
+      {
+        taxExemptionList: events.map((event) => ({
+          ...event,
+          certificate: certificateMap[event.event_id] || null,
+        })),
+      },
+      'Event tax exemptions'
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.adminReviewTaxExemption = async (req, res, next) => {
+  try {
+    const event = await MarketplaceEventModel.findOne({
+      event_id: req.params.eventId,
+      $or: [{ charitable_event: true }, { religious_organization: true }],
+    });
+    if (!event) throw buildError('Tax-exemption request not found', 404);
+    const certificate = await MarketplaceAttachmentModel.findOne({
+      event_id: event.event_id,
+      attachment_type: 'TAX_EXEMPTION_CERTIFICATE',
+      status: 'ACTIVE',
+    }).lean();
+    if (!certificate) throw buildError('Tax-exemption certificate is missing', 409);
+
+    const approved = req.body.status === 'APPROVED';
+    const entityUseCode = approved
+      ? getEntityUseCode({
+          charitableEvent: event.charitable_event,
+          religiousOrganization: event.religious_organization,
+        })
+      : null;
+    event.tax_exemption_status = req.body.status;
+    event.tax_exemption_entity_use_code = entityUseCode;
+    event.tax_exemption_expires_at = approved ? req.body.expiration_date || null : null;
+    event.tax_exemption_reviewed_at = new Date();
+    event.tax_exemption_reviewed_by_user_id = req.user._id;
+    await event.save();
+
+    await UserModel.updateOne(
+      { _id: event.customer_user_id },
+      {
+        $set: {
+          eventCoordinatorEntityUseCode: entityUseCode,
+          eventCoordinatorTaxExemptionStatus: req.body.status,
+          eventCoordinatorTaxExemptionExpiresAt:
+            approved ? req.body.expiration_date || null : null,
+        },
+      }
+    );
+    if (!approved) {
+      const coordinator = await UserModel.findById(event.customer_user_id).select('email firstName').lean();
+      if (coordinator?.email) {
+        await MailHelper.sendMail(
+          coordinator.email,
+          `Tax-exemption document needs attention for ${event.event_name}`,
+          `<p>Hello ${coordinator.firstName || 'Event Coordinator'},</p><p>Your State Sales Tax Exemption Certificate for <strong>${event.event_name}</strong> was not approved.</p><p>Please open the event in Round Da' Corner, review the administrator notes, and upload a corrected document.</p>`
+        );
+      }
+    }
+    return res.data({ marketplaceEvent: event }, `Tax exemption ${req.body.status.toLowerCase()}`);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.validateTicket = async (req, res, next) => {
+  try {
+    const event = await MarketplaceEventModel.findOne({
+      event_id: req.params.eventId,
+      customer_user_id: req.user._id,
+    }).lean();
+    if (!event) throw buildError('Event not found', 404);
+    if (
+      !isScannerAvailable({
+        eventDate: event.event_date,
+        timeZone: event.event_timezone,
+        closedAt: event.ticket_scanning_closed_at,
+      })
+    ) {
+      throw buildError('Ticket scanning is not currently available', 403);
+    }
+
+    const tokenHash = hashTicketToken(req.body.ticket_token);
+    const checkedInAt = new Date();
+    const ticket = await MarketplaceTicketModel.findOneAndUpdate(
+      { event_id: event.event_id, token_hash: tokenHash, status: 'ACTIVE' },
+      {
+        $set: {
+          status: 'CHECKED_IN',
+          checked_in_at: checkedInAt,
+          checked_in_by_user_id: req.user._id,
+          checked_in_session_id: req.body.scanner_session_id || null,
+        },
+      },
+      { new: true }
+    ).select('+token_hash');
+
+    if (!ticket) {
+      const existing = await MarketplaceTicketModel.findOne({ token_hash: tokenHash })
+        .select('+token_hash')
+        .lean();
+      if (!existing) throw buildError('Invalid ticket', 404);
+      if (existing.event_id !== event.event_id) throw buildError('Ticket belongs to another event', 409);
+      throw buildError(
+        existing.status === 'CHECKED_IN'
+          ? `Ticket already checked in${
+              existing.checked_in_at ? ` at ${existing.checked_in_at.toISOString()}` : ''
+            }`
+          : `Ticket is ${existing.status.toLowerCase().replaceAll('_', ' ')}`,
+        409
+      );
+    }
+
+    return res.data(
+      {
+        valid: true,
+        attendeeName: ticket.attendee_label,
+        ticketType: ticket.ticket_type,
+        checkedInAt,
+      },
+      'Ticket checked in'
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.cancelEventAndRefundTickets = async (req, res, next) => {
+  try {
+    let event = await MarketplaceEventModel.findOne({
+      event_id: req.params.eventId,
+      customer_user_id: req.user._id,
+    });
+    if (!event) throw buildError('Event not found', 404);
+
+    if (event.status !== 'CANCELLED') {
+      const deadline = cancellationDeadline(event);
+      if (new Date() > deadline) {
+        throw buildError('Events must be cancelled at least 72 hours before they begin', 409);
+      }
+      event.status = 'CANCELLED';
+      event.cancelled_at = new Date();
+      event.ticket_sales_closed_at = new Date();
+      event.ticket_scanning_closed_at = new Date();
+      await event.save();
+      await MarketplaceTicketModel.updateMany(
+        { event_id: event.event_id, status: { $in: ['ACTIVE', 'CHECKED_IN'] } },
+        { $set: { status: 'EVENT_CANCELLED' } }
+      );
+    }
+
+    const refundableOrders = await MarketplaceTicketOrderModel.find({
+      event_id: event.event_id,
+      status: { $in: ['PAID', 'REFUND_FAILED'] },
+    });
+    const results = [];
+    for (const candidate of refundableOrders) {
+      const order = await MarketplaceTicketOrderModel.findOneAndUpdate(
+        { _id: candidate._id, status: candidate.status },
+        { $set: { status: 'REFUND_PENDING', refund_failure_reason: null } },
+        { new: true }
+      );
+      if (!order) continue;
+
+      const refund = await PaymentHelper.processRefund({
+        transactionId: order.gateway_transaction_id,
+        amount: order.total_amount,
+      });
+      if (refund.success) {
+        order.status = 'REFUNDED';
+        order.refund_transaction_id = refund.refundTransactionId || null;
+        order.refunded_at = new Date();
+        await order.save();
+        await TaxHelper.voidAvalaraTransaction(order.avalara_transaction_code);
+        await Promise.allSettled([
+          SmsHelper.sendSms({
+            to: order.purchaser_phone,
+            body: `RTC: ${event.event_name} was cancelled. Your ticket refund of $${money(
+              order.total_amount
+            ).toFixed(2)} has been issued.`,
+            metadata: { ticketOrderId: order.ticket_order_id },
+          }),
+          MailHelper.sendMail(
+            order.purchaser_email,
+            `${event.event_name} cancelled — refund issued`,
+            `<p>${event.event_name} was cancelled.</p><p>Your ticket refund of <strong>$${money(
+              order.total_amount
+            ).toFixed(2)}</strong> has been issued.</p>`
+          ),
+        ]);
+        results.push({ ticket_order_id: order.ticket_order_id, status: 'REFUNDED' });
+      } else {
+        order.status = 'REFUND_FAILED';
+        order.refund_failure_reason = refund.message || 'Refund failed';
+        await order.save();
+        await Promise.allSettled([
+          SmsHelper.sendSms({
+            to: order.purchaser_phone,
+            body: `RTC: ${event.event_name} was cancelled. Your ticket refund is being reviewed and will be processed manually.`,
+            metadata: { ticketOrderId: order.ticket_order_id },
+          }),
+          MailHelper.sendMail(
+            order.purchaser_email,
+            `${event.event_name} cancelled — refund processing`,
+            `<p>${event.event_name} was cancelled.</p><p>Your ticket refund is being reviewed and will be processed manually.</p>`
+          ),
+        ]);
+        results.push({
+          ticket_order_id: order.ticket_order_id,
+          status: 'REFUND_FAILED',
+          reason: order.refund_failure_reason,
+        });
+      }
+    }
+
+    return res.data(
+      {
+        marketplaceEvent: event,
+        refunds: results,
+        refunded_count: results.filter((item) => item.status === 'REFUNDED').length,
+        failed_count: results.filter((item) => item.status === 'REFUND_FAILED').length,
+      },
+      "Refunds are due immediately upon cancellation."
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.closeScanner = async (req, res, next) => {
+  try {
+    const event = await MarketplaceEventModel.findOneAndUpdate(
+      {
+        event_id: req.params.eventId,
+        customer_user_id: req.user._id,
+        ticket_scanning_closed_at: null,
+      },
+      { $set: { ticket_scanning_closed_at: new Date() } },
+      { new: true }
+    );
+    if (!event) throw buildError('Event not found or scanner already closed', 404);
+    return res.data({ marketplaceEvent: event }, 'Ticket scanning closed');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.createScannerSession = async (req, res, next) => {
+  try {
+    const event = await MarketplaceEventModel.findOne({
+      event_id: req.params.eventId,
+      customer_user_id: req.user._id,
+    }).lean();
+    if (!event) throw buildError('Event not found', 404);
+    if (
+      !isScannerAvailable({
+        eventDate: event.event_date,
+        timeZone: event.event_timezone,
+        closedAt: event.ticket_scanning_closed_at,
+      })
+    ) {
+      throw buildError('Scanner opens at 6:00 a.m. on the event day', 403);
+    }
+    const { token, tokenHash } = createTicketToken();
+    await MarketplaceScannerSessionModel.create({
+      session_token_hash: tokenHash,
+      event_id: event.event_id,
+      coordinator_user_id: req.user._id,
+      expires_at: new Date(Date.now() + 36 * 60 * 60 * 1000),
+    });
+    return res.data(
+      {
+        scanner_url: `${server.publicTicketBaseURL}/check-in/${encodeURIComponent(token)}`,
+      },
+      'Scanner session created'
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.publicTicketPage = async (req, res, next) => {
+  try {
+    const ticket = await MarketplaceTicketModel.findOne({
+      token_hash: hashTicketToken(req.params.token),
+    })
+      .select('+token_hash')
+      .lean();
+    if (!ticket) return res.status(404).send('Ticket not found');
+    const event = await MarketplaceEventModel.findOne({ event_id: ticket.event_id }).lean();
+    if (!event) return res.status(404).send('Event not found');
+    res.set({
+      'Cache-Control': 'no-store, private',
+      'Content-Security-Policy':
+        "default-src 'none'; script-src 'self' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'self'",
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.type('html').send(
+      renderTicketPage({
+        ticket,
+        event,
+        ticketUrl: `${server.publicTicketBaseURL}/t/${encodeURIComponent(req.params.token)}`,
+      })
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.publicScannerPage = async (req, res, next) => {
+  try {
+    const session = await MarketplaceScannerSessionModel.findOne({
+      session_token_hash: hashTicketToken(req.params.sessionToken),
+      revoked_at: null,
+      expires_at: { $gt: new Date() },
+    })
+      .select('+session_token_hash')
+      .lean();
+    if (!session) return res.status(404).send('Scanner session expired');
+    const event = await MarketplaceEventModel.findOne({ event_id: session.event_id }).lean();
+    if (!event) return res.status(404).send('Event not found');
+    res.set({
+      'Cache-Control': 'no-store, private',
+      'Content-Security-Policy':
+        "default-src 'none'; script-src 'self' 'unsafe-inline' https://unpkg.com; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; base-uri 'none'; frame-ancestors 'self'",
+      'Permissions-Policy': 'camera=(self)',
+      'Referrer-Policy': 'no-referrer',
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return res.type('html').send(
+      renderScannerPage({ event, sessionToken: req.params.sessionToken })
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.publicValidateTicket = async (req, res, next) => {
+  try {
+    const session = await MarketplaceScannerSessionModel.findOneAndUpdate(
+      {
+        session_token_hash: hashTicketToken(req.body.scanner_session_token),
+        event_id: req.body.event_id,
+        revoked_at: null,
+        expires_at: { $gt: new Date() },
+      },
+      { $set: { last_used_at: new Date() } },
+      { new: true }
+    ).select('+session_token_hash');
+    if (!session) throw buildError('Scanner session expired', 401);
+    const event = await MarketplaceEventModel.findOne({ event_id: session.event_id }).lean();
+    if (
+      !event ||
+      !isScannerAvailable({
+        eventDate: event.event_date,
+        timeZone: event.event_timezone,
+        closedAt: event.ticket_scanning_closed_at,
+      })
+    ) {
+      throw buildError('Ticket scanning is closed', 403);
+    }
+
+    const tokenHash = hashTicketToken(req.body.ticket_token);
+    const checkedInAt = new Date();
+    const ticket = await MarketplaceTicketModel.findOneAndUpdate(
+      { event_id: event.event_id, token_hash: tokenHash, status: 'ACTIVE' },
+      {
+        $set: {
+          status: 'CHECKED_IN',
+          checked_in_at: checkedInAt,
+          checked_in_by_user_id: session.coordinator_user_id,
+          checked_in_session_id: String(session._id),
+        },
+      },
+      { new: true }
+    );
+    if (!ticket) {
+      const existing = await MarketplaceTicketModel.findOne({ token_hash: tokenHash })
+        .select('+token_hash')
+        .lean();
+      if (!existing) throw buildError('Invalid ticket', 404);
+      if (existing.event_id !== event.event_id) throw buildError('Ticket belongs to another event', 409);
+      throw buildError(
+        existing.status === 'CHECKED_IN' ? 'Ticket already used' : `Ticket is ${existing.status.toLowerCase().replaceAll('_', ' ')}`,
+        409
+      );
+    }
+    return res.data(
+      {
+        valid: true,
+        attendeeName: ticket.attendee_label,
+        ticketType: ticket.ticket_type,
+        checkedInAt,
+      },
+      'Ticket checked in'
+    );
+  } catch (error) {
+    return next(error);
+  }
+};

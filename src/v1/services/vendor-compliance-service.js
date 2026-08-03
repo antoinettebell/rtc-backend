@@ -574,6 +574,7 @@ const deleteUnverifiedDocument = async ({
   reason,
   replacedByDocumentId,
 }) => {
+  const attachedToMarketplace = await isDocumentAttachedToMarketplace(document);
   await removeLinkedFoodTruckDocuments(document);
 
   await VendorComplianceAuditService.create({
@@ -594,7 +595,7 @@ const deleteUnverifiedDocument = async ({
     document_id: document.document_id,
   });
 
-  if (document.file_key) {
+  if (document.file_key && !attachedToMarketplace) {
     await removeObject(document.file_key);
   }
 };
@@ -680,9 +681,7 @@ const retainOrDeleteExistingDocument = async ({
 
   await Promise.all(
     existingDocuments.map(async (document) => {
-      const shouldRetain =
-        document.review_status === 'verified' ||
-        (await isDocumentAttachedToMarketplace(document));
+      const shouldRetain = document.review_status === 'verified';
 
       if (!shouldRetain) {
         await deleteUnverifiedDocument({
@@ -702,6 +701,40 @@ const retainOrDeleteExistingDocument = async ({
       await document.save();
     })
   );
+};
+
+const reconcileActiveComplianceDocuments = async ({ foodTruckId = null } = {}) => {
+  const documents = await VendorComplianceDocumentService.getByData(
+    {
+      ...(foodTruckId ? { food_truck_id: foodTruckId } : {}),
+      review_status: { $ne: 'archived' },
+      archived_at: null,
+    },
+    { sort: { created_at: -1 } }
+  );
+  const newestByKey = new Map();
+  for (const document of documents || []) {
+    const key = `${document.food_truck_id}:${document.document_type}`;
+    if (!newestByKey.has(key)) {
+      newestByKey.set(key, document);
+      continue;
+    }
+    const newest = newestByKey.get(key);
+    if (document.review_status === 'verified') {
+      document.review_status = 'archived';
+      document.archived_at = new Date();
+      document.archived_reason = 'Replaced by newer compliance document';
+      document.replaced_by_document_id = newest.document_id;
+      await document.save();
+    } else {
+      await deleteUnverifiedDocument({
+        document,
+        actorUserId: newest.uploaded_by_user_id,
+        reason: 'Unverified duplicate replaced by newer compliance document',
+        replacedByDocumentId: newest.document_id,
+      });
+    }
+  }
 };
 
 const uploadComplianceDocument = async ({
@@ -786,6 +819,41 @@ const syncLegacyFoodTruckDocuments = async ({ foodTruckId = null } = {}) => {
   for (const foodTruck of foodTrucks || []) {
     if (!foodTruck?._id || !foodTruck?.userId) continue;
     let foodTruckChanged = false;
+
+    const newestLegacyByType = new Map();
+    for (const legacyDocument of foodTruck.documents || []) {
+      const status = String(
+        legacyDocument?.compliance_status ||
+          legacyDocument?.compliance_review_status ||
+          legacyDocument?.document_status ||
+          ''
+      ).toUpperCase();
+      if (!legacyDocument?.file_url || ['ARCHIVED', 'REJECTED', 'DELETED'].includes(status)) continue;
+      const type = normalizeComplianceDocumentType(legacyDocument.document_type);
+      const existing = newestLegacyByType.get(type);
+      const uploadedAt = new Date(legacyDocument.uploaded_at || 0).getTime();
+      const existingUploadedAt = new Date(existing?.uploaded_at || 0).getTime();
+      if (!existing || uploadedAt >= existingUploadedAt) newestLegacyByType.set(type, legacyDocument);
+    }
+
+    foodTruck.documents = (foodTruck.documents || []).filter((legacyDocument) => {
+      if (!legacyDocument?.file_url) return true;
+      const type = normalizeComplianceDocumentType(legacyDocument.document_type);
+      const newest = newestLegacyByType.get(type);
+      if (!newest || newest === legacyDocument) return true;
+      const verified =
+        String(
+          legacyDocument.compliance_status ||
+            legacyDocument.compliance_review_status ||
+            ''
+        ).toUpperCase() === 'VERIFIED';
+      foodTruckChanged = true;
+      if (!verified) return false;
+      legacyDocument.document_status = 'ARCHIVED';
+      legacyDocument.compliance_status = 'ARCHIVED';
+      legacyDocument.archived_at = new Date();
+      return true;
+    });
 
     for (const legacyDocument of foodTruck.documents || []) {
       const legacyComplianceStatus = String(
@@ -1187,6 +1255,7 @@ module.exports = {
   getSanitationGradeMap,
   getSanitationGradeFromFields,
   uploadComplianceDocument,
+  reconcileActiveComplianceDocuments,
   syncLegacyFoodTruckDocuments,
   submitComplianceDocumentsForOcr,
   reviewComplianceDocument,

@@ -9,6 +9,8 @@ module.exports = {
     port: process.env.SERVER_PORT || 3000,
     backendBaseURL: process.env.SERVER_BACKEND_BASE_URL,
     frontendBaseURL: process.env.FRONTEND_BASE_URL,
+    publicTicketBaseURL:
+      process.env.PUBLIC_TICKET_BASE_URL || 'https://tickets.roundthecornerapp.com',
   },
   JWT: {
     secret: process.env.JWT_SECRET_KEY,
@@ -52,7 +54,8 @@ module.exports = {
       AVALARA_USERNAME: process.env.AVALARA_USERNAME,
       AVALARA_PASSWORD: process.env.AVALARA_PASSWORD,
       AVALARA_URL: process.env.AVALARA_URL,
-      AVALARA_CLIENT_HEADER: process.env.AVALARA_CLIENT_HEADER
+      AVALARA_CLIENT_HEADER: process.env.AVALARA_CLIENT_HEADER,
+      AVALARA_MERCHANT_SELLER_ID: process.env.AVALARA_MERCHANT_SELLER_ID,
     },
     authorizenet: {
       // sandip bhai sanbox account
@@ -97,4 +100,3 @@ module.exports = {
         'developer@roundthecornerapp.com',
     },
   };
-

@@ -1,6 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const { MarketplaceController: Controller } = require('../controllers');
+const {
+  MarketplaceController: Controller,
+  MarketplaceTicketController: TicketController,
+} = require('../controllers');
 const { validate, MarketplaceValidation: Validation } = require('../validations');
 const { allowedTo } = require('../../middleware/allow-route');
 const MarketplaceUpload = require('../../middleware/marketplace-upload');
@@ -52,6 +55,59 @@ router.get(
   Controller.myEvents
 );
 
+router.post(
+  '/events/:eventId/tickets/checkout',
+  allowedTo(['CUSTOMER']),
+  validate(Validation.checkoutTickets),
+  TicketController.checkout
+);
+
+router.get(
+  '/tickets/my',
+  allowedTo(['CUSTOMER']),
+  TicketController.myTickets
+);
+
+router.post(
+  '/events/:eventId/tax-exemption-certificate',
+  allowedTo(['CUSTOMER']),
+  MarketplaceUpload.single(),
+  TicketController.uploadExemptionCertificate
+);
+
+router.post(
+  '/events/:eventId/tickets/quote',
+  allowedTo(['CUSTOMER']),
+  validate(Validation.quoteTickets),
+  TicketController.quote
+);
+
+router.post(
+  '/events/:eventId/tickets/validate',
+  allowedTo(['CUSTOMER']),
+  validate(Validation.validateTicket),
+  TicketController.validateTicket
+);
+
+router.post(
+  '/events/:eventId/tickets/close-scanner',
+  allowedTo(['CUSTOMER']),
+  TicketController.closeScanner
+);
+
+router.post(
+  '/events/:eventId/tickets/scanner-session',
+  allowedTo(['CUSTOMER']),
+  TicketController.createScannerSession
+);
+
+router.post(
+  '/events/:eventId/tickets/cancel-event',
+  allowedTo(['CUSTOMER']),
+  validate(Validation.cancelTicketedEvent),
+  TicketController.cancelEventAndRefundTickets
+);
+
 router.get(
   '/events/open',
   allowedTo(['VENDOR']),
@@ -77,6 +133,19 @@ router.get(
   allowedTo(['SUPER_ADMIN']),
   validate(Validation.adminMarketplaceEvents),
   Controller.adminMarketplaceEvents
+);
+
+router.get(
+  '/repository/tax-exemptions',
+  allowedTo(['SUPER_ADMIN']),
+  TicketController.adminListTaxExemptions
+);
+
+router.patch(
+  '/repository/tax-exemptions/:eventId/review',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.reviewTaxExemption),
+  TicketController.adminReviewTaxExemption
 );
 
 router.patch(

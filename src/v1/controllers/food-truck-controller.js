@@ -1898,7 +1898,11 @@ exports.nearMe = async (req, res, next) => {
         : { data: [], total: 0 },
       includeEvents
         ? MarketplaceEventService.getByData(
-            { status: 'OPEN', event_visibility: 'PUBLIC' },
+            {
+              status: 'OPEN',
+              event_visibility: 'PUBLIC',
+              tax_exemption_status: { $in: ['NOT_REQUESTED', 'APPROVED'] },
+            },
             {
               sort: { event_date: 1, event_time: 1, created_at: -1 },
               lean: true,

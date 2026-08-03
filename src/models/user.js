@@ -149,6 +149,20 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    eventCoordinatorEntityUseCode: {
+      type: String,
+      enum: ['E', 'F', null],
+      default: null,
+    },
+    eventCoordinatorTaxExemptionStatus: {
+      type: String,
+      enum: ['NOT_REQUESTED', 'PENDING', 'APPROVED', 'REJECTED', 'EXPIRED'],
+      default: 'NOT_REQUESTED',
+    },
+    eventCoordinatorTaxExemptionExpiresAt: {
+      type: Date,
+      default: null,
+    },
     eventCoordinatorDirectDepositRoutingNumber: {
       type: String,
       default: null,

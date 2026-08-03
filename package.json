@@ -10,6 +10,7 @@
     "test:sms": "node src/helper/sms-helper.test.js",
     "test:employee-shifts": "node src/v1/services/employee-operational-day.test.js",
     "test:reviews": "node src/helper/review-url-helper.test.js",
+    "test:tickets": "node src/helper/event-ticket-helper.test.js && node src/helper/ticket-token-helper.test.js && node src/helper/public-ticket-page.test.js",
     "migrate:reviews": "node scripts/migrate-review-ratings.js"
   },
   "author": "Tailor",

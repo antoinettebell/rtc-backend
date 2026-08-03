@@ -343,7 +343,9 @@ const normalizeMarketplaceEventLocation = (body) => {
 const normalizeMarketplaceVendorCount = (body) => {
   const serviceTypes = asArray(body.service_types?.length ? body.service_types : body.service_type);
   if (body.primary_service_style === 'Food Truck' || serviceTypes.includes('Food Truck')) {
-    return Math.max(1, Math.ceil(Number(body.number_of_guests || 0) / 100));
+    const guestCount = Number(body.number_of_guests || 0) +
+      (body.catered_vip_section_enabled ? 0 : Number(body.vip_guest_count || 0));
+    return Math.max(1, Math.ceil(guestCount / 100));
   }
 
   return Math.max(1, Number(body.number_of_vendors_needed || 1));
@@ -408,9 +410,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
         : null
       : null;
   const cateredVipSectionEnabled = Boolean(body.catered_vip_section_enabled);
-  const vipGuestCount = cateredVipSectionEnabled
-    ? Math.max(0, Number(body.vip_guest_count || 0))
-    : 0;
+  const vipGuestCount = Math.max(0, Number(body.vip_guest_count || 0));
   const rawEventDurationHours = Number(body.event_duration_hours || 0);
   const rawEventDurationMinutes = Number(body.event_duration_minutes || 0);
   const eventDurationHours = Number.isFinite(rawEventDurationHours)
@@ -448,7 +448,17 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     free_food_provider: freeFoodProvider,
 	    vendors_required_to_giveaway_food: vendorsRequiredToGiveawayFood,
 	    catered_vip_section_enabled: cateredVipSectionEnabled,
-	    vip_guest_count: vipGuestCount,
+    vip_guest_count: vipGuestCount,
+	    tax_exemption_status:
+      body.charitable_event || body.religious_organization
+        ? existingEvent?.tax_exemption_status === 'APPROVED'
+          ? 'APPROVED'
+          : 'PENDING'
+        : 'NOT_REQUESTED',
+	    tax_exemption_entity_use_code:
+      existingEvent?.tax_exemption_status === 'APPROVED'
+        ? existingEvent.tax_exemption_entity_use_code
+        : null,
 		    draft_expires_at:
 	      isDraft && !existingEvent?.draft_expires_at
         ? new Date(Date.now() + DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000)
@@ -546,6 +556,19 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     }
   }
   normalized.number_of_guests = Number(normalized.number_of_guests);
+  if (normalized.ticket_sales_enabled) {
+    const gaQuantity = Number(normalized.ga_ticket_quantity || 0);
+    const vipQuantity = Number(normalized.vip_ticket_quantity || 0);
+    if (gaQuantity < 0 || gaQuantity > normalized.number_of_guests) {
+      throw buildError('GA ticket quantity cannot exceed the number of guests.', 400);
+    }
+    if (vipQuantity < 0 || vipQuantity > Number(normalized.vip_guest_count || 0)) {
+      throw buildError('VIP ticket quantity cannot exceed the number of VIP guests.', 400);
+    }
+    if (gaQuantity + vipQuantity < 1) {
+      throw buildError('At least one GA or VIP ticket is required.', 400);
+    }
+  }
   normalized.number_of_vendors_needed = normalizeMarketplaceVendorCount(normalized);
   normalized.draft_expires_at = null;
   normalized.archived_at = null;
@@ -581,6 +604,7 @@ const closeExpiredMarketplaceEvents = async () => {
     {
       status: { $in: ACTIVE_EVENT_STATUSES },
       event_close_date: { $lte: now },
+      vendor_applications_closed_at: null,
     },
     { lean: true }
   );
@@ -589,7 +613,7 @@ const closeExpiredMarketplaceEvents = async () => {
   }
   await MarketplaceEventService.getModel().updateMany(
     { event_id: { $in: expiredEvents.map((event) => event.event_id) } },
-    { $set: { status: 'CLOSED', closed_at: now } }
+    { $set: { vendor_applications_closed_at: now } }
   );
   for (const event of expiredEvents) {
     await sendEventClosedNotification(event);
@@ -3633,9 +3657,7 @@ exports.closeEvent = async (req, res, next) => {
     const marketplaceEvent = await MarketplaceEventService.update(
       { event_id: req.params.eventId, customer_user_id: req.user._id },
       {
-        status: 'CLOSED',
-        closed_at: now,
-        archived_at: now,
+        vendor_applications_closed_at: now,
         close_comment: req.body.close_comment,
         closed_by_user_id: req.user._id,
       },
@@ -3652,7 +3674,7 @@ exports.closeEvent = async (req, res, next) => {
 
     await notifyClosedWithoutAward(marketplaceEvent);
 
-    return res.data({ marketplaceEvent }, 'Marketplace event closed');
+    return res.data({ marketplaceEvent }, 'Marketplace vendor applications closed');
   } catch (e) {
     return next(e);
   }
@@ -3811,6 +3833,7 @@ exports.getPublicOpenEvent = async (req, res, next) => {
         event_id: req.params.eventId,
         status: 'OPEN',
         event_visibility: 'PUBLIC',
+        tax_exemption_status: { $in: ['NOT_REQUESTED', 'APPROVED'] },
       },
       { $inc: { event_impression_count: 1 } },
       { directApply: true, getNew: true, lean: true }

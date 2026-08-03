@@ -34,6 +34,7 @@ const mSchema = mongoose.Schema(
         'PERMIT_LICENSE',
         'AGREEMENT_DOCUMENT',
         'REQUIREMENT_DOCUMENT',
+        'TAX_EXEMPTION_CERTIFICATE',
       ],
       required: true,
       index: true,

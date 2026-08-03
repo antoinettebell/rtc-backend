@@ -26,6 +26,97 @@ const mSchema = mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    ga_ticket_quantity: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    ga_ticket_price: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    ga_tickets_reserved: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    ga_tickets_sold: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    vip_ticket_quantity: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    vip_ticket_price: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    vip_tickets_reserved: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    vip_tickets_sold: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    ticket_sales_closed_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    vendor_applications_closed_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    ticket_scanning_closed_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    charitable_event: {
+      type: Boolean,
+      default: false,
+    },
+    religious_organization: {
+      type: Boolean,
+      default: false,
+    },
+    tax_exemption_status: {
+      type: String,
+      enum: ['NOT_REQUESTED', 'PENDING', 'APPROVED', 'REJECTED', 'EXPIRED'],
+      default: 'NOT_REQUESTED',
+      index: true,
+    },
+    tax_exemption_entity_use_code: {
+      type: String,
+      enum: ['E', 'F', null],
+      default: null,
+    },
+    tax_exemption_certificate_url: {
+      type: String,
+      default: null,
+    },
+    tax_exemption_expires_at: {
+      type: Date,
+      default: null,
+    },
+    tax_exemption_reviewed_at: {
+      type: Date,
+      default: null,
+    },
+    tax_exemption_reviewed_by_user_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'users',
+      default: null,
+    },
     ticket_url: {
       type: String,
       default: null,
@@ -144,6 +235,10 @@ const mSchema = mongoose.Schema(
     event_time: {
       type: String,
       default: null,
+    },
+    event_timezone: {
+      type: String,
+      default: 'America/New_York',
     },
     event_duration_hours: {
       type: Number,
@@ -307,6 +402,11 @@ const mSchema = mongoose.Schema(
       index: true,
     },
     closed_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    cancelled_at: {
       type: Date,
       default: null,
       index: true,

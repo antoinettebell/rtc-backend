@@ -3,7 +3,7 @@
  */
 const express = require('express');
 const v1Routes = require('./v1/routes');
-const { OrderController } = require('./v1/controllers');
+const { OrderController, MarketplaceTicketController } = require('./v1/controllers');
 const router = express.Router();
 const { server } = require('./config');
 const { renderPublicReviewPage } = require('./helper/public-review-page');
@@ -16,6 +16,12 @@ router.get('/', (req, res) => {
 });
 
 router.get('/review', renderPublicReviewPage);
+
+router.get('/t/:token', MarketplaceTicketController.publicTicketPage);
+router.get(
+  '/check-in/:sessionToken',
+  MarketplaceTicketController.publicScannerPage
+);
 
 /**
  * Image retrieve route

@@ -6,6 +6,8 @@ const {
   VendorComplianceAuditService,
 } = require('../services');
 const VendorComplianceService = require('../services/vendor-compliance-service');
+const MailHelper = require('../../helper/mail-helper');
+const { FoodTruckModel, UserModel } = require('../../models');
 const {
   getComplianceRequirements,
   normalizeComplianceDocumentType,
@@ -281,6 +283,9 @@ exports.adminList = async (req, res, next) => {
     await VendorComplianceService.syncLegacyFoodTruckDocuments({
       foodTruckId: food_truck_id || null,
     });
+    await VendorComplianceService.reconcileActiveComplianceDocuments({
+      foodTruckId: food_truck_id || null,
+    });
 
     const query = {
       review_status: review_status
@@ -318,6 +323,7 @@ exports.adminDashboard = async (req, res, next) => {
   try {
     await VendorComplianceService.purgeRejectedDocuments({ user: req.user });
     await VendorComplianceService.syncLegacyFoodTruckDocuments();
+    await VendorComplianceService.reconcileActiveComplianceDocuments();
 
     const documents = await VendorComplianceDocumentService.getByData(
       { review_status: { $nin: ['archived', 'rejected'] } },
@@ -421,6 +427,19 @@ exports.adminReview = async (req, res, next) => {
     const summary = await VendorComplianceService.calculateComplianceSummary(
       document.food_truck_id
     );
+    if (req.body.review_status === 'rejected') {
+      const foodTruck = await FoodTruckModel.findById(document.food_truck_id).select('userId name').lean();
+      const vendor = foodTruck?.userId
+        ? await UserModel.findById(foodTruck.userId).select('email firstName').lean()
+        : null;
+      if (vendor?.email) {
+        await MailHelper.sendMail(
+          vendor.email,
+          `Compliance document needs attention${foodTruck?.name ? ` for ${foodTruck.name}` : ''}`,
+          `<p>Hello ${vendor.firstName || 'Vendor'},</p><p>Your ${document.document_type || 'compliance'} document was not approved.</p><p>Please open Compliance in Round Da' Corner, review the administrator notes, and upload a corrected document.</p>`
+        );
+      }
+    }
 
     return res.data(
       { complianceDocument: document, compliance: summary },

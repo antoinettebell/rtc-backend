@@ -115,6 +115,15 @@ exports.MarketplacePaymentModel = require('./marketplace-payment');
 /** Define marketplace payment audit model */
 exports.MarketplacePaymentAuditModel = require('./marketplace-payment-audit');
 
+/** Define marketplace ticket order model */
+exports.MarketplaceTicketOrderModel = require('./marketplace-ticket-order');
+
+/** Define marketplace ticket model */
+exports.MarketplaceTicketModel = require('./marketplace-ticket');
+
+/** Define marketplace scanner session model */
+exports.MarketplaceScannerSessionModel = require('./marketplace-scanner-session');
+
 /** Define marketplace agreement audit model */
 exports.MarketplaceAgreementAuditModel = require('./marketplace-agreement-audit');
 

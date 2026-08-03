@@ -7,6 +7,10 @@ const TAX_CODES = {
   PLATFORM_SERVICE_FEE: 'OU040300',
 };
 
+const EVENT_TICKET_ITEM_CODE = 'EVENT_TICKET';
+const EVENT_PLATFORM_ITEM_CODE = 'PLATFORM_SERVICE_FEE';
+const EVENT_PLATFORM_TAX_CODE = 'SW054003';
+
 const US_STATE_CODES = new Set([
   'AL',
   'AK',
@@ -184,6 +188,51 @@ const callAvalaraCreateTransaction = async (payload) => {
   return response.data;
 };
 
+const callAvalaraTransactionAction = async (transactionCode, action, body = {}) => {
+  const base64Credentials = Buffer.from(
+    `${avalaratax.AVALARA_USERNAME}:${avalaratax.AVALARA_PASSWORD}`
+  ).toString('base64');
+  const url = `${avalaratax.AVALARA_URL}transactions/ROUNDTHECORNER/${encodeURIComponent(
+    transactionCode
+  )}/${action}`;
+  const response = await axios.post(url, body, {
+    headers: {
+      'X-Avalara-Client': avalaratax.AVALARA_CLIENT_HEADER || 'NodeJS-App',
+      Authorization: `Basic ${base64Credentials}`,
+      'Content-Type': 'application/json',
+    },
+  });
+  return response.data;
+};
+
+exports.commitAvalaraTransaction = async (transactionCode) => {
+  try {
+    const data = await callAvalaraTransactionAction(transactionCode, 'commit');
+    return { success: true, data };
+  } catch (error) {
+    return {
+      success: false,
+      message: error.response?.data?.error?.message || error.message,
+      data: error.response?.data || null,
+    };
+  }
+};
+
+exports.voidAvalaraTransaction = async (transactionCode) => {
+  try {
+    const data = await callAvalaraTransactionAction(transactionCode, 'void', {
+      code: 'DocVoided',
+    });
+    return { success: true, data };
+  } catch (error) {
+    return {
+      success: false,
+      message: error.response?.data?.error?.message || error.message,
+      data: error.response?.data || null,
+    };
+  }
+};
+
 exports.calculateAvalaraTax = async (data) => {
   try {
     const {
@@ -199,6 +248,8 @@ exports.calculateAvalaraTax = async (data) => {
       customerCode = 'ROUNDTHECORNER-Customer',
       purchaseOrderNo,
       currencyCode = 'USD',
+      entityUseCode,
+      merchantSellerIdentifier,
     } = data;
 
     const transactionLines =
@@ -230,6 +281,11 @@ exports.calculateAvalaraTax = async (data) => {
 
     if (code) payload.code = code;
     if (purchaseOrderNo) payload.purchaseOrderNo = purchaseOrderNo;
+    if (entityUseCode) payload.entityUseCode = entityUseCode;
+    if (merchantSellerIdentifier) {
+      payload.merchantSellerIdentifier = merchantSellerIdentifier;
+      payload.marketplaceLiabilityType = 'Marketplace';
+    }
 
     const responseData = await callAvalaraCreateTransaction(payload);
 
@@ -248,6 +304,61 @@ exports.calculateAvalaraTax = async (data) => {
       data: error.response?.data || null,
     };
   }
+};
+
+exports.calculateEventTicketTax = async ({
+  shipFrom,
+  shipTo,
+  ticketAmount,
+  serviceFee,
+  admissionsTaxCode,
+  merchantSellerIdentifier,
+  customerCode,
+  entityUseCode,
+  transactionCode,
+  commit = false,
+}) => {
+  const sellerId =
+    merchantSellerIdentifier || avalaratax.AVALARA_MERCHANT_SELLER_ID;
+  const marketplaceFields = sellerId
+    ? {
+        merchantSellerIdentifier: sellerId,
+        marketplaceLiabilityType: 'Marketplace',
+      }
+    : {};
+  const lines = [
+    {
+      number: '1',
+      quantity: 1,
+      amount: toMoney(ticketAmount),
+      itemCode: EVENT_TICKET_ITEM_CODE,
+      taxCode: admissionsTaxCode,
+      description: 'Event admission tickets',
+      ...marketplaceFields,
+    },
+    {
+      number: '2',
+      quantity: 1,
+      amount: toMoney(serviceFee),
+      itemCode: EVENT_PLATFORM_ITEM_CODE,
+      taxCode: EVENT_PLATFORM_TAX_CODE,
+      description: 'Ticket platform service fee',
+      ...marketplaceFields,
+    },
+  ].filter((line) => line.amount > 0);
+
+  return exports.calculateAvalaraTax({
+    shipFrom,
+    shipTo,
+    lines,
+    type: 'SalesInvoice',
+    commit,
+    code: transactionCode,
+    customerCode,
+    entityUseCode,
+    merchantSellerIdentifier: sellerId,
+    purchaseOrderNo: transactionCode,
+  });
 };
 
 exports.calculateMarketplaceFoodDeliveryTax = async ({

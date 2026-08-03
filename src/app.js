@@ -65,7 +65,10 @@ app.use((req, res, next) => {
   const safeUrl = String(req.originalUrl || '')
     .replace(/([?&]token=)[^&]+/gi, '$1[REDACTED]')
     .replace(/(\/review-token\/)[^/?]+/gi, '$1[REDACTED]');
-  console.log(`[${now}] [${req.method}] ${safeUrl}`);
+  const redactedUrl = safeUrl
+    .replace(/(\/t\/)[^/?]+/gi, '$1[REDACTED]')
+    .replace(/(\/check-in\/)[^/?]+/gi, '$1[REDACTED]');
+  console.log(`[${now}] [${req.method}] ${redactedUrl}`);
   next();
 });
 

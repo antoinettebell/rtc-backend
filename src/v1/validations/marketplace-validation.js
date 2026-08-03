@@ -5,6 +5,12 @@ const marketplaceEventBody = {
   event_description: Joi.string().allow(null, ''),
   ticket_sales_enabled: Joi.boolean().default(false),
   ticket_url: Joi.string().uri().allow(null, ''),
+  ga_ticket_quantity: Joi.number().integer().min(0).default(0),
+  ga_ticket_price: Joi.number().min(0).default(0),
+  vip_ticket_quantity: Joi.number().integer().min(0).default(0),
+  vip_ticket_price: Joi.number().min(0).default(0),
+  charitable_event: Joi.boolean().default(false),
+  religious_organization: Joi.boolean().default(false),
   event_type: Joi.string().trim().allow(null, ''),
   event_type_other: Joi.string().trim().allow(null, ''),
   event_visibility: Joi.string().valid('PUBLIC', 'PRIVATE').default('PRIVATE'),
@@ -49,6 +55,7 @@ const marketplaceEventBody = {
   service_notes: Joi.string().allow(null, ''),
   event_date: Joi.date().allow(null, ''),
   event_time: Joi.string().allow(null, ''),
+  event_timezone: Joi.string().trim().default('America/New_York'),
   event_duration_hours: Joi.number().integer().min(0).allow(null, ''),
   event_duration_minutes: Joi.number().integer().min(0).allow(null, ''),
   event_address: Joi.string().trim().allow(null, ''),
@@ -342,6 +349,66 @@ module.exports = {
       payment_data: Joi.alternatives()
         .try(Joi.object().unknown(true), Joi.string())
         .required(),
+    }),
+  },
+
+  checkoutTickets: {
+    body: Joi.object({
+      ga_quantity: Joi.number().integer().min(0).default(0),
+      vip_quantity: Joi.number().integer().min(0).default(0),
+      payment_method: Joi.string().valid('APPLE_PAY', 'GOOGLE_PAY').required(),
+      payment_data: Joi.alternatives().try(Joi.object().unknown(true), Joi.string()).required(),
+      idempotency_key: Joi.string().guid({ version: ['uuidv4'] }).required(),
+      billing_address: Joi.object({
+        line1: Joi.string().trim().required(),
+        city: Joi.string().trim().required(),
+        region: Joi.string().trim().length(2).required(),
+        postalCode: Joi.string().trim().required(),
+        country: Joi.string().trim().default('US'),
+      }).required(),
+    }).custom((value, helpers) =>
+      value.ga_quantity + value.vip_quantity > 0
+        ? value
+        : helpers.message({ custom: 'At least one ticket is required' })
+    ),
+  },
+
+  quoteTickets: {
+    body: Joi.object({
+      ga_quantity: Joi.number().integer().min(0).default(0),
+      vip_quantity: Joi.number().integer().min(0).default(0),
+      billing_address: Joi.object({
+        line1: Joi.string().trim().required(),
+        city: Joi.string().trim().required(),
+        region: Joi.string().trim().length(2).required(),
+        postalCode: Joi.string().trim().required(),
+        country: Joi.string().trim().default('US'),
+      }).required(),
+    }).custom((value, helpers) =>
+      value.ga_quantity + value.vip_quantity > 0
+        ? value
+        : helpers.message({ custom: 'At least one ticket is required' })
+    ),
+  },
+
+  validateTicket: {
+    body: Joi.object({
+      ticket_token: Joi.string().trim().min(20).required(),
+      scanner_session_id: Joi.string().trim().max(100).allow(null, ''),
+    }),
+  },
+
+  cancelTicketedEvent: {
+    body: Joi.object({
+      confirm_cancellation: Joi.boolean().valid(true).required(),
+    }),
+  },
+
+  reviewTaxExemption: {
+    body: Joi.object({
+      status: Joi.string().valid('APPROVED', 'REJECTED').required(),
+      expiration_date: Joi.date().allow(null, ''),
+      review_notes: Joi.string().trim().max(1000).allow(null, ''),
     }),
   },
 
