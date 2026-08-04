@@ -8,6 +8,9 @@ const {
   VendorEmployeeModel,
   EmployeeSessionModel,
 } = require('../models');
+const { getEmployeeScheduleState } = require('../helper/employee-weekly-schedule');
+const { FoodTruckModel } = require('../models');
+const EmployeeSessionService = require('../v1/services/employee-session-service');
 
 const EMPLOYEE_SHIFT_EXEMPT_ROUTES = [
   '/vendor-employee/dashboard',
@@ -73,15 +76,47 @@ const Authenticate = async (req, res, next) => {
         throw customError;
       }
 
-      const activeSession = await EmployeeSessionModel.findOne({
+      let activeSession = await EmployeeSessionModel.findOne({
         employee_internal_id: employee.employee_internal_id,
         food_truck_id: employee.food_truck_id,
         is_active: true,
         shift_status: { $in: ['STARTED', 'ON_BREAK'] },
       }).sort({ started_at: -1 }).lean();
+      if (
+        activeSession &&
+        !activeSession.is_vendor_override &&
+        Array.isArray(employee.weekly_schedule) &&
+        employee.weekly_schedule.length > 0
+      ) {
+        const foodTruck = await FoodTruckModel.findById(employee.food_truck_id)
+          .select('schedule_time_zone')
+          .lean();
+        const scheduleState = getEmployeeScheduleState(
+          employee.weekly_schedule,
+          new Date(),
+          foodTruck?.schedule_time_zone || 'America/New_York'
+        );
+        if (!scheduleState.withinWindow) {
+          await EmployeeSessionService.endSession({
+            employeeSessionId: activeSession.employee_session_id,
+            employeeInternalId: employee.employee_internal_id,
+          });
+          await VendorEmployeeModel.updateOne(
+            { _id: employee._id },
+            { $set: { is_working: false } }
+          );
+          activeSession = null;
+        }
+      }
       const isShiftExempt = EMPLOYEE_SHIFT_EXEMPT_ROUTES.some((route) =>
         req.originalUrl.includes(route)
       );
+      if (!employee.is_working && !isShiftExempt) {
+        customError.code = 403;
+        customError.message =
+          'You are outside your scheduled working window. Please see your manager.';
+        throw customError;
+      }
       if (
         activeSession?.shift_status === 'ON_BREAK' &&
         !isShiftExempt

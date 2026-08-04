@@ -20,6 +20,7 @@ class BankDetailService extends BaseService {
       'swiftCode',
       'iban',
       'paymentMethod',
+      'paymentQrCodeUrl',
       'bankAddressLine1',
       'bankAddressLine2',
       'bankCity',

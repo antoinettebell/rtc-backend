@@ -231,6 +231,15 @@ const mSchema = mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    weekly_schedule: {
+      type: [{
+        day: { type: String, enum: ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'], required: true },
+        enabled: { type: Boolean, default: false },
+        clock_in: { type: String, default: '' },
+        clock_out: { type: String, default: '' },
+      }],
+      default: [],
+    },
     is_archived: {
       type: Boolean,
       default: false,

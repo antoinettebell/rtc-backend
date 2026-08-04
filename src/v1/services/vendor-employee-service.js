@@ -9,6 +9,7 @@ const PlanService = require('./plan-service');
 const EmployeeSessionService = require('./employee-session-service');
 const EncryptionService = require('../../helper/encryption');
 const { maskTaxId } = require('../../helper/event-coordinator-profile');
+const { getEmployeeScheduleState } = require('../../helper/employee-weekly-schedule');
 const {
   assertVendorPlanCapability,
   getVendorPlanCapabilities,
@@ -469,7 +470,7 @@ class VendorEmployeeService extends BaseService {
       employee.employee_rate = nextRate;
     }
 
-    ['is_active', 'is_working'].forEach((field) => {
+    ['is_active', 'is_working', 'weekly_schedule'].forEach((field) => {
       if (update[field] !== undefined) {
         employee[field] = update[field];
       }
@@ -477,6 +478,33 @@ class VendorEmployeeService extends BaseService {
 
     if (assignedLocationChanged) {
       employee.is_working = false;
+    }
+
+    if (update.weekly_schedule !== undefined) {
+      const foodTruck = await this.getVendorFoodTruck(
+        vendor_user_id,
+        employee.food_truck_id
+      );
+      const activeSession = await EmployeeSessionService.getActiveSession(
+        null,
+        employee.employee_internal_id
+      );
+      if (activeSession?.is_vendor_override) {
+        employee.is_working = true;
+      } else {
+        const scheduleState = getEmployeeScheduleState(
+          employee.weekly_schedule,
+          new Date(),
+          foodTruck.schedule_time_zone || 'America/New_York'
+        );
+        employee.is_working = scheduleState.withinWindow;
+        if (!scheduleState.withinWindow && activeSession) {
+          await EmployeeSessionService.endSession({
+            employeeSessionId: activeSession.employee_session_id,
+            employeeInternalId: employee.employee_internal_id,
+          });
+        }
+      }
     }
 
     await employee.save();

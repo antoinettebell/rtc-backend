@@ -139,6 +139,9 @@ exports.VendorComplianceDocumentModel = require('./vendor-compliance-document');
 /** Define vendor compliance audit model */
 exports.VendorComplianceAuditModel = require('./vendor-compliance-audit');
 
+/** Define operational inventory/checklist form model */
+exports.OperationalComplianceFormModel = require('./operational-compliance-form');
+
 /** Define admin-notification model */
 exports.AdminNotificationModel = require('./admin-notification');
 

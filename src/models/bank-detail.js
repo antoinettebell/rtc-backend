@@ -21,36 +21,36 @@ const mSchema = mongoose.Schema(
     },
     bankName: {
       type: String,
-      required: true,
+      default: '',
     },
     accountNumber: {
       type: String,
-      required: true,
+      default: '',
     },
     routingNumber: {
       type: String,
-      required: true,
+      default: '',
     },
     accountType: {
       type: String,
-      enum: ['CHECKING', 'SAVINGS'],
-      required: true,
+      enum: ['CHECKING', 'SAVINGS', ''],
+      default: '',
     },
     paymentMethod: {
       type: String,
       enum: [
         'CASHAPP',
-        'ZELLE',
         'PAYPAL',
         'VENMO',
-        'DIRECT_DEPOSIT',
         'ACH',
         'CHECK',
-        'ECHECK',
-        'WIRE',
       ],
       default: 'ACH',
       required: true,
+    },
+    paymentQrCodeUrl: {
+      type: String,
+      default: '',
     },
     remittanceEmail: {
       type: String,

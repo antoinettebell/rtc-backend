@@ -145,7 +145,7 @@ const mSchema = mongoose.Schema(
     },
     eventCoordinatorPaymentPreference: {
       type: String,
-      enum: ['CASHAPP', 'ZELLE', 'PAYPAL', 'VENMO', 'DIRECT_DEPOSIT', null],
+      enum: ['CASHAPP', 'PAYPAL', 'VENMO', 'ACH', 'CHECK', null],
       default: null,
     },
     eventCoordinatorPaymentHandle: {
@@ -174,6 +174,12 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    eventCoordinatorBankName: { type: String, default: null },
+    eventCoordinatorBankAddressLine1: { type: String, default: null },
+    eventCoordinatorBankAddressLine2: { type: String, default: null },
+    eventCoordinatorBankCity: { type: String, default: null },
+    eventCoordinatorBankState: { type: String, default: null },
+    eventCoordinatorBankPostal: { type: String, default: null },
     eventCoordinatorDirectDepositAccountNumberEncrypted: {
       type: String,
       default: null,

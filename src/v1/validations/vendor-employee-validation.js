@@ -1,5 +1,12 @@
 const { Joi } = require('express-validation');
 
+const scheduleRow = Joi.object({
+  day: Joi.string().valid('sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat').required(),
+  enabled: Joi.boolean().required(),
+  clock_in: Joi.string().pattern(/^([01]\d|2[0-3]):[0-5]\d$/).when('enabled', { is: true, then: Joi.required(), otherwise: Joi.allow('') }),
+  clock_out: Joi.string().pattern(/^([01]\d|2[0-3]):[0-5]\d$/).when('enabled', { is: true, then: Joi.required(), otherwise: Joi.allow('') }),
+});
+
 const employeePin = Joi.string()
   .trim()
   .pattern(/^\d{4}$/)
@@ -56,6 +63,7 @@ module.exports = {
       pin: employeePin,
       is_active: Joi.boolean(),
       is_working: Joi.boolean(),
+      weekly_schedule: Joi.array().items(scheduleRow).max(7),
     }),
   },
 
@@ -80,6 +88,7 @@ module.exports = {
       pin: employeePin,
       is_active: Joi.boolean(),
       is_working: Joi.boolean(),
+      weekly_schedule: Joi.array().items(scheduleRow).max(7),
     }),
   },
 
@@ -101,6 +110,7 @@ module.exports = {
       employee_rate: Joi.number().min(0).allow(null),
       is_active: Joi.boolean(),
       is_working: Joi.boolean(),
+      weekly_schedule: Joi.array().items(scheduleRow).max(7),
     }).min(1),
   },
 

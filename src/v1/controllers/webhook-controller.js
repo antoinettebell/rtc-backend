@@ -1,12 +1,14 @@
 const crypto = require('crypto');
 const { docusign } = require('../../config');
-const { FoodTruckModel, UserModel } = require('../../models');
+const { FoodTruckModel, UserModel, VendorEmployeeModel, EmployeeSessionModel } = require('../../models');
 const CustomNotification = require('../../helper/custom-notification');
 const VendorComplianceService = require('../services/vendor-compliance-service');
+const EmployeeSessionService = require('../services/employee-session-service');
 const {
   DEFAULT_VENDOR_SCHEDULE_TIME_ZONE,
   applyVendorScheduleTimeZoneCache,
 } = require('../../helper/vendor-schedule-timezone');
+const { getEmployeeScheduleState } = require('../../helper/employee-weekly-schedule');
 
 const WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES = 0;
 const WEEKLY_SCHEDULE_CLOSE_BUFFER_MINUTES = 20;
@@ -562,6 +564,8 @@ exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
 	    let manualOverridePairs = 0;
 	    let appliedOpenPairs = 0;
 	    const processedByTimeZone = {};
+	    let employeeSchedulesProcessed = 0;
+	    let employeeShiftsEnded = 0;
 
 	    for (const foodTruck of foodTrucks) {
 	      const vendor = vendorById.get(foodTruck.userId?.toString());
@@ -586,6 +590,40 @@ exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
       }
     }
 
+    const foodTruckById = new Map(foodTrucks.map((truck) => [String(truck._id), truck]));
+    const scheduledEmployees = await VendorEmployeeModel.find({
+      is_active: true,
+      is_archived: false,
+      'weekly_schedule.0': { $exists: true },
+    });
+    for (const employee of scheduledEmployees) {
+      const truck = foodTruckById.get(String(employee.food_truck_id));
+      if (!truck) continue;
+      const activeSession = await EmployeeSessionModel.findOne({
+        employee_internal_id: employee.employee_internal_id,
+        food_truck_id: employee.food_truck_id,
+        is_active: true,
+      }).sort({ started_at: -1 });
+      if (activeSession?.is_vendor_override) continue;
+      const scheduleState = getEmployeeScheduleState(
+        employee.weekly_schedule,
+        new Date(),
+        truck.schedule_time_zone || DEFAULT_VENDOR_SCHEDULE_TIME_ZONE
+      );
+      if (employee.is_working !== scheduleState.withinWindow) {
+        employee.is_working = scheduleState.withinWindow;
+        await employee.save();
+      }
+      if (!scheduleState.withinWindow && activeSession) {
+        await EmployeeSessionService.endSession({
+          employeeSessionId: activeSession.employee_session_id,
+          employeeInternalId: employee.employee_internal_id,
+        });
+        employeeShiftsEnded += 1;
+      }
+      employeeSchedulesProcessed += 1;
+    }
+
     return res.data(
       {
         processed: foodTrucks.length,
@@ -595,6 +633,8 @@ exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
 	        scheduledOpenPairs,
 	        manualOverridePairs,
 	        appliedOpenPairs,
+	        employeeSchedulesProcessed,
+	        employeeShiftsEnded,
 	        openBufferMinutes: WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES,
         closeBufferMinutes: WEEKLY_SCHEDULE_CLOSE_BUFFER_MINUTES,
         fallbackScheduleTimeZone: DEFAULT_VENDOR_SCHEDULE_TIME_ZONE,

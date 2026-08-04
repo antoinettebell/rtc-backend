@@ -368,6 +368,12 @@ exports.update = async (req, res, next) => {
         eventCoordinatorPaymentQrCodeUrl,
         eventCoordinatorDirectDepositRoutingNumber,
         eventCoordinatorDirectDepositAccountNumber,
+        eventCoordinatorBankName,
+        eventCoordinatorBankAddressLine1,
+        eventCoordinatorBankAddressLine2,
+        eventCoordinatorBankCity,
+        eventCoordinatorBankState,
+        eventCoordinatorBankPostal,
         // mailing,
       },
       params: { id: _id },
@@ -452,17 +458,21 @@ exports.update = async (req, res, next) => {
         const paymentPreference = paymentPreferenceProvided
           ? eventCoordinatorPaymentPreference || null
           : existRecord.eventCoordinatorPaymentPreference || null;
-        const effectiveQrCodeUrl =
-          eventCoordinatorPaymentQrCodeUrl ||
-          existRecord.eventCoordinatorPaymentQrCodeUrl ||
-          null;
+        const qrCodeProvided = Object.prototype.hasOwnProperty.call(
+          req.body,
+          'eventCoordinatorPaymentQrCodeUrl'
+        );
+        const effectiveQrCodeUrl = qrCodeProvided
+          ? eventCoordinatorPaymentQrCodeUrl || null
+          : existRecord.eventCoordinatorPaymentQrCodeUrl || null;
         const effectiveRoutingNumber =
           eventCoordinatorDirectDepositRoutingNumber ||
           existRecord.eventCoordinatorDirectDepositRoutingNumber ||
           null;
-        if (paymentPreference === 'DIRECT_DEPOSIT') {
+        const requiresBankDetails = ['ACH', 'CHECK'].includes(paymentPreference);
+        if (requiresBankDetails) {
           if (!effectiveRoutingNumber) {
-            const error = new Error('Routing number is required for direct deposit.');
+            const error = new Error('Routing number is required for ACH or check payments.');
             error.code = 400;
             throw error;
           }
@@ -470,7 +480,12 @@ exports.update = async (req, res, next) => {
             !eventCoordinatorDirectDepositAccountNumber &&
             !existRecord.eventCoordinatorDirectDepositAccountNumberEncrypted
           ) {
-            const error = new Error('Account number is required for direct deposit.');
+            const error = new Error('Account number is required for ACH or check payments.');
+            error.code = 400;
+            throw error;
+          }
+          if (!eventCoordinatorBankName || !eventCoordinatorBankAddressLine1 || !eventCoordinatorBankCity || !eventCoordinatorBankState || !eventCoordinatorBankPostal) {
+            const error = new Error('Complete bank name and address are required for ACH or check payments.');
             error.code = 400;
             throw error;
           }
@@ -481,25 +496,31 @@ exports.update = async (req, res, next) => {
         }
         existRecord.eventCoordinatorPaymentPreference = paymentPreference;
         existRecord.eventCoordinatorPaymentHandle =
-          paymentPreference && paymentPreference !== 'DIRECT_DEPOSIT'
+          paymentPreference && !requiresBankDetails
             ? eventCoordinatorPaymentHandle || null
             : null;
         existRecord.eventCoordinatorPaymentQrCodeUrl =
-          paymentPreference && paymentPreference !== 'DIRECT_DEPOSIT'
+          paymentPreference && !requiresBankDetails
             ? effectiveQrCodeUrl
             : null;
         existRecord.eventCoordinatorDirectDepositRoutingNumber =
-          paymentPreference === 'DIRECT_DEPOSIT'
+          requiresBankDetails
             ? effectiveRoutingNumber
             : null;
-        if (paymentPreference === 'DIRECT_DEPOSIT' && eventCoordinatorDirectDepositAccountNumber) {
+        existRecord.eventCoordinatorBankName = requiresBankDetails ? eventCoordinatorBankName : null;
+        existRecord.eventCoordinatorBankAddressLine1 = requiresBankDetails ? eventCoordinatorBankAddressLine1 : null;
+        existRecord.eventCoordinatorBankAddressLine2 = requiresBankDetails ? eventCoordinatorBankAddressLine2 || null : null;
+        existRecord.eventCoordinatorBankCity = requiresBankDetails ? eventCoordinatorBankCity : null;
+        existRecord.eventCoordinatorBankState = requiresBankDetails ? eventCoordinatorBankState : null;
+        existRecord.eventCoordinatorBankPostal = requiresBankDetails ? eventCoordinatorBankPostal : null;
+        if (requiresBankDetails && eventCoordinatorDirectDepositAccountNumber) {
           Object.assign(
             existRecord,
             buildPayoutAccountUpdate({
               value: eventCoordinatorDirectDepositAccountNumber,
             })
           );
-        } else if (paymentPreference !== 'DIRECT_DEPOSIT') {
+        } else if (!requiresBankDetails) {
           existRecord.eventCoordinatorDirectDepositAccountNumberEncrypted = null;
           existRecord.eventCoordinatorDirectDepositAccountNumberMasked = null;
         }
@@ -860,6 +881,7 @@ exports.getBankDetail = async (req, res, next) => {
         'swiftCode',
         'iban',
         'paymentMethod',
+        'paymentQrCodeUrl',
         "bankAddressLine1",
         "bankAddressLine2",
         "bankCity",
@@ -957,6 +979,7 @@ exports.addBankDetail = async (req, res, next) => {
         // swiftCode,
         // iban,
         paymentMethod,
+        paymentQrCodeUrl,
         bankAddressLine1,
         bankAddressLine2,
         bankCity,
@@ -977,22 +1000,24 @@ exports.addBankDetail = async (req, res, next) => {
       }
     }
 
+    const requiresBankDetails = ['ACH', 'CHECK'].includes(paymentMethod);
     const data = await BankDetailService.updateTheDetail(user._id, {
       accountHolderName,
-      bankName,
-      accountNumber,
-      routingNumber,
-      accountType,
+      bankName: requiresBankDetails ? bankName : '',
+      accountNumber: requiresBankDetails ? accountNumber : '',
+      routingNumber: requiresBankDetails ? routingNumber : '',
+      accountType: requiresBankDetails ? accountType : '',
       remittanceEmail: remittanceEmail ?? null,
       currency,
       // swiftCode:swiftCode ?? null,
       // iban: iban ?? null,
       paymentMethod,
-      bankAddressLine1: bankAddressLine1 || "NA",
-      bankAddressLine2: bankAddressLine2 || "",
-      bankCity: bankCity || "NA",
-      bankState: bankState || "NA",
-      bankPostal: bankPostal || "NA",
+      paymentQrCodeUrl: requiresBankDetails ? '' : paymentQrCodeUrl,
+      bankAddressLine1: requiresBankDetails ? bankAddressLine1 : '',
+      bankAddressLine2: requiresBankDetails ? bankAddressLine2 || '' : '',
+      bankCity: requiresBankDetails ? bankCity : '',
+      bankState: requiresBankDetails ? bankState : '',
+      bankPostal: requiresBankDetails ? bankPostal : '',
     });
 
     return res.data({ bankDetail: data }, `Bank detail updated`);

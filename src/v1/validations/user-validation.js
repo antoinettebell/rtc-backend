@@ -49,12 +49,18 @@ module.exports = {
       eventCoordinatorFormattedAddress: Joi.string().trim().allow(null, ''),
       eventCoordinatorPlaceId: Joi.string().trim().allow(null, ''),
       eventCoordinatorPaymentPreference: Joi.string()
-        .valid('CASHAPP', 'ZELLE', 'PAYPAL', 'VENMO', 'DIRECT_DEPOSIT')
+        .valid('CASHAPP', 'PAYPAL', 'VENMO', 'ACH', 'CHECK')
         .allow(null, ''),
       eventCoordinatorPaymentHandle: Joi.string().trim().allow(null, ''),
       eventCoordinatorPaymentQrCodeUrl: Joi.string().uri().allow(null, ''),
       eventCoordinatorDirectDepositRoutingNumber: Joi.string().trim().allow(null, ''),
       eventCoordinatorDirectDepositAccountNumber: Joi.string().trim().allow(null, ''),
+      eventCoordinatorBankName: Joi.string().trim().allow(null, ''),
+      eventCoordinatorBankAddressLine1: Joi.string().trim().allow(null, ''),
+      eventCoordinatorBankAddressLine2: Joi.string().trim().allow(null, ''),
+      eventCoordinatorBankCity: Joi.string().trim().allow(null, ''),
+      eventCoordinatorBankState: Joi.string().trim().allow(null, ''),
+      eventCoordinatorBankPostal: Joi.string().trim().allow(null, ''),
       // mailing: Joi.object({
       //   address: Joi.string().trim().required(),
       //   city: Joi.string().trim().required(),
@@ -127,10 +133,34 @@ module.exports = {
   bankDetail: {
     body: Joi.object({
       accountHolderName: Joi.string().required(),
-      bankName: Joi.string().required(),
-      accountNumber: Joi.string().min(8).required(),
-      routingNumber: Joi.string().min(9).required(),
-      accountType: Joi.string().valid('CHECKING', 'SAVINGS').required(),
+      paymentMethod: Joi.string()
+        .valid('CASHAPP', 'PAYPAL', 'VENMO', 'ACH', 'CHECK')
+        .required(),
+      paymentQrCodeUrl: Joi.when('paymentMethod', {
+        is: Joi.valid('CASHAPP', 'PAYPAL', 'VENMO'),
+        then: Joi.string().uri().required(),
+        otherwise: Joi.string().allow('', null).optional(),
+      }),
+      bankName: Joi.when('paymentMethod', {
+        is: Joi.valid('ACH', 'CHECK'),
+        then: Joi.string().required(),
+        otherwise: Joi.string().allow('').optional(),
+      }),
+      accountNumber: Joi.when('paymentMethod', {
+        is: Joi.valid('ACH', 'CHECK'),
+        then: Joi.string().min(8).required(),
+        otherwise: Joi.string().allow('').optional(),
+      }),
+      routingNumber: Joi.when('paymentMethod', {
+        is: Joi.valid('ACH', 'CHECK'),
+        then: Joi.string().length(9).required(),
+        otherwise: Joi.string().allow('').optional(),
+      }),
+      accountType: Joi.when('paymentMethod', {
+        is: Joi.valid('ACH', 'CHECK'),
+        then: Joi.string().valid('CHECKING', 'SAVINGS').required(),
+        otherwise: Joi.string().allow('').optional(),
+      }),
       //new fileds
       currency: Joi.string()
         .uppercase()
@@ -140,11 +170,15 @@ module.exports = {
 
       remittanceEmail: Joi.string().optional().lowercase().trim(),
 
-      bankAddressLine1: Joi.string().trim().optional(),
+      bankAddressLine1: Joi.when('paymentMethod', {
+        is: Joi.valid('ACH', 'CHECK'),
+        then: Joi.string().trim().required(),
+        otherwise: Joi.string().allow('').optional(),
+      }),
       bankAddressLine2: Joi.string().trim().allow('').optional(),
-      bankCity: Joi.string().trim().optional(),
-      bankState: Joi.string().trim().optional(),
-      bankPostal: Joi.string().trim().optional(),
+      bankCity: Joi.when('paymentMethod', { is: Joi.valid('ACH', 'CHECK'), then: Joi.string().trim().required(), otherwise: Joi.string().allow('').optional() }),
+      bankState: Joi.when('paymentMethod', { is: Joi.valid('ACH', 'CHECK'), then: Joi.string().trim().required(), otherwise: Joi.string().allow('').optional() }),
+      bankPostal: Joi.when('paymentMethod', { is: Joi.valid('ACH', 'CHECK'), then: Joi.string().trim().required(), otherwise: Joi.string().allow('').optional() }),
 
       // swiftCode: Joi.when('currency', {
       //   is: Joi.valid('USD'),
@@ -174,19 +208,6 @@ module.exports = {
       //   }),
       // }),
 
-      paymentMethod: Joi.string()
-        .valid(
-          'CASHAPP',
-          'ZELLE',
-          'PAYPAL',
-          'VENMO',
-          'DIRECT_DEPOSIT',
-          'ACH',
-          'CHECK',
-          'ECHECK',
-          'WIRE'
-        )
-        .optional(),
     }),
   },
 

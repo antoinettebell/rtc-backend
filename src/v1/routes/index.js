@@ -23,6 +23,7 @@ const meatRoutes = require('./meat');
 const marketplaceRoutes = require('./marketplace');
 const webhookRoutes = require('./webhooks');
 const vendorComplianceRoutes = require('./vendor-compliance');
+const operationalComplianceRoutes = require('./operational-compliance');
 const authenticate = require('../../middleware/authenticate');
 const router = express.Router();
 
@@ -100,6 +101,9 @@ router.use('/marketplace', marketplaceRoutes);
 
 /** vendor compliance routes */
 router.use('/vendor-compliance', vendorComplianceRoutes);
+
+/** operational inventory and opening/closing forms */
+router.use('/operational-compliance', operationalComplianceRoutes);
 
 /** Exports default route */
 module.exports = router;

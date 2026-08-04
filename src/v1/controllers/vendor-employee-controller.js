@@ -11,6 +11,7 @@ const MailHelper = require('../../helper/mail-helper');
 const { JWT } = require('../../config');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const { getEmployeeScheduleState } = require('../../helper/employee-weekly-schedule');
 
 const entityName = 'VendorEmployee';
 
@@ -746,11 +747,21 @@ exports.shiftAction = async (req, res, next) => {
     let authToken = null;
 
     if (action === 'START') {
-      if (!employee.is_working) {
+      const hasWeeklySchedule = Array.isArray(employee.weekly_schedule) && employee.weekly_schedule.length > 0;
+      const scheduleState = hasWeeklySchedule
+        ? getEmployeeScheduleState(employee.weekly_schedule, new Date(), foodTruck.schedule_time_zone || 'America/New_York')
+        : null;
+      if (hasWeeklySchedule && !scheduleState.withinWindow) {
         return res.error(
-          new Error('Employee must be On Duty before starting a shift'),
+          new Error('You are not within your scheduled clock-in window. Please see your manager.'),
           403
         );
+      }
+      if (hasWeeklySchedule && !employee.is_working) {
+        employee.is_working = true;
+        await employee.save();
+      } else if (!hasWeeklySchedule && !employee.is_working) {
+        return res.error(new Error('Employee must be On Duty before starting a shift'), 403);
       }
 
       const latestSession =
