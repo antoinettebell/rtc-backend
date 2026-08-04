@@ -131,7 +131,7 @@ const assertRequiredMarketplaceFields = (fields = {}) => {
 };
 
 const MARKETPLACE_PHONE_NUMBER = '800-410-7053';
-const COORDINATOR_AWARD_FEE_RATE = 0.035;
+const COORDINATOR_AWARD_FEE_RATE = 0.015;
 const VENDOR_EVENT_PROCESSING_RATE = 0.02;
 const roundMoney = (value) => Number((Number(value || 0)).toFixed(2));
 const ACTIVE_EVENT_STATUSES = ['OPEN', 'REOPENED'];

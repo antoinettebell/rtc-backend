@@ -24,7 +24,7 @@ const {
 } = require('../../helper/ticket-token-helper');
 const { server } = require('../../config');
 const fs = require('fs');
-const { addObjectWithKey } = require('../../helper/aws');
+const { addObjectWithKey, removeObject } = require('../../helper/aws');
 const EncryptionService = require('../../helper/encryption');
 const {
   renderTicketPage,
@@ -373,14 +373,12 @@ exports.uploadExemptionCertificate = async (req, res, next) => {
       throw buildError('This event did not request a tax exemption');
     }
     if (!req.file) throw buildError('State Sales Tax Exemption Certificate is required');
-    await MarketplaceAttachmentModel.updateMany(
-      {
-        event_id: event.event_id,
-        attachment_type: 'TAX_EXEMPTION_CERTIFICATE',
-        status: 'ACTIVE',
-      },
-      { $set: { status: 'ARCHIVED', status_reason: 'Replaced by coordinator' } }
-    );
+    const previousExemptionStatus = event.tax_exemption_status;
+    const previousCertificates = await MarketplaceAttachmentModel.find({
+      event_id: event.event_id,
+      attachment_type: 'TAX_EXEMPTION_CERTIFICATE',
+      status: 'ACTIVE',
+    });
     const { url, key } = await addObjectWithKey(
       req.file,
       'marketplace/events/tax-exemption-certificates'
@@ -397,6 +395,22 @@ exports.uploadExemptionCertificate = async (req, res, next) => {
       size_bytes: req.file.size,
       uploaded_by_user_id: req.user._id,
     });
+    if (previousCertificates.length) {
+      const previousIds = previousCertificates.map((item) => item._id);
+      if (previousExemptionStatus === 'APPROVED') {
+        await MarketplaceAttachmentModel.updateMany(
+          { _id: { $in: previousIds } },
+          { $set: { status: 'ARCHIVED', status_reason: 'Replaced by coordinator' } }
+        );
+      } else {
+        await MarketplaceAttachmentModel.deleteMany({ _id: { $in: previousIds } });
+        await Promise.all(
+          previousCertificates
+            .filter((item) => item.file_key)
+            .map((item) => removeObject(item.file_key).catch(() => null))
+        );
+      }
+    }
     event.tax_exemption_certificate_url = url;
     event.tax_exemption_status = 'PENDING';
     event.tax_exemption_entity_use_code = null;

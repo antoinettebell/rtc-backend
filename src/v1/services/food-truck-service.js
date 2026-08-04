@@ -857,11 +857,13 @@ class FoodTruckService extends BaseService {
         ].map((word) => new RegExp(escapeRegExp(word), 'i'));
 
         const fullPhraseConditions = [
+          { name: regex },
           { 'menu.name': regex },
           { 'menu.description': regex },
         ];
 
         const wordConditions = wordRegexes.flatMap((r) => [
+          { name: r },
           { 'menu.name': r },
           { 'menu.description': r },
         ]);
@@ -915,7 +917,33 @@ class FoodTruckService extends BaseService {
           {
             $addFields: {
               searchScore: {
-                $size: '$matchedMenuItems',
+                $add: [
+                  { $size: '$matchedMenuItems' },
+                  {
+                    $cond: [
+                      {
+                        $regexMatch: {
+                          input: { $ifNull: ['$name', ''] },
+                          regex,
+                        },
+                      },
+                      100,
+                      0,
+                    ],
+                  },
+                  ...wordRegexes.map((wordRegex) => ({
+                    $cond: [
+                      {
+                        $regexMatch: {
+                          input: { $ifNull: ['$name', ''] },
+                          regex: wordRegex,
+                        },
+                      },
+                      10,
+                      0,
+                    ],
+                  })),
+                ],
               },
             },
           },
