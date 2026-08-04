@@ -35,6 +35,12 @@ const getVendorFoodTruck = async (user, foodTruckId = null) => {
 
 const handleError = (error, next) => next(error);
 
+const isDocumentVersionConflict = (error) =>
+  error?.name === 'VersionError' || error?.constructor?.name === 'VersionError';
+
+const waitForComplianceRetry = (attempt) =>
+  new Promise((resolve) => setTimeout(resolve, 40 * (attempt + 1)));
+
 const getFoodTruckDocumentTypeFromComplianceType = (documentType) => {
   if (documentType === 'HEALTH_PERMIT') return 'PERMIT';
   if (documentType === 'BUSINESS_LICENSE') return 'LICENSE';
@@ -108,7 +114,8 @@ const saveUploadedDocumentToFoodTruck = async ({
   url,
   key,
 }) => {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  const maxAttempts = 4;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const foodTruck = await FoodTruckService.getByData(
       { _id: foodTruckId },
       { singleResult: true }
@@ -132,9 +139,15 @@ const saveUploadedDocumentToFoodTruck = async ({
       await foodTruck.save();
       return foodTruck;
     } catch (error) {
-      const isVersionConflict =
-        error?.name === 'VersionError' || error?.constructor?.name === 'VersionError';
-      if (!isVersionConflict || attempt === 1) throw error;
+      if (!isDocumentVersionConflict(error)) throw error;
+      if (attempt === maxAttempts - 1) {
+        const conflict = new Error(
+          'Compliance documents changed during upload. Please try the upload again.'
+        );
+        conflict.code = 409;
+        throw conflict;
+      }
+      await waitForComplianceRetry(attempt);
     }
   }
 
