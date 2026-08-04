@@ -390,12 +390,64 @@ class MenuCsvImportService {
     return this.parseStringArray(row.comboItemNames);
   }
 
+  parseBogoItemNames(row) {
+    return this.parseStringArray(row.bogoItemNames);
+  }
+
+  normalizeMenuItemName(value) {
+    return String(value || '').trim().toLowerCase();
+  }
+
+  validateUniqueRecordNames(records) {
+    const rowsByName = new Map();
+
+    records.forEach((row) => {
+      const normalizedName = this.normalizeMenuItemName(row.name);
+      if (!normalizedName) return;
+
+      if (!rowsByName.has(normalizedName)) {
+        rowsByName.set(normalizedName, []);
+      }
+      rowsByName.get(normalizedName).push(row._rowNumber);
+    });
+
+    const duplicates = [...rowsByName.entries()].filter(
+      ([, rowNumbers]) => rowNumbers.length > 1
+    );
+    if (duplicates.length) {
+      throw new Error(
+        `Duplicate menu item names are not allowed in one CSV: ${duplicates
+          .map(([name, rowNumbers]) => `"${name}" (rows ${rowNumbers.join(', ')})`)
+          .join('; ')}.`
+      );
+    }
+  }
+
+  orderRecordsForReferences(records) {
+    return [...records].sort((left, right) => {
+      const getRank = (row) => {
+        if (String(row.itemType || 'INDIVIDUAL').toUpperCase() === 'COMBO') {
+          return 2;
+        }
+        return this.parseBogoItemNames(row).length > 0 ? 1 : 0;
+      };
+
+      return getRank(left) - getRank(right);
+    });
+  }
+
   buildMenuItemNameMap(records) {
     return records.reduce((map, row) => {
       const menuItemId = this.getMenuItemId(row);
-      const name = String(row.name || '').trim().toLowerCase();
+      const name = this.normalizeMenuItemName(row.name);
+      const itemType = String(row.itemType || 'INDIVIDUAL').toUpperCase();
 
-      if (menuItemId && Types.ObjectId.isValid(menuItemId) && name) {
+      if (
+        itemType === 'INDIVIDUAL' &&
+        menuItemId &&
+        Types.ObjectId.isValid(menuItemId) &&
+        name
+      ) {
         map.set(name, new Types.ObjectId(menuItemId));
       }
 
@@ -448,6 +500,54 @@ class MenuCsvImportService {
     }
 
     return subItems;
+  }
+
+  async resolveBogoItems(row, userId, menuItemNameMap) {
+    const itemIds = this.parseObjectIdArray(
+      row.bogoItemIds,
+      'bogoItemIds',
+      row._rowNumber
+    );
+    if (itemIds.length > 0) {
+      return itemIds.map((itemId) => ({
+        itemId,
+        qty: 1,
+        isSameItem: false,
+      }));
+    }
+
+    const bogoItems = [];
+    for (const itemName of this.parseBogoItemNames(row)) {
+      const normalizedName = this.normalizeMenuItemName(itemName);
+      let itemId = menuItemNameMap.get(normalizedName);
+
+      if (!itemId) {
+        const existingMenuItem = await MenuItemModel.findOne({
+          userId,
+          itemType: 'INDIVIDUAL',
+          name: {
+            $regex: `^${this.escapeRegex(itemName)}$`,
+            $options: 'i',
+          },
+          deletedAt: null,
+        }).select('_id');
+        itemId = existingMenuItem?._id;
+      }
+
+      if (!itemId) {
+        throw new Error(
+          `Row ${row._rowNumber}: BOGO item "${itemName}" was not found for this vendor. Include the individual item in this CSV or use its menuItemId.`
+        );
+      }
+
+      bogoItems.push({
+        itemId,
+        qty: 1,
+        isSameItem: false,
+      });
+    }
+
+    return bogoItems;
   }
 
   parseFlavors(row) {
@@ -692,7 +792,14 @@ class MenuCsvImportService {
     return { categoryId: menuCategory._id, created: true };
   }
 
-  buildMenuItem(row, categoryId, userId, imgUrls, subItem = []) {
+  buildMenuItem(
+    row,
+    categoryId,
+    userId,
+    imgUrls,
+    subItem = [],
+    bogoItems = []
+  ) {
     const flavorSettings = this.parseFlavors(row);
     const toppingSettings = this.parseToppings(row);
     const comboSideSettings = this.parseComboSides(row);
@@ -719,15 +826,7 @@ class MenuCsvImportService {
         'discountValue',
         row._rowNumber
       ),
-      bogoItems: this.parseObjectIdArray(
-        row.bogoItemIds,
-        'bogoItemIds',
-        row._rowNumber
-      ).map((itemId) => ({
-        itemId,
-        qty: 1,
-        isSameItem: false,
-      })),
+      bogoItems,
       discount: this.parseNumber(row.discount, 0, 'discount', row._rowNumber),
       price: this.parseNumber(row.price, 0, 'price', row._rowNumber),
       minQty: this.parseNumber(row.minQty, 1, 'minQty', row._rowNumber),
@@ -856,6 +955,8 @@ class MenuCsvImportService {
 
   async importFromCsv({ csvText, vendorUserId, imageFiles = [] }) {
     const records = this.toRecords(csvText);
+    this.validateUniqueRecordNames(records);
+    const orderedRecords = this.orderRecordsForReferences(records);
     const normalizedVendorUserId = String(vendorUserId || '').trim();
     const imageFileMap = this.buildImageFileMap(imageFiles);
     const uploadedImageUrls = new Map();
@@ -887,7 +988,7 @@ class MenuCsvImportService {
       errors: [],
     };
 
-    for (const row of records) {
+    for (const row of orderedRecords) {
       try {
         const rowUserId = this.resolveVendorUserId(row, normalizedVendorUserId);
         const imgUrls = await this.resolveImageUrls(
@@ -905,12 +1006,18 @@ class MenuCsvImportService {
           rowUserId,
           menuItemNameMap
         );
+        const bogoItems = await this.resolveBogoItems(
+          row,
+          rowUserId,
+          menuItemNameMap
+        );
         const menuItem = this.buildMenuItem(
           row,
           categoryId,
           rowUserId,
           imgUrls,
-          subItem
+          subItem,
+          bogoItems
         );
         if (menuItem.newDish && !canHighlightNewDish) {
           menuItem.newDish = false;
@@ -952,6 +1059,18 @@ class MenuCsvImportService {
           summary.createdCount += 1;
         } else {
           summary.updatedCount += 1;
+        }
+
+        if (String(menuItem.itemType).toUpperCase() === 'INDIVIDUAL') {
+          const savedMenuItem = await MenuItemModel.findOne(updateFilter).select(
+            '_id name'
+          );
+          if (savedMenuItem?._id) {
+            menuItemNameMap.set(
+              this.normalizeMenuItemName(savedMenuItem.name || menuItem.name),
+              savedMenuItem._id
+            );
+          }
         }
       } catch (error) {
         summary.failedCount += 1;
