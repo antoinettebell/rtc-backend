@@ -14,7 +14,7 @@ const {
 } = require('../../helper/employee-weekly-schedule');
 
 const WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES = 0;
-const WEEKLY_SCHEDULE_CLOSE_BUFFER_MINUTES = 20;
+const WEEKLY_SCHEDULE_CLOSE_BUFFER_MINUTES = 0;
 const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
 
 const acceptedStatuses = new Set([
@@ -174,7 +174,12 @@ const getZonedScheduleParts = (date, timeZone = DEFAULT_VENDOR_SCHEDULE_TIME_ZON
   };
 };
 
-const isMinuteInsideScheduleWindow = ({ nowMinutes, startTime, endTime }) => {
+const isMinuteInsideScheduleWindow = ({
+  nowMinutes,
+  startTime,
+  endTime,
+  afterMidnight = false,
+}) => {
   const startMinutes = parseTimeToMinutes(startTime);
   let endMinutes = parseTimeToMinutes(endTime);
   if (startMinutes === null || endMinutes === null) {
@@ -191,8 +196,11 @@ const isMinuteInsideScheduleWindow = ({ nowMinutes, startTime, endTime }) => {
     return false;
   }
 
-  const normalizedNowMinutes =
-    nowMinutes < startMinutes ? nowMinutes + 24 * 60 : nowMinutes;
+  // An overnight slot belongs to two calendar days. Only add a day when the
+  // caller is evaluating the previous day's slot after midnight. Adding a day
+  // based only on the clock time makes that slot appear active again later on
+  // the following evening.
+  const normalizedNowMinutes = nowMinutes + (afterMidnight ? 24 * 60 : 0);
 
   return normalizedNowMinutes >= effectiveStart && normalizedNowMinutes < effectiveEnd;
 };
@@ -207,8 +215,8 @@ const isScheduleSlotActive = ({ slot, today, nowMinutes }) => {
   const todayIndex = dayKeys.indexOf(today);
   const previousDay = dayKeys[(todayIndex + dayKeys.length - 1) % dayKeys.length];
   const crossesMidnight = endMinutes <= startMinutes;
-  const belongsToCurrentWindow =
-    slot.day === today || (crossesMidnight && slot.day === previousDay);
+  const isPreviousDayOvernight = crossesMidnight && slot.day === previousDay;
+  const belongsToCurrentWindow = slot.day === today || isPreviousDayOvernight;
 
   return (
     belongsToCurrentWindow &&
@@ -216,6 +224,7 @@ const isScheduleSlotActive = ({ slot, today, nowMinutes }) => {
       nowMinutes,
       startTime: slot.startTime,
       endTime: slot.endTime,
+      afterMidnight: isPreviousDayOvernight,
     })
   );
 };
