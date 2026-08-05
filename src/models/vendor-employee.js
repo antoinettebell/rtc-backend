@@ -44,7 +44,7 @@ const mSchema = mongoose.Schema(
     },
     assigned_location_id: {
       type: String,
-      required: true,
+      default: null,
       index: true,
     },
     assigned_truck_unit_id: {
@@ -237,6 +237,29 @@ const mSchema = mongoose.Schema(
         enabled: { type: Boolean, default: false },
         clock_in: { type: String, default: '' },
         clock_out: { type: String, default: '' },
+      }],
+      default: [],
+    },
+    schedule_assignments: {
+      type: [{
+        truck_unit_id: { type: mongoose.Schema.Types.ObjectId, required: true },
+        truck_unit_name: { type: String, default: null },
+        location_id: { type: String, required: true },
+        location_name: { type: String, default: null },
+        days: [{
+          day: { type: String, enum: ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'], required: true },
+          enabled: { type: Boolean, default: false },
+          clock_in: { type: String, default: '' },
+          clock_out: { type: String, default: '' },
+        }],
+      }],
+      default: [],
+    },
+    schedule_archives: {
+      type: [{
+        archived_at: { type: Date, default: Date.now },
+        archived_by_user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'users', default: null },
+        assignments: { type: [mongoose.Schema.Types.Mixed], default: [] },
       }],
       default: [],
     },

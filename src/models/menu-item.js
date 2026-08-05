@@ -138,6 +138,12 @@ const mSchema = mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    flavorLabel: {
+      type: String,
+      trim: true,
+      maxlength: 40,
+      default: 'Flavor',
+    },
     flavors: [
       {
         type: String,

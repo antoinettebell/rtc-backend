@@ -217,7 +217,7 @@ class EmployeeSessionService extends BaseService {
       employee_internal_id: employee.employee_internal_id,
       vendor_user_id: employee.vendor_user_id,
       food_truck_id: employee.food_truck_id || foodTruck?._id,
-      location_id: employee.assigned_location_id || assignedLocation?._id,
+      location_id: assignedLocation?._id || employee.assigned_location_id,
       started_at: now,
       last_active_at: now,
       paused_at: null,

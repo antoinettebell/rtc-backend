@@ -1,5 +1,11 @@
 const assert = require('assert');
-const { VENDOR_PLAN_TIERS } = require('./vendor-plan-helper');
+const {
+  VENDOR_PLAN_TIERS,
+  canAccessEventMarketplace,
+  canUseCashPOS,
+  canUseTapToPay,
+  normalizeVendorPlan,
+} = require('./vendor-plan-helper');
 
 const basic = VENDOR_PLAN_TIERS.SUB_BASIC;
 const marketplace = VENDOR_PLAN_TIERS.SUB_MARKETPLACE_VENDOR;
@@ -34,5 +40,11 @@ assert.deepStrictEqual(elite.capabilities.walkUpPosPaymentMethods, [
   'CASH',
   'TAP_TO_PAY',
 ]);
+
+const legacyElite = { name: 'Elite Plan', rate: 5.5 };
+assert.strictEqual(canAccessEventMarketplace(legacyElite), true);
+assert.strictEqual(canUseCashPOS(legacyElite), true);
+assert.strictEqual(canUseTapToPay(legacyElite), true);
+assert.strictEqual(normalizeVendorPlan(legacyElite).capabilities.tapToPay, true);
 
 console.log('Vendor plan catalog tests passed.');

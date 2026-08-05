@@ -17,6 +17,8 @@ const {
 } = require('../services');
 const {
   canAccessEventMarketplace,
+  canUseCashPOS,
+  canUseTapToPay,
 } = require('../../helper/vendor-plan-helper');
 const VendorComplianceService = require('../services/vendor-compliance-service');
 const {
@@ -25,9 +27,20 @@ const {
   removeObject,
 } = require('../../helper/aws');
 const PaymentHelper = require('../../helper/payment-helper');
+const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
 const DocuSignHelper = require('../../helper/docusign-helper');
 const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
 const MailHelper = require('../../helper/mail-helper');
+const {
+  buildFoodVendorAwardDetailsHtml,
+} = require('../../helper/marketplace-award-email-helper');
+const {
+  buildVendorEventCloseState,
+  getMarketplaceEventTiming,
+} = require('../../helper/marketplace-event-close-helper');
+const {
+  isMarketplacePaymentMethodAllowed,
+} = require('../../helper/marketplace-payment-policy-helper');
 const { docusign } = require('../../config');
 const { EventVendorApplicationModel } = require('../../models');
 const {
@@ -136,7 +149,6 @@ const VENDOR_EVENT_PROCESSING_RATE = 0.02;
 const roundMoney = (value) => Number((Number(value || 0)).toFixed(2));
 const ACTIVE_EVENT_STATUSES = ['OPEN', 'REOPENED'];
 const DRAFT_TTL_DAYS = 7;
-const VENDOR_AGREEMENT_VALID_DAYS = 365;
 const REQUIREMENT_ATTACHMENT_TYPE = 'REQUIREMENT_DOCUMENT';
 const MARKETPLACE_ATTACHMENT_REQUIREMENT_LABELS = {
   HEALTH_PERMIT: 'Sanitation Grade',
@@ -1172,8 +1184,14 @@ const archiveReplacementAttachments = async ({
   return existingAttachments;
 };
 
-const getAnnualAgreementExpiry = () =>
-  new Date(Date.now() + VENDOR_AGREEMENT_VALID_DAYS * 24 * 60 * 60 * 1000);
+const getAnnualAgreementExpiry = (signedAt = new Date()) => {
+  const expiry = new Date(signedAt);
+  if (Number.isNaN(expiry.getTime())) {
+    throw buildError('A valid agreement signature date is required.', 400);
+  }
+  expiry.setUTCFullYear(expiry.getUTCFullYear() + 1);
+  return expiry;
+};
 
 const getValidVendorAgreement = async (vendorUserId) =>
   MarketplaceVendorAgreementService.getByData(
@@ -2691,33 +2709,51 @@ const sendMarketplaceInformationEmailsIfUnlocked = async ({
   const submissionLabel = bid?.bid_id || application?.application_id || 'submission';
 
   if (coordinator?.email) {
-    await MailHelper.sendMail(
-      coordinator.email,
-      `RTC Marketplace vendor information - ${event.event_name || event.event_id}`,
-      `
-        <p>${coordinatorName},</p>
-        <p>The marketplace payment requirements are complete. Vendor information and collected documents are attached.</p>
-        ${formatEventSummaryHtml(event)}
-        <p><strong>Vendor:</strong> ${vendorName}</p>
-        <p><strong>Submission:</strong> ${submissionLabel}</p>
-      `,
-      { attachments: emailAttachments }
-    );
+    try {
+      await MailHelper.sendMail(
+        coordinator.email,
+        `RTC Marketplace vendor information - ${event.event_name || event.event_id}`,
+        `
+          <p>${coordinatorName},</p>
+          <p>The marketplace payment requirements are complete. Vendor information and collected documents are attached.</p>
+          ${formatEventSummaryHtml(event)}
+          <p><strong>Vendor:</strong> ${vendorName}</p>
+          <p><strong>Submission:</strong> ${submissionLabel}</p>
+          <h3>Award details</h3>
+          ${buildFoodVendorAwardDetailsHtml({ bid, application, event, vendor })}
+        `,
+        { attachments: emailAttachments }
+      );
+    } catch (error) {
+      console.error('Marketplace coordinator award email failed', {
+        eventId: event.event_id,
+        submissionLabel,
+        message: error.message,
+      });
+    }
   }
 
   if (vendor?.email) {
-    await MailHelper.sendMail(
-      vendor.email,
-      `RTC Marketplace coordinator information - ${event.event_name || event.event_id}`,
-      `
-        <p>${vendorName},</p>
-        <p>The marketplace payment requirements are complete. Coordinator information is below.</p>
-        ${formatEventSummaryHtml(event)}
-        <p><strong>Coordinator:</strong> ${coordinatorName}</p>
-        <p><strong>Email:</strong> ${coordinator?.email || 'Not provided'}</p>
-        <p><strong>Phone:</strong> ${coordinator?.phone || coordinator?.phoneNumber || 'Not provided'}</p>
-      `
-    );
+    try {
+      await MailHelper.sendMail(
+        vendor.email,
+        `RTC Marketplace coordinator information - ${event.event_name || event.event_id}`,
+        `
+          <p>${vendorName},</p>
+          <p>The marketplace payment requirements are complete. Coordinator information is below.</p>
+          ${formatEventSummaryHtml(event)}
+          <p><strong>Coordinator:</strong> ${coordinatorName}</p>
+          <p><strong>Email:</strong> ${coordinator?.email || 'Not provided'}</p>
+          <p><strong>Phone:</strong> ${coordinator?.phone || coordinator?.phoneNumber || 'Not provided'}</p>
+        `
+      );
+    } catch (error) {
+      console.error('Marketplace vendor award email failed', {
+        eventId: event.event_id,
+        submissionLabel,
+        message: error.message,
+      });
+    }
   }
 };
 
@@ -3018,7 +3054,7 @@ const findActiveMarketplacePayment = async (query) =>
   MarketplacePaymentService.getByData(
     {
       ...query,
-      payment_status: { $in: ['PENDING', 'PAID'] },
+      payment_status: { $in: ['PENDING', 'PROCESSING', 'PAID', 'FAILED'] },
     },
     { singleResult: true }
   );
@@ -3070,7 +3106,7 @@ const getFinalEventPaymentAggregateStatus = async (eventId) => {
 	    {
 	      event_id: eventId,
 	      payment_type: 'FINAL_EVENT_PAYMENT',
-	      payment_status: { $in: ['PENDING', 'PAID', 'FAILED'] },
+	      payment_status: { $in: ['PENDING', 'PROCESSING', 'PAID', 'FAILED'] },
 	      $or: targetQueries,
 	    },
 	    { lean: true }
@@ -3767,10 +3803,14 @@ exports.getEvent = async (req, res, next) => {
     }
 
     const fullAccess = ['CUSTOMER', 'SUPER_ADMIN'].includes(req.user.userType);
+    const marketplaceEventWithTiming = {
+      ...marketplaceEvent,
+      final_payment_timing: buildVendorEventCloseState(marketplaceEvent),
+    };
 
     return res.data(
       {
-        marketplaceEvent: redactLockedMarketplaceEvent(marketplaceEvent, unlockState, {
+        marketplaceEvent: redactLockedMarketplaceEvent(marketplaceEventWithTiming, unlockState, {
           fullAccess,
         }),
       },
@@ -5256,7 +5296,7 @@ exports.vendorAgreementReturn = async (req, res, next) => {
         }
         agreement.status = envelopeStatus === 'SIGNED' ? 'SIGNED' : envelopeStatus;
         if (agreement.status === 'SIGNED') {
-          agreement.expires_at = getAnnualAgreementExpiry();
+          agreement.expires_at = getAnnualAgreementExpiry(agreement.signed_at);
         }
       } else if (returnStatus === 'cancelled') {
         agreement.status = 'CANCELLED';
@@ -5312,13 +5352,40 @@ exports.awardedBids = async (req, res, next) => {
       { vendor_user_id: req.user._id, bid_status: 'AWARDED' },
       { sort: { updated_at: -1 }, lean: true }
     );
-    const marketplaceBidList = await attachFilesToBids(
+    const marketplaceBidListWithFiles = await attachFilesToBids(
       await attachEventsToBids(bids, {
         fullAccess: false,
         redactRecord: false,
       }),
       { fullAccess: false, redactRecord: false }
     );
+    const activeFinalPayments = await MarketplacePaymentService.getByData(
+      {
+        bid_id: { $in: bids.map((bid) => bid.bid_id) },
+        payment_type: 'FINAL_EVENT_PAYMENT',
+        payment_status: { $in: ['PENDING', 'PROCESSING', 'PAID', 'FAILED'] },
+      },
+      { sort: { created_at: -1 }, lean: true }
+    );
+    const paymentByBidId = activeFinalPayments.reduce((payments, payment) => {
+      if (!payments[payment.bid_id]) payments[payment.bid_id] = payment;
+      return payments;
+    }, {});
+    const marketplaceBidList = marketplaceBidListWithFiles.map((bid) => {
+      const payment = paymentByBidId[bid.bid_id] || null;
+      const marketplaceEvent = bid.marketplaceEvent || {};
+      const eventForCloseState = {
+        ...marketplaceEvent,
+        final_payment_id: payment?.payment_id || null,
+        final_payment_status: payment?.payment_status || 'NOT_REQUIRED',
+      };
+      return {
+        ...bid,
+        final_payment_id: payment?.payment_id || null,
+        final_payment_status: payment?.payment_status || 'NOT_REQUIRED',
+        vendor_event_close: buildVendorEventCloseState(eventForCloseState),
+      };
+    });
 
     return res.data({ marketplaceBidList }, 'Awarded marketplace bids');
   } catch (e) {
@@ -5848,19 +5915,78 @@ exports.adminWithdrawSubmission = async (req, res, next) => {
 
 exports.createFinalEventPayment = async (req, res, next) => {
   try {
-    if (req.user.userType !== 'CUSTOMER') {
-      throw buildError('Only event coordinators can close events for payment', 403);
+    const isCoordinator = req.user.userType === 'CUSTOMER';
+    const isVendor = req.user.userType === 'VENDOR';
+    if (!isCoordinator && !isVendor) {
+      throw buildError('Only event coordinators or awarded vendors can close events for payment', 403);
     }
 
-    const event = await getOwnedEvent(req.params.eventId, req.user._id);
+    const event = isCoordinator
+      ? await getOwnedEvent(req.params.eventId, req.user._id)
+      : await MarketplaceEventService.getByData(
+          { event_id: req.params.eventId },
+          { singleResult: true }
+        );
+    if (!event) throw buildError('Marketplace event not found', 404);
     if (event.status !== 'AWARDED') {
       throw buildError('Final event payment is only available for awarded events.', 400);
+    }
+    if (isCoordinator) {
+      const timing = getMarketplaceEventTiming(event);
+      if (!timing) {
+        throw buildError('A valid event date, time, duration, and timezone are required.', 409);
+      }
+      if (Date.now() < timing.end_at.getTime()) {
+        throw buildError('The event cannot be closed for payment before it ends.', 409);
+      }
     }
 
     const bidId = String(req.body.bid_id || '').trim();
     const applicationId = String(req.body.application_id || '').trim();
-    if ((bidId && applicationId) || (!bidId && !applicationId)) {
-      throw buildError('Select exactly one awarded bid or application for final payment.', 400);
+    if (applicationId) {
+      throw buildError('Merchandise and service vendors do not receive final event payouts.', 400);
+    }
+    if (!bidId) {
+      throw buildError('Select an awarded food-vendor bid for final payment.', 400);
+    }
+    if (isVendor) {
+      await getVendorMarketplaceFoodTruck(req.user._id, { enforceCompliance: false });
+      if (!bidId || applicationId) {
+        throw buildError('Vendor event close is only available for an awarded food-vendor bid.', 403);
+      }
+      const ownedAwardedBid = await MarketplaceBidService.getByData(
+        {
+          event_id: event.event_id,
+          bid_id: bidId,
+          vendor_user_id: req.user._id,
+          bid_status: 'AWARDED',
+          archived_at: null,
+        },
+        { singleResult: true, lean: true }
+      );
+      if (!ownedAwardedBid) {
+        throw buildError('Only the awarded vendor can close this event for payment.', 403);
+      }
+      const existingVendorPayment = await findActiveMarketplacePayment({
+        event_id: event.event_id,
+        bid_id: bidId,
+        payment_type: 'FINAL_EVENT_PAYMENT',
+      });
+      const closeState = buildVendorEventCloseState({
+        ...toPlainObject(event),
+        final_payment_id: existingVendorPayment?.payment_id || null,
+        final_payment_status: existingVendorPayment?.payment_status || 'NOT_REQUIRED',
+      });
+      if (!existingVendorPayment && !closeState.can_close) {
+        const error = buildError(
+          closeState.status === 'WAITING_FOR_COORDINATOR'
+            ? 'The coordinator still has time to close this event for payment.'
+            : 'This event is not available for vendor close.',
+          409
+        );
+        error.vendor_event_close = closeState;
+        throw error;
+      }
     }
 
     const awardedBid = bidId
@@ -5903,31 +6029,42 @@ exports.createFinalEventPayment = async (req, res, next) => {
 
     let marketplacePayment = await findActiveMarketplacePayment({
       event_id: event.event_id,
-      payer_user_id: req.user._id,
+      payer_user_id: event.customer_user_id,
       payment_type: 'FINAL_EVENT_PAYMENT',
       ...(awardedBid ? { bid_id: awardedBid.bid_id } : {}),
       ...(awardedApplication ? { application_id: awardedApplication.application_id } : {}),
     });
 
     if (!marketplacePayment) {
-      marketplacePayment = await MarketplacePaymentService.create({
-        event_id: event.event_id,
-        bid_id: awardedBid?.bid_id || null,
-        application_id: awardedApplication?.application_id || null,
-        selected_bid_ids: awardedBid ? [awardedBid.bid_id] : [],
-        payer_user_id: req.user._id,
-        payer_type: 'CUSTOMER',
-        food_truck_id: foodTruckId,
-        payment_type: 'FINAL_EVENT_PAYMENT',
-        base_amount: baseAmount,
-        fee_rate: null,
-        fee_amount: 0,
-        tip_amount: tipAmount,
-        total_amount: totalAmount,
-        coordinator_payout_amount: totalAmount,
-        payment_status: 'PENDING',
-      });
-      await createPaymentAudit(marketplacePayment, req, 'CREATE');
+      try {
+        marketplacePayment = await MarketplacePaymentService.create({
+          event_id: event.event_id,
+          bid_id: awardedBid?.bid_id || null,
+          application_id: awardedApplication?.application_id || null,
+          selected_bid_ids: awardedBid ? [awardedBid.bid_id] : [],
+          payer_user_id: event.customer_user_id,
+          payer_type: 'CUSTOMER',
+          food_truck_id: foodTruckId,
+          payment_type: 'FINAL_EVENT_PAYMENT',
+          base_amount: baseAmount,
+          fee_rate: null,
+          fee_amount: 0,
+          tip_amount: tipAmount,
+          total_amount: totalAmount,
+          coordinator_payout_amount: totalAmount,
+          payment_status: 'PENDING',
+        });
+        await createPaymentAudit(marketplacePayment, req, 'CREATE');
+      } catch (createError) {
+        if (createError?.code !== 11000) throw createError;
+        marketplacePayment = await findActiveMarketplacePayment({
+          event_id: event.event_id,
+          payment_type: 'FINAL_EVENT_PAYMENT',
+          ...(awardedBid ? { bid_id: awardedBid.bid_id } : {}),
+          ...(awardedApplication ? { application_id: awardedApplication.application_id } : {}),
+        });
+        if (!marketplacePayment) throw createError;
+      }
     } else if (marketplacePayment.payment_status === 'PENDING') {
       marketplacePayment.bid_id = awardedBid?.bid_id || null;
       marketplacePayment.application_id = awardedApplication?.application_id || null;
@@ -6010,29 +6147,208 @@ exports.initiateCallPayment = async (req, res, next) => {
   }
 };
 
+exports.updateFinalPaymentTip = async (req, res, next) => {
+  try {
+    const payment = await getPaymentForUser(req.params.paymentId, req.user);
+    if (
+      !['VENDOR', 'CUSTOMER'].includes(req.user.userType) ||
+      payment.payment_type !== 'FINAL_EVENT_PAYMENT'
+    ) {
+      throw buildError('Only the event coordinator or awarded vendor can update the final event tip.', 403);
+    }
+
+    const tipAmount = roundMoney(req.body.tip_amount || 0);
+    const totalAmount = roundMoney(payment.base_amount + tipAmount);
+    const updatedPayment = await MarketplacePaymentService.getModel().findOneAndUpdate(
+      {
+        payment_id: payment.payment_id,
+        payment_status: { $in: ['PENDING', 'FAILED'] },
+      },
+      {
+        $set: {
+          tip_amount: tipAmount,
+          total_amount: totalAmount,
+          coordinator_payout_amount: totalAmount,
+          payment_method: null,
+        },
+      },
+      { new: true, runValidators: true }
+    );
+    if (!updatedPayment) {
+      throw buildError('The tip is locked because payment processing has started.', 409);
+    }
+
+    await createPaymentAudit(
+      updatedPayment,
+      req,
+      'TIP_UPDATED',
+      `Tip set to $${tipAmount.toFixed(2)}`
+    );
+    return res.data({ marketplacePayment: updatedPayment }, 'Final event tip updated');
+  } catch (e) {
+    return next(e);
+  }
+};
+
 exports.checkoutPayment = async (req, res, next) => {
   try {
-    const marketplacePayment = await getPaymentForUser(
-      req.params.paymentId,
-      req.user
-    );
-
-    if (!['PENDING', 'FAILED'].includes(marketplacePayment.payment_status)) {
-      throw buildError('Only pending marketplace payments can be paid', 400);
-    }
-
+    const authorizedPayment = await getPaymentForUser(req.params.paymentId, req.user);
     const paymentMethod = req.body.payment_method;
-    if (!['APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY'].includes(paymentMethod)) {
-      throw buildError('Marketplace checkout only supports wallet or Tap to Pay payments', 400);
+    const isFinalEventPayment = authorizedPayment.payment_type === 'FINAL_EVENT_PAYMENT';
+
+    if (!isMarketplacePaymentMethodAllowed({
+      paymentType: authorizedPayment.payment_type,
+      userType: req.user.userType,
+      paymentMethod,
+    })) {
+      if (isFinalEventPayment && req.user.userType === 'CUSTOMER') {
+        throw buildError('Event coordinators can only use Apple Pay or Google Pay.', 403);
+      }
+      if (isFinalEventPayment && req.user.userType === 'VENDOR') {
+        throw buildError('Awarded vendors can only collect Cash or Tap to Pay.', 403);
+      }
+      throw buildError('This marketplace payment requires Apple Pay or Google Pay.', 400);
     }
-    if (
+
+    if (isFinalEventPayment && req.user.userType === 'VENDOR') {
+      const vendorFoodTruck = await getVendorMarketplaceFoodTruck(req.user._id, {
+        enforceCompliance: false,
+      });
+      if (paymentMethod === 'CASH' && !canUseCashPOS(vendorFoodTruck)) {
+        throw buildError('Cash collection is not available for this vendor plan.', 403);
+      }
+      if (paymentMethod === 'TAP_TO_PAY' && !canUseTapToPay(vendorFoodTruck)) {
+        throw buildError('Tap to Pay is not available for this vendor plan.', 403);
+      }
+    }
+    if (roundMoney(req.body.expected_total) !== roundMoney(authorizedPayment.total_amount)) {
+      throw buildError('The payment amount changed. Refresh before completing payment.', 409);
+    }
+    if (authorizedPayment.payment_status === 'PAID') {
+      return res.data(
+        { marketplacePayment: authorizedPayment },
+        'Marketplace payment already confirmed'
+      );
+    }
+    if (!['PENDING', 'FAILED'].includes(authorizedPayment.payment_status)) {
+      throw buildError('Payment is already processing and cannot be started again.', 409);
+    }
+
+    let marketplacePayment = await MarketplacePaymentService.getModel().findOneAndUpdate(
+      {
+        payment_id: authorizedPayment.payment_id,
+        payment_status: { $in: ['PENDING', 'FAILED'] },
+      },
+      {
+        $set: {
+          payment_method: paymentMethod,
+          payment_status: 'PROCESSING',
+          processing_started_at: new Date(),
+          processing_by_user_id: req.user._id,
+        },
+      },
+      { new: true, runValidators: true }
+    );
+    if (!marketplacePayment) {
+      const currentPayment = await MarketplacePaymentService.getByData(
+        { payment_id: authorizedPayment.payment_id },
+        { singleResult: true }
+      );
+      if (currentPayment?.payment_status === 'PAID') {
+        return res.data(
+          { marketplacePayment: currentPayment },
+          'Marketplace payment already confirmed'
+        );
+      }
+      throw buildError('Payment is already processing on another device.', 409);
+    }
+    await createPaymentAudit(marketplacePayment, req, 'CHECKOUT_STARTED', paymentMethod);
+
+    if (paymentMethod === 'CASH') {
+      marketplacePayment = await MarketplacePaymentService.getModel().findOneAndUpdate(
+        {
+          payment_id: marketplacePayment.payment_id,
+          payment_status: 'PROCESSING',
+          processing_by_user_id: req.user._id,
+        },
+        { $set: { payment_status: 'PAID', paid_at: new Date() } },
+        { new: true, runValidators: true }
+      );
+      if (!marketplacePayment) {
+        throw buildError('Cash payment could not be confirmed.', 409);
+      }
+      await createPaymentAudit(marketplacePayment, req, 'CHECKOUT_PAID', 'CASH');
+      const routingResult = await finalizePaidMarketplacePayment(marketplacePayment);
+      return res.data(
+        { marketplacePayment, routingResult },
+        'Marketplace cash payment confirmed'
+      );
+    }
+
+    const processedTapToPay =
       paymentMethod === 'TAP_TO_PAY' &&
-      marketplacePayment.payment_type !== 'FINAL_EVENT_PAYMENT'
-    ) {
-      throw buildError('Tap to Pay is only available for final event payment.', 400);
-    }
-    if (paymentMethod === 'TAP_TO_PAY' && req.user.userType !== 'VENDOR') {
-      throw buildError('Tap to Pay final event payment must be accepted by the awarded vendor.', 403);
+      req.body.payment_data?.type === 'PROCESSED_TRANSACTION' &&
+      req.body.payment_data?.transactionId;
+    if (processedTapToPay) {
+      const transactionId = String(req.body.payment_data.transactionId);
+      const reusedTransaction = await MarketplacePaymentService.getByData(
+        {
+          processor_transaction_id: transactionId,
+          payment_id: { $ne: marketplacePayment.payment_id },
+          payment_status: 'PAID',
+        },
+        { singleResult: true, lean: true }
+      );
+      if (reusedTransaction) {
+        await MarketplacePaymentService.getModel().updateOne(
+          { payment_id: marketplacePayment.payment_id, payment_status: 'PROCESSING' },
+          { $set: { payment_status: 'FAILED' } }
+        );
+        throw buildError('This Tap to Pay transaction has already been used.', 409);
+      }
+      try {
+        await CyberSourcePaymentHelper.verifyTransaction({
+          transactionId,
+          expectedAmount: marketplacePayment.total_amount,
+          expectedCurrency: 'USD',
+          expectedReference: marketplacePayment.payment_id,
+        });
+      } catch (verificationError) {
+        await MarketplacePaymentService.getModel().updateOne(
+          { payment_id: marketplacePayment.payment_id, payment_status: 'PROCESSING' },
+          { $set: { payment_status: 'FAILED' } }
+        );
+        throw buildError('Tap to Pay could not be verified with the payment processor.', 502);
+      }
+      marketplacePayment = await MarketplacePaymentService.getModel().findOneAndUpdate(
+        {
+          payment_id: marketplacePayment.payment_id,
+          payment_status: 'PROCESSING',
+          processing_by_user_id: req.user._id,
+        },
+        {
+          $set: {
+            payment_status: 'PAID',
+            processor_transaction_id: transactionId,
+            paid_at: new Date(),
+          },
+        },
+        { new: true, runValidators: true }
+      );
+      if (!marketplacePayment) {
+        throw buildError('Tap to Pay result could not be confirmed.', 409);
+      }
+      await createPaymentAudit(
+        marketplacePayment,
+        req,
+        'CHECKOUT_PAID',
+        'TAP_TO_PAY processed by native reader'
+      );
+      const routingResult = await finalizePaidMarketplacePayment(marketplacePayment);
+      return res.data(
+        { marketplacePayment, routingResult },
+        'Marketplace Tap to Pay payment confirmed'
+      );
     }
 
     const opaquePaymentData = normalizeOpaquePaymentData(req.body.payment_data);
@@ -6046,26 +6362,50 @@ exports.checkoutPayment = async (req, res, next) => {
           ).toString('base64');
 
     if (!opaqueToken) {
+      await MarketplacePaymentService.getModel().updateOne(
+        { payment_id: marketplacePayment.payment_id, payment_status: 'PROCESSING' },
+        { $set: { payment_status: 'FAILED' } }
+      );
       throw buildError('Payment token missing', 400);
     }
 
-    const chargeResp = await PaymentHelper.chargePaymentUnified({
-      opaqueToken,
-      amount: marketplacePayment.total_amount,
-      paymentMethod,
-      dataDescriptor: opaquePaymentData.dataDescriptor,
-      firstName: req.user.firstName || 'Marketplace',
-      lastName: req.user.lastName || 'Payer',
-      email: req.user.email,
-      subTotal: marketplacePayment.total_amount,
-      taxAmount: 0,
-      userId: req.user._id,
-    });
+    let chargeResp;
+    try {
+      chargeResp = await PaymentHelper.chargePaymentUnified({
+        opaqueToken,
+        amount: marketplacePayment.total_amount,
+        paymentMethod,
+        dataDescriptor: opaquePaymentData.dataDescriptor,
+        firstName: req.user.firstName || 'Marketplace',
+        lastName: req.user.lastName || 'Payer',
+        email: req.user.email,
+        subTotal: marketplacePayment.total_amount,
+        taxAmount: 0,
+        userId: req.user._id,
+      });
+    } catch (chargeError) {
+      marketplacePayment = await MarketplacePaymentService.getModel().findOneAndUpdate(
+        { payment_id: marketplacePayment.payment_id, payment_status: 'PROCESSING' },
+        { $set: { payment_status: 'FAILED' } },
+        { new: true }
+      );
+      if (marketplacePayment) {
+        await createPaymentAudit(
+          marketplacePayment,
+          req,
+          'CHECKOUT_FAILED',
+          chargeError.message || 'Payment gateway error'
+        );
+      }
+      throw chargeError;
+    }
 
     if (!chargeResp.success) {
-      marketplacePayment.payment_method = paymentMethod;
-      marketplacePayment.payment_status = 'FAILED';
-      await marketplacePayment.save();
+      marketplacePayment = await MarketplacePaymentService.getModel().findOneAndUpdate(
+        { payment_id: marketplacePayment.payment_id, payment_status: 'PROCESSING' },
+        { $set: { payment_status: 'FAILED' } },
+        { new: true }
+      );
       await createPaymentAudit(
         marketplacePayment,
         req,
@@ -6075,16 +6415,28 @@ exports.checkoutPayment = async (req, res, next) => {
       throw buildError(chargeResp.message || 'Payment failed', 400);
     }
 
-    marketplacePayment.payment_method = paymentMethod;
-    marketplacePayment.payment_status = 'PAID';
-    marketplacePayment.processor_transaction_id =
-      chargeResp.transactionId || chargeResp?.fullResponse?.transId || null;
-    marketplacePayment.paid_at = new Date();
-    await marketplacePayment.save();
-    await createPaymentAudit(marketplacePayment, req, 'CHECKOUT_PAID');
+    marketplacePayment = await MarketplacePaymentService.getModel().findOneAndUpdate(
+      {
+        payment_id: marketplacePayment.payment_id,
+        payment_status: 'PROCESSING',
+        processing_by_user_id: req.user._id,
+      },
+      {
+        $set: {
+          payment_status: 'PAID',
+          processor_transaction_id:
+            chargeResp.transactionId || chargeResp?.fullResponse?.transId || null,
+          paid_at: new Date(),
+        },
+      },
+      { new: true, runValidators: true }
+    );
+    if (!marketplacePayment) {
+      throw buildError('Payment result could not be finalized.', 409);
+    }
+    await createPaymentAudit(marketplacePayment, req, 'CHECKOUT_PAID', paymentMethod);
 
     const routingResult = await finalizePaidMarketplacePayment(marketplacePayment);
-
     return res.data(
       { marketplacePayment, routingResult },
       'Marketplace payment confirmed'
@@ -6180,7 +6532,7 @@ exports.adminMarkPaymentPaid = async (req, res, next) => {
       throw buildError('Marketplace payment is already paid', 409);
     }
 
-    if (['CANCELLED', 'REFUNDED'].includes(marketplacePayment.payment_status)) {
+    if (['PROCESSING', 'CANCELLED', 'REFUNDED'].includes(marketplacePayment.payment_status)) {
       throw buildError('Cancelled or refunded payments cannot be manually paid', 400);
     }
 

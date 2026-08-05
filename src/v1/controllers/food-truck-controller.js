@@ -56,6 +56,7 @@ const customerNestedMenuItemSelect = {
   maxQty: 1,
   allowCustomize: 1,
   hasFlavors: 1,
+  flavorLabel: 1,
   flavors: 1,
   flavorOptions: 1,
   flavorsPerOrder: 1,
@@ -459,7 +460,7 @@ const ensureDefaultTruckUnits = (foodTruck) => {
       if (isPrimary) primaryFound = true;
       return {
         ...plainUnit,
-        name: isPrimary ? foodTruck.name || plainUnit.name || 'Truck 1' : plainUnit.name,
+        name: isPrimary ? plainUnit.name || foodTruck.name || 'Truck 1' : plainUnit.name,
         phone: isPrimary ? plainUnit.phone || null : plainUnit.phone || null,
         display_order: plainUnit.display_order || index + 1,
         is_primary: isPrimary,
@@ -1083,7 +1084,11 @@ exports.update = async (req, res, next) => {
     if (!item) {
       return res.error(new Error('No food truck found'), 409);
     }
+    const neededPrimaryTruck = !(item.truck_units || []).length;
     ensureDefaultTruckUnits(item);
+    if (neededPrimaryTruck && create_name) {
+      item.truck_units[0].name = create_name.trim();
+    }
 
     if (name) {
       item.name = name;

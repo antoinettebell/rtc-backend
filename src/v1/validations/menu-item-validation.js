@@ -85,6 +85,7 @@ module.exports = {
       categoryId: Joi.string().trim().required(),
       allowCustomize: Joi.boolean(),
       hasFlavors: Joi.boolean(),
+      flavorLabel: Joi.string().trim().max(40),
       flavors: Joi.array().items(Joi.string().trim()).when('hasFlavors', {
         is: true,
         then: Joi.array().min(1).max(15).required(),
@@ -207,6 +208,7 @@ module.exports = {
       categoryId: Joi.string(),
       allowCustomize: Joi.boolean(),
       hasFlavors: Joi.boolean(),
+      flavorLabel: Joi.string().trim().max(40),
       flavors: Joi.array().items(Joi.string().trim()).when('hasFlavors', {
         is: true,
         then: Joi.array().min(1).max(15).required(),

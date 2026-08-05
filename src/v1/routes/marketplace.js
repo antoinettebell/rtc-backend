@@ -247,6 +247,13 @@ router.post(
   Controller.checkoutPayment
 );
 
+router.patch(
+  '/payments/:paymentId/tip',
+  allowedTo(['VENDOR']),
+  validate(Validation.updateFinalPaymentTip),
+  Controller.updateFinalPaymentTip
+);
+
 router.post(
   '/payments/:paymentId/call',
   allowedTo(['CUSTOMER', 'VENDOR']),
@@ -322,7 +329,7 @@ router.post(
 
 router.post(
   '/events/:eventId/final-payment',
-  allowedTo(['CUSTOMER']),
+  allowedTo(['CUSTOMER', 'VENDOR']),
   validate(Validation.createFinalEventPayment),
   Controller.createFinalEventPayment
 );

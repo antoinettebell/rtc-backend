@@ -6,6 +6,11 @@ const scheduleRow = Joi.object({
   clock_in: Joi.string().pattern(/^([01]\d|2[0-3]):[0-5]\d$/).when('enabled', { is: true, then: Joi.required(), otherwise: Joi.allow('') }),
   clock_out: Joi.string().pattern(/^([01]\d|2[0-3]):[0-5]\d$/).when('enabled', { is: true, then: Joi.required(), otherwise: Joi.allow('') }),
 });
+const scheduleAssignment = Joi.object({
+  truck_unit_id: Joi.string().trim().required(),
+  location_id: Joi.string().trim().required(),
+  days: Joi.array().items(scheduleRow).length(7).required(),
+});
 
 const employeePin = Joi.string()
   .trim()
@@ -46,7 +51,7 @@ module.exports = {
   add: {
     body: Joi.object({
       food_truck_id: Joi.string().trim().required(),
-      assigned_location_id: Joi.string().trim().required(),
+      assigned_location_id: Joi.string().trim().allow(null, ''),
 	      assigned_truck_unit_id: Joi.string().trim().allow(null, ''),
 	      first_name: Joi.string().trim().required(),
 	      last_name: Joi.string().trim().required(),
@@ -64,6 +69,7 @@ module.exports = {
       is_active: Joi.boolean(),
       is_working: Joi.boolean(),
       weekly_schedule: Joi.array().items(scheduleRow).max(7),
+      schedule_assignments: Joi.array().items(scheduleAssignment).max(7),
     }),
   },
 
@@ -71,7 +77,7 @@ module.exports = {
     body: Joi.object({
       vendor_user_id: Joi.string().trim().required(),
       food_truck_id: Joi.string().trim().required(),
-      assigned_location_id: Joi.string().trim().required(),
+      assigned_location_id: Joi.string().trim().allow(null, ''),
 	      assigned_truck_unit_id: Joi.string().trim().allow(null, ''),
 	      first_name: Joi.string().trim().required(),
 	      last_name: Joi.string().trim().required(),
@@ -89,6 +95,7 @@ module.exports = {
       is_active: Joi.boolean(),
       is_working: Joi.boolean(),
       weekly_schedule: Joi.array().items(scheduleRow).max(7),
+      schedule_assignments: Joi.array().items(scheduleAssignment).max(7),
     }),
   },
 
@@ -111,6 +118,8 @@ module.exports = {
       is_active: Joi.boolean(),
       is_working: Joi.boolean(),
       weekly_schedule: Joi.array().items(scheduleRow).max(7),
+      schedule_assignments: Joi.array().items(scheduleAssignment).max(7),
+      archive_schedule: Joi.boolean(),
     }).min(1),
   },
 

@@ -15,7 +15,10 @@ const mSchema = mongoose.Schema(
     },
     action: {
       type: String,
-      enum: ['CREATE', 'CALL_INITIATED', 'CHECKOUT_PAID', 'CHECKOUT_FAILED', 'ADMIN_MARK_PAID'],
+      enum: [
+        'CREATE', 'TIP_UPDATED', 'CALL_INITIATED', 'CHECKOUT_STARTED',
+        'CHECKOUT_PAID', 'CHECKOUT_FAILED', 'ADMIN_MARK_PAID',
+      ],
       required: true,
     },
     actor_user_id: {

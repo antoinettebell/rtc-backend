@@ -133,7 +133,15 @@ const getVendorPlanTier = (plan) => {
   }
 
   const source = typeof plan.toObject === 'function' ? plan.toObject() : plan;
-  return VENDOR_PLAN_TIERS[source.slug] || null;
+  if (VENDOR_PLAN_TIERS[source.slug]) {
+    return VENDOR_PLAN_TIERS[source.slug];
+  }
+  const planText = `${source.slug || ''} ${source.name || ''} ${source.title || ''}`;
+  if (/marketplace\s*vendor/i.test(planText)) return VENDOR_PLAN_TIERS.SUB_MARKETPLACE_VENDOR;
+  if (/elite/i.test(planText) || Number(source.rate) === 5.5) return VENDOR_PLAN_TIERS.SUB_ELITE;
+  if (/platinum/i.test(planText) || Number(source.rate) === 4.5) return VENDOR_PLAN_TIERS.SUB_PLATINUM;
+  if (/basic/i.test(planText)) return VENDOR_PLAN_TIERS.SUB_BASIC;
+  return null;
 };
 
 const getVendorPlanCapabilities = (plan) => {

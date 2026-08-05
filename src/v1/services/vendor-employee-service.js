@@ -9,7 +9,10 @@ const PlanService = require('./plan-service');
 const EmployeeSessionService = require('./employee-session-service');
 const EncryptionService = require('../../helper/encryption');
 const { maskTaxId } = require('../../helper/event-coordinator-profile');
-const { getEmployeeScheduleState } = require('../../helper/employee-weekly-schedule');
+const {
+  getEmployeeScheduleState,
+  getEmployeeScheduleAssignment,
+} = require('../../helper/employee-weekly-schedule');
 const {
   assertVendorPlanCapability,
   getVendorPlanCapabilities,
@@ -138,7 +141,7 @@ class VendorEmployeeService extends BaseService {
   async createForVendor({
     vendor_user_id,
     food_truck_id,
-    assigned_location_id,
+    assigned_location_id = null,
     assigned_truck_unit_id = null,
     first_name,
     last_name,
@@ -166,18 +169,10 @@ class VendorEmployeeService extends BaseService {
       throw buildError('Food truck not found or access denied.', 404);
     }
 
-    const locationExists = (foodTruck.locations || []).some(
-      (location) => location._id?.toString() === assigned_location_id?.toString()
-    );
-
-    if (!locationExists) {
-      throw buildError('Employee must be assigned to an existing location.');
-    }
-
-    const assignedTruckUnit = this.getAssignedTruckUnit(
-      foodTruck,
-      assigned_truck_unit_id
-    );
+    const assignedTruckUnit = assigned_location_id
+      ? this.getAssignedTruckUnit(foodTruck, assigned_truck_unit_id)
+      : null;
+    if (assigned_location_id) this.assertExistingLocation(foodTruck, assigned_location_id);
 
     if (!pin) {
       throw buildError('Employee PIN is required.');
@@ -200,8 +195,8 @@ class VendorEmployeeService extends BaseService {
       vendor_user_id,
       food_truck_id,
       assigned_location_id,
-      assigned_truck_unit_id: assignedTruckUnit._id,
-	      assigned_truck_unit_name: assignedTruckUnit.name,
+      assigned_truck_unit_id: assignedTruckUnit?._id || null,
+	      assigned_truck_unit_name: assignedTruckUnit?.name || null,
       first_name,
 	      last_name,
       zip_code,
@@ -261,7 +256,7 @@ class VendorEmployeeService extends BaseService {
     return Promise.all(
       employees.map(async (employee) => {
         const safeEmployee = toSafeEmployee(employee);
-        const [todayShiftSummary, weekShiftSummary] = await Promise.all([
+        const [todayShiftSummary, weekShiftSummary, activeSession] = await Promise.all([
           EmployeeSessionService.getEmployeeShiftSummary({
             foodTruckId: safeEmployee.food_truck_id,
             employeeInternalId: safeEmployee.employee_internal_id,
@@ -272,6 +267,10 @@ class VendorEmployeeService extends BaseService {
             employeeInternalId: safeEmployee.employee_internal_id,
             range: 'week',
           }),
+          EmployeeSessionService.getActiveSession(
+            null,
+            safeEmployee.employee_internal_id
+          ),
         ]);
 
         return {
@@ -280,6 +279,7 @@ class VendorEmployeeService extends BaseService {
             today: todayShiftSummary,
             week: weekShiftSummary,
           },
+          has_open_shift: !!activeSession,
         };
       })
     );
@@ -476,11 +476,80 @@ class VendorEmployeeService extends BaseService {
       }
     });
 
+    if (update.schedule_assignments !== undefined) {
+      const foodTruck = await this.getVendorFoodTruck(vendor_user_id, employee.food_truck_id);
+      const usedDays = new Set();
+      const assignments = update.schedule_assignments.map((assignment) => {
+        const location = this.getAssignedLocation(foodTruck, assignment.location_id);
+        if (!location) throw buildError('Every employee schedule card needs a saved location.');
+        const truck = this.getAssignedTruckUnit(foodTruck, assignment.truck_unit_id);
+        const days = assignment.days.map((day) => {
+          if (day.enabled) {
+            if (usedDays.has(day.day)) {
+              throw buildError('An employee can only have one truck and location assignment per day.');
+            }
+            usedDays.add(day.day);
+          }
+          return day;
+        });
+        return {
+          truck_unit_id: truck._id,
+          truck_unit_name: truck.name,
+          location_id: location._id,
+          location_name: location.title || location.address || 'Serving location',
+          days,
+        };
+      });
+      if (!usedDays.size) {
+        throw buildError('Employee schedule must include at least one workday.');
+      }
+      employee.schedule_assignments = assignments;
+      const firstActive = assignments.find((assignment) => assignment.days.some((day) => day.enabled));
+      employee.assigned_location_id = firstActive?.location_id || null;
+      employee.assigned_truck_unit_id = firstActive?.truck_unit_id || null;
+      employee.assigned_truck_unit_name = firstActive?.truck_unit_name || null;
+      employee.weekly_schedule = [];
+    }
+
+    if (update.archive_schedule) {
+      const openSession = await EmployeeSessionService.getActiveSession(
+        null,
+        employee.employee_internal_id
+      );
+      if (openSession) {
+        throw buildError('End the employee open shift before archiving the schedule.');
+      }
+      if (!(employee.schedule_assignments || []).length && !(employee.weekly_schedule || []).length) {
+        throw buildError('There is no employee schedule to archive.');
+      }
+      employee.schedule_archives = [
+        ...(employee.schedule_archives || []),
+        {
+          archived_at: new Date(),
+          archived_by_user_id: actor_user_id,
+          assignments: employee.schedule_assignments?.length
+            ? employee.schedule_assignments.map((item) => item.toObject?.() || item)
+            : [{
+                truck_unit_id: employee.assigned_truck_unit_id,
+                truck_unit_name: employee.assigned_truck_unit_name,
+                location_id: employee.assigned_location_id,
+                days: employee.weekly_schedule,
+              }],
+        },
+      ];
+      employee.schedule_assignments = [];
+      employee.weekly_schedule = [];
+      employee.assigned_location_id = null;
+      employee.assigned_truck_unit_id = null;
+      employee.assigned_truck_unit_name = null;
+      employee.is_working = false;
+    }
+
     if (assignedLocationChanged) {
       employee.is_working = false;
     }
 
-    if (update.weekly_schedule !== undefined) {
+    if (update.weekly_schedule !== undefined || update.schedule_assignments !== undefined) {
       const foodTruck = await this.getVendorFoodTruck(
         vendor_user_id,
         employee.food_truck_id
@@ -492,11 +561,17 @@ class VendorEmployeeService extends BaseService {
       if (activeSession?.is_vendor_override) {
         employee.is_working = true;
       } else {
-        const scheduleState = getEmployeeScheduleState(
-          employee.weekly_schedule,
-          new Date(),
-          foodTruck.schedule_time_zone || 'America/New_York'
-        );
+        const scheduleState = employee.schedule_assignments?.length
+          ? getEmployeeScheduleAssignment(
+              employee.schedule_assignments,
+              new Date(),
+              foodTruck.schedule_time_zone || 'America/New_York'
+            ) || { withinWindow: false }
+          : getEmployeeScheduleState(
+              employee.weekly_schedule,
+              new Date(),
+              foodTruck.schedule_time_zone || 'America/New_York'
+            );
         employee.is_working = scheduleState.withinWindow;
         if (!scheduleState.withinWindow && activeSession) {
           await EmployeeSessionService.endSession({
@@ -640,17 +715,27 @@ class VendorEmployeeService extends BaseService {
       throw customError;
     }
 
-    const assignedLocation = this.getAssignedLocation(
-      foodTruck,
-      employee.assigned_location_id
-    );
-    const assignedTruckUnit = this.getAssignedTruckUnit(
-      foodTruck,
-      employee.assigned_truck_unit_id
-    );
+    const hasCardSchedule = employee.schedule_assignments?.length > 0;
+    const scheduled = hasCardSchedule
+      ? getEmployeeScheduleAssignment(
+          employee.schedule_assignments,
+          new Date(),
+          foodTruck.schedule_time_zone || 'America/New_York'
+        )
+      : null;
+    const assignedLocationId = hasCardSchedule
+      ? scheduled?.assignment?.location_id
+      : employee.assigned_location_id;
+    const assignedTruckUnitId = hasCardSchedule
+      ? scheduled?.assignment?.truck_unit_id
+      : employee.assigned_truck_unit_id;
+    const assignedLocation = this.getAssignedLocation(foodTruck, assignedLocationId);
+    const assignedTruckUnit = assignedLocationId
+      ? this.getAssignedTruckUnit(foodTruck, assignedTruckUnitId)
+      : null;
 
     if (!assignedLocation) {
-      throw buildError('Employee assigned location is no longer available.', 403);
+      throw buildError('You are not currently scheduled for a truck and location.', 403);
     }
 
     const plan = foodTruck.planId
@@ -685,9 +770,9 @@ class VendorEmployeeService extends BaseService {
       },
       assignedLocation,
       assignedTruckUnit: {
-        _id: assignedTruckUnit._id,
-        name: assignedTruckUnit.name,
-        phone: assignedTruckUnit.phone || null,
+        _id: assignedTruckUnit?._id,
+        name: assignedTruckUnit?.name,
+        phone: assignedTruckUnit?.phone || null,
       },
       employeeCapabilities: {
         employeeWalkUpPos: !!capabilities.employeeWalkUpPos,

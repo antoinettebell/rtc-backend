@@ -10,6 +10,10 @@ const {
 } = require('../../models');
 const { addObjectWithKey } = require('../../helper/aws');
 const { docusign } = require('../../config');
+const MailHelper = require('../../helper/mail-helper');
+const {
+  buildEventVendorAwardDetailsHtml,
+} = require('../../helper/marketplace-award-email-helper');
 
 const TYPES = ['MERCHANDISE', 'SERVICE', 'OTHER'];
 const error = (message, code = 400) => Object.assign(new Error(message), { code });
@@ -209,6 +213,32 @@ exports.awardApplication = async (req, res, next) => {
       coordinator_payout_amount: subtotal, payment_status: 'PENDING',
     });
     application.status = 'PAYMENT_DUE'; application.payment_id = payment.payment_id; await application.save();
+    const [coordinator, vendor] = await Promise.all([
+      UserModel.findById(event.customer_user_id).lean(),
+      UserModel.findById(application.vendor_user_id).lean(),
+    ]);
+    if (coordinator?.email) {
+      try {
+        await MailHelper.sendMail(
+          coordinator.email,
+          `RTC Marketplace Vendor awarded - ${event.event_name || event.event_id}`,
+          `
+            <p>Your Marketplace Vendor selection has been recorded.</p>
+            <p><strong>Event:</strong> ${event.event_name || event.event_id}</p>
+            <p><strong>Event date:</strong> ${event.event_date || 'Not provided'}</p>
+            <h3>Award details</h3>
+            ${buildEventVendorAwardDetailsHtml({ application, vendor })}
+            <p>The vendor must complete the attendance-fee checkout before the award is confirmed.</p>
+          `
+        );
+      } catch (mailError) {
+        console.error('Marketplace Vendor coordinator award email failed', {
+          eventId: event.event_id,
+          applicationId: application.application_id,
+          message: mailError.message,
+        });
+      }
+    }
     return res.data({ eventVendorApplication: application, marketplacePayment: payment }, 'Marketplace Vendor awarded; checkout is due');
   } catch (e) { return next(e); }
 };

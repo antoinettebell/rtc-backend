@@ -40,6 +40,7 @@ const nestedMenuItemSelect = {
   maxQty: 1,
   allowCustomize: 1,
   hasFlavors: 1,
+  flavorLabel: 1,
   flavors: 1,
   flavorOptions: 1,
   flavorsPerOrder: 1,
@@ -129,6 +130,33 @@ const assertPromotionalItemIsNotAlreadyAComboChild = async ({
   if (parentCombo) {
     throw new Error(
       `${itemName || 'This item'} is included in the combo "${parentCombo.name}". Remove it from that combo before activating BOGO/BOGOHO.`
+    );
+  }
+};
+
+const assertBogoRewardsAreEligible = async ({
+  bogoItems,
+  userId,
+  hasDiscount,
+  discountType,
+}) => {
+  if (!hasDiscount || !ACTIVE_BOGO_TYPES.includes(discountType)) return;
+
+  const rewardIds = (Array.isArray(bogoItems) ? bogoItems : [])
+    .filter((reward) => !reward?.isSameItem)
+    .map((reward) => reward?.itemId)
+    .filter((id) => mongoose.Types.ObjectId.isValid(id));
+  if (!rewardIds.length) return;
+
+  const eligibleCount = await MenuItemModel.countDocuments({
+    _id: { $in: rewardIds },
+    userId,
+    itemType: 'INDIVIDUAL',
+    deletedAt: null,
+  });
+  if (eligibleCount !== new Set(rewardIds.map(String)).size) {
+    throw new Error(
+      'BOGO/BOGOHO reward items must be individual menu items for this vendor.'
     );
   }
 };
@@ -555,6 +583,7 @@ exports.add = async (req, res, next) => {
         bogoItems,
         discountRules,
         hasFlavors,
+        flavorLabel,
         flavors,
         flavorOptions,
         flavorsPerOrder,
@@ -670,6 +699,12 @@ exports.add = async (req, res, next) => {
       subItem,
       userId: user._id,
     });
+    await assertBogoRewardsAreEligible({
+      bogoItems,
+      userId: user._id,
+      hasDiscount,
+      discountType: finalDiscountType,
+    });
 
     let data = await Service.create({
       name,
@@ -700,6 +735,7 @@ exports.add = async (req, res, next) => {
       bogoItems: bogoItems || [],
       discountRules: discountRules || undefined,
       hasFlavors: hasFlavors || false,
+      flavorLabel: String(flavorLabel || 'Flavor').trim(),
       flavors: normalizedFlavors,
       flavorOptions: normalizedFlavorOptions,
       flavorsPerOrder: hasFlavors ? flavorsPerOrder || 1 : 1,
@@ -764,6 +800,7 @@ exports.update = async (req, res, next) => {
         bogoItems,
         discountRules,
         hasFlavors,
+        flavorLabel,
         flavors,
         flavorOptions,
         flavorsPerOrder,
@@ -907,6 +944,12 @@ exports.update = async (req, res, next) => {
       hasDiscount,
       discountType: finalDiscountType,
     });
+    await assertBogoRewardsAreEligible({
+      bogoItems,
+      userId: user._id,
+      hasDiscount,
+      discountType: finalDiscountType,
+    });
 
     // ---------- Update Fields ----------
     Object.assign(item, {
@@ -937,6 +980,7 @@ exports.update = async (req, res, next) => {
       bogoItems: bogoItems || [],
       discountRules: discountRules || item.discountRules,
       hasFlavors: hasFlavors || false,
+      flavorLabel: String(flavorLabel || item.flavorLabel || 'Flavor').trim(),
       flavors: normalizedFlavors,
       flavorOptions: normalizedFlavorOptions,
       flavorsPerOrder: hasFlavors ? flavorsPerOrder || 1 : 1,

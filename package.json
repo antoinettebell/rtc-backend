@@ -24,6 +24,7 @@
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",
     "cryptlib": "^1.0.3",
+    "cybersource-rest-client": "^0.0.81",
     "dayjs": "^1.11.11",
     "disposable-email-domains": "^1.0.62",
     "dotenv": "^16.4.5",

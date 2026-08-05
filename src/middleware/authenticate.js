@@ -8,7 +8,10 @@ const {
   VendorEmployeeModel,
   EmployeeSessionModel,
 } = require('../models');
-const { getEmployeeScheduleState } = require('../helper/employee-weekly-schedule');
+const {
+  getEmployeeScheduleState,
+  getEmployeeScheduleAssignment,
+} = require('../helper/employee-weekly-schedule');
 const { FoodTruckModel } = require('../models');
 const EmployeeSessionService = require('../v1/services/employee-session-service');
 
@@ -85,17 +88,23 @@ const Authenticate = async (req, res, next) => {
       if (
         activeSession &&
         !activeSession.is_vendor_override &&
-        Array.isArray(employee.weekly_schedule) &&
-        employee.weekly_schedule.length > 0
+        ((Array.isArray(employee.schedule_assignments) && employee.schedule_assignments.length > 0) ||
+          (Array.isArray(employee.weekly_schedule) && employee.weekly_schedule.length > 0))
       ) {
         const foodTruck = await FoodTruckModel.findById(employee.food_truck_id)
           .select('schedule_time_zone')
           .lean();
-        const scheduleState = getEmployeeScheduleState(
-          employee.weekly_schedule,
-          new Date(),
-          foodTruck?.schedule_time_zone || 'America/New_York'
-        );
+        const scheduleState = employee.schedule_assignments?.length
+          ? getEmployeeScheduleAssignment(
+              employee.schedule_assignments,
+              new Date(),
+              foodTruck?.schedule_time_zone || 'America/New_York'
+            ) || { withinWindow: false }
+          : getEmployeeScheduleState(
+              employee.weekly_schedule,
+              new Date(),
+              foodTruck?.schedule_time_zone || 'America/New_York'
+            );
         if (!scheduleState.withinWindow) {
           await EmployeeSessionService.endSession({
             employeeSessionId: activeSession.employee_session_id,

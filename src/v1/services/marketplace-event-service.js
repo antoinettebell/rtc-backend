@@ -71,7 +71,7 @@ class MarketplaceEventService extends BaseService {
         ? await MarketplacePaymentModel.find({
             event_id,
             payment_type: 'FINAL_EVENT_PAYMENT',
-            payment_status: { $in: ['PENDING', 'PAID', 'FAILED'] },
+            payment_status: { $in: ['PENDING', 'PROCESSING', 'PAID', 'FAILED'] },
             $or: awardRecordQuery,
           })
             .sort({ updated_at: -1 })

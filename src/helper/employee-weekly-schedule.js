@@ -37,4 +37,23 @@ const getEmployeeScheduleState = (schedule = [], now = new Date(), timeZone = 'A
   return { withinWindow: inToday || inYesterday, earlyMinutes: EARLY_MINUTES, lateMinutes: LATE_MINUTES };
 };
 
-module.exports = { DAY_KEYS, EARLY_MINUTES, LATE_MINUTES, parseTime, getEmployeeScheduleState };
+const getEmployeeScheduleAssignment = (
+  assignments = [],
+  now = new Date(),
+  timeZone = 'America/New_York'
+) => {
+  for (const assignment of assignments || []) {
+    const state = getEmployeeScheduleState(assignment.days || [], now, timeZone);
+    if (state.withinWindow) return { assignment, ...state };
+  }
+  return null;
+};
+
+module.exports = {
+  DAY_KEYS,
+  EARLY_MINUTES,
+  LATE_MINUTES,
+  parseTime,
+  getEmployeeScheduleState,
+  getEmployeeScheduleAssignment,
+};

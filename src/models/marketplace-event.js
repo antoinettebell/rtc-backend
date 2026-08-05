@@ -476,7 +476,7 @@ const mSchema = mongoose.Schema(
     },
     award_payment_status: {
       type: String,
-      enum: ['NOT_REQUIRED', 'PENDING', 'PAID', 'FAILED', 'CANCELLED', 'REFUNDED'],
+      enum: ['NOT_REQUIRED', 'PENDING', 'PROCESSING', 'PAID', 'FAILED', 'CANCELLED', 'REFUNDED'],
       default: 'NOT_REQUIRED',
       index: true,
     },
@@ -493,7 +493,7 @@ const mSchema = mongoose.Schema(
     },
     final_payment_status: {
       type: String,
-      enum: ['NOT_REQUIRED', 'PENDING', 'PAID', 'FAILED', 'CANCELLED', 'REFUNDED'],
+      enum: ['NOT_REQUIRED', 'PENDING', 'PROCESSING', 'PAID', 'FAILED', 'CANCELLED', 'REFUNDED'],
       default: 'NOT_REQUIRED',
       index: true,
     },

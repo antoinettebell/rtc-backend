@@ -24,6 +24,7 @@ const {
 } = require('../../helper/walk-up-refund-sms-helper');
 const { buildPublicReviewUrl } = require('../../helper/review-url-helper');
 const PaymentHelper = require('../../helper/payment-helper');
+const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
 const MailHelper = require('../../helper/mail-helper');
 const TaxHelper = require('../../helper/tax-helper');
 const {
@@ -3979,6 +3980,49 @@ exports.add = async (req, res, next) => {
       truckUnitId,
       user,
     });
+
+    if (vendorPosOrder && normalizedPaymentMethod === 'TAP_TO_PAY') {
+      const nativeTransactionId = String(transactionId || '').trim();
+      if (!nativeTransactionId) {
+        return res.error(
+          new Error('A verified Tap to Pay transaction is required.'),
+          400
+        );
+      }
+
+      const existingPaidOrder = await OrderModel.findOne({
+        transactionId: nativeTransactionId,
+        paymentStatus: 'PAID',
+        deletedAt: null,
+      })
+        .select('_id orderNumber')
+        .lean();
+      if (existingPaidOrder) {
+        return res.error(
+          new Error('This Tap to Pay transaction has already been used.'),
+          409
+        );
+      }
+
+      try {
+        await CyberSourcePaymentHelper.verifyTransaction({
+          transactionId: nativeTransactionId,
+          expectedAmount: total,
+          expectedCurrency: 'USD',
+        });
+      } catch (verificationError) {
+        console.error('Walk-up Tap to Pay verification failed', {
+          transactionId: nativeTransactionId,
+          code: verificationError.code,
+          message: verificationError.message,
+        });
+        return res.error(
+          new Error('Tap to Pay could not be verified with the payment processor.'),
+          502
+        );
+      }
+    }
+
     const data = await Service.create({
       foodTruckId: foodTruck?._id,
       userId:

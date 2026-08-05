@@ -465,6 +465,7 @@ exports.getTransactionStatus = async (transactionId) => {
     last4,
     exp,
     paymentMode,
+    amount: Number(txn?.getAuthAmount?.() || txn?.getSettleAmount?.() || 0),
     txnData: txn
   };
   // const txn = response.getTransaction();
@@ -638,4 +639,3 @@ exports.processRefund = async ({
     };
   }
 };
-

@@ -42,6 +42,15 @@ assert.throws(
   'duplicate names should be rejected case-insensitively'
 );
 
+assert.deepStrictEqual(
+  menuCsvImportService.buildBogoDiscountRules({ discountType: 'BOGOHO' }),
+  { buyQty: 1, getQty: 1, discount: 0.5, repeatable: true }
+);
+assert.deepStrictEqual(
+  menuCsvImportService.buildBogoDiscountRules({ discountType: 'BOGO' }),
+  { buyQty: 1, getQty: 1, discount: 1, repeatable: true }
+);
+
 (async () => {
   const nameMap = new Map([
     ['fries', individualId],
@@ -62,6 +71,19 @@ assert.throws(
   assert.equal(bogoItems[0].itemId.toString(), individualId.toString());
   assert.equal(bogoItems[0].qty, 1);
   assert.equal(bogoItems[0].isSameItem, false);
+
+  const sameItemReward = await menuCsvImportService.resolveBogoItems(
+    {
+      _rowNumber: 5,
+      name: 'Family Combo',
+      itemType: 'COMBO',
+      bogoItemNames: 'Family Combo',
+    },
+    new Types.ObjectId(),
+    new Map()
+  );
+  assert.equal(sameItemReward[0].itemId, null);
+  assert.equal(sameItemReward[0].isSameItem, true);
   console.log('menu CSV reference resolution tests passed');
 })().catch((error) => {
   console.error(error);

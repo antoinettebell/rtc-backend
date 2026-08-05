@@ -87,14 +87,20 @@ const mSchema = mongoose.Schema(
     },
     payment_method: {
       type: String,
-      enum: ['APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY', 'ADMIN_MANUAL'],
+      enum: ['APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY', 'CASH', 'ADMIN_MANUAL'],
       default: null,
     },
     payment_status: {
       type: String,
-      enum: ['PENDING', 'PAID', 'FAILED', 'CANCELLED', 'REFUNDED'],
+      enum: ['PENDING', 'PROCESSING', 'PAID', 'FAILED', 'CANCELLED', 'REFUNDED'],
       default: 'PENDING',
       index: true,
+    },
+    processing_started_at: { type: Date, default: null },
+    processing_by_user_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'users',
+      default: null,
     },
     processor_transaction_id: {
       type: String,
@@ -131,6 +137,25 @@ const mSchema = mongoose.Schema(
       createdAt: 'created_at',
       updatedAt: 'updated_at',
     },
+  }
+);
+
+mSchema.index(
+  { event_id: 1, bid_id: 1, payment_type: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      payment_type: 'FINAL_EVENT_PAYMENT',
+      bid_id: { $type: 'string' },
+    },
+  }
+);
+
+mSchema.index(
+  { processor_transaction_id: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { processor_transaction_id: { $type: 'string' } },
   }
 );
 

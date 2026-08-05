@@ -394,6 +394,18 @@ class MenuCsvImportService {
     return this.parseStringArray(row.bogoItemNames);
   }
 
+  buildBogoDiscountRules(row) {
+    const discountType = String(row.discountType || '').toUpperCase();
+    if (!ACTIVE_BOGO_TYPES.includes(discountType)) return undefined;
+
+    return {
+      buyQty: 1,
+      getQty: 1,
+      discount: discountType === 'BOGO' ? 1 : 0.5,
+      repeatable: true,
+    };
+  }
+
   normalizeMenuItemName(value) {
     return String(value || '').trim().toLowerCase();
   }
@@ -509,16 +521,34 @@ class MenuCsvImportService {
       row._rowNumber
     );
     if (itemIds.length > 0) {
-      return itemIds.map((itemId) => ({
-        itemId,
-        qty: 1,
-        isSameItem: false,
-      }));
+      const eligibleItems = await MenuItemModel.find({
+        _id: { $in: itemIds },
+        userId,
+        itemType: 'INDIVIDUAL',
+        deletedAt: null,
+      }).select('_id');
+      const eligibleIds = new Set(
+        eligibleItems.map((item) => item._id.toString())
+      );
+      const invalidIds = itemIds.filter(
+        (itemId) => !eligibleIds.has(itemId.toString())
+      );
+      if (invalidIds.length) {
+        throw new Error(
+          `Row ${row._rowNumber}: BOGO reward IDs must belong to individual menu items for this vendor.`
+        );
+      }
+
+      return itemIds.map((itemId) => ({ itemId, qty: 1, isSameItem: false }));
     }
 
     const bogoItems = [];
     for (const itemName of this.parseBogoItemNames(row)) {
       const normalizedName = this.normalizeMenuItemName(itemName);
+      if (normalizedName === this.normalizeMenuItemName(row.name)) {
+        bogoItems.push({ itemId: null, qty: 1, isSameItem: true });
+        continue;
+      }
       let itemId = menuItemNameMap.get(normalizedName);
 
       if (!itemId) {
@@ -827,6 +857,7 @@ class MenuCsvImportService {
         row._rowNumber
       ),
       bogoItems,
+      discountRules: this.buildBogoDiscountRules(row),
       discount: this.parseNumber(row.discount, 0, 'discount', row._rowNumber),
       price: this.parseNumber(row.price, 0, 'price', row._rowNumber),
       minQty: this.parseNumber(row.minQty, 1, 'minQty', row._rowNumber),
@@ -843,6 +874,7 @@ class MenuCsvImportService {
         row._rowNumber
       ),
       allowCustomize: this.parseBoolean(row.allowCustomize, true),
+      flavorLabel: String(row.flavorLabel || 'Flavor').trim().slice(0, 40),
       ...flavorSettings,
       ...toppingSettings,
       ...comboSideSettings,

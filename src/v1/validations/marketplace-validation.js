@@ -350,11 +350,22 @@ module.exports = {
   checkoutPayment: {
     body: Joi.object({
       payment_method: Joi.string()
-        .valid('APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY')
+        .valid('APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY', 'CASH')
         .required(),
+      expected_total: Joi.number().min(0).required(),
       payment_data: Joi.alternatives()
         .try(Joi.object().unknown(true), Joi.string())
-        .required(),
+        .when('payment_method', {
+          is: 'CASH',
+          then: Joi.optional(),
+          otherwise: Joi.required(),
+        }),
+    }),
+  },
+
+  updateFinalPaymentTip: {
+    body: Joi.object({
+      tip_amount: Joi.number().min(0).max(100000).required(),
     }),
   },
 
