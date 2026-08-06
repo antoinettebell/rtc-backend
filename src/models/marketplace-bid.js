@@ -46,6 +46,21 @@ const mSchema = mongoose.Schema(
       default: null,
       min: 0,
     },
+    guest_coverage: {
+      type: String,
+      enum: ['REGULAR', 'VIP', 'BOTH'],
+      default: 'REGULAR',
+    },
+    regular_guest_amount: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+    vip_catering_amount: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
     menu_description: {
       type: String,
       default: null,

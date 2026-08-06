@@ -5,6 +5,7 @@ const marketplaceEventBody = {
   event_description: Joi.string().allow(null, ''),
   event_vendor_needs: Joi.array().items(Joi.object({
     vendor_type: Joi.string().valid('MERCHANDISE', 'SERVICE', 'OTHER').required(),
+    type_description: Joi.string().trim().max(250).allow(null, ''),
     quantity: Joi.number().integer().min(1).required(),
     fee: Joi.number().min(0).required(),
   })).default([]),
@@ -145,6 +146,9 @@ module.exports = {
       price_per_guest: Joi.number().min(0).allow(null),
       average_price_per_meal: Joi.number().min(0).allow(null),
       full_bid_amount: Joi.number().min(0).allow(null),
+      guest_coverage: Joi.string().valid('REGULAR', 'VIP', 'BOTH').default('REGULAR'),
+      regular_guest_amount: Joi.number().min(0).allow(null),
+      vip_catering_amount: Joi.number().min(0).allow(null),
       menu_description: Joi.string().allow(null, ''),
       notes: Joi.string().allow(null, ''),
       menu_pdf_url: Joi.string().uri().allow(null, ''),

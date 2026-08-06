@@ -24,6 +24,7 @@ const mSchema = mongoose.Schema(
     },
     event_vendor_needs: [{
       vendor_type: { type: String, enum: ['MERCHANDISE', 'SERVICE', 'OTHER'], required: true },
+      type_description: { type: String, default: null, maxlength: 250 },
       quantity: { type: Number, min: 1, required: true },
       fee: { type: Number, min: 0, required: true },
     }],

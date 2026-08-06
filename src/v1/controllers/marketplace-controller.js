@@ -374,6 +374,26 @@ const normalizeMarketplaceVendorCount = (body) => {
 const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = {}) => {
   const status = body.status || existingEvent?.status || 'OPEN';
   const isDraft = status === 'DRAFT';
+  const eventVendorNeeds = asArray(body.event_vendor_needs).map((need) => ({
+    ...need,
+    type_description: ['SERVICE', 'OTHER'].includes(need?.vendor_type)
+      ? String(need?.type_description || '').trim()
+      : null,
+  }));
+  if (!isDraft) {
+    const missingDescription = eventVendorNeeds.find(
+      (need) =>
+        ['SERVICE', 'OTHER'].includes(need.vendor_type) &&
+        !need.type_description
+    );
+    if (missingDescription) {
+      throw buildError(
+        `Specify the ${missingDescription.vendor_type.toLowerCase()} vendor type.`,
+        400
+      );
+    }
+  }
+  body = { ...body, event_vendor_needs: eventVendorNeeds };
   const serviceTypes = asArray(body.service_types?.length ? body.service_types : body.service_type);
   let serviceStyles = asArray(body.service_styles);
   let primaryServiceStyle = body.primary_service_style || existingEvent?.primary_service_style || '';
@@ -4374,10 +4394,32 @@ exports.submitBid = async (req, res, next) => {
       throw buildError('Submit the revised bid to update your response.', 400);
     }
 
+    const cateredVipEnabled = event.catered_vip_section_enabled === true;
+    const guestCoverage = cateredVipEnabled
+      ? String(req.body.guest_coverage || 'REGULAR').toUpperCase()
+      : 'REGULAR';
+    if (!['REGULAR', 'VIP', 'BOTH'].includes(guestCoverage)) {
+      throw buildError('Select Regular Guests, VIP Guests, or Both.', 400);
+    }
+    const regularGuestAmount = roundMoney(req.body.regular_guest_amount || 0);
+    const vipCateringAmount = roundMoney(req.body.vip_catering_amount || 0);
+    const normalizedFullBidAmount = guestCoverage === 'BOTH'
+      ? roundMoney(regularGuestAmount + vipCateringAmount)
+      : roundMoney(req.body.full_bid_amount || 0);
+
     if (requestedStatus !== 'DRAFT') {
       assertRequiredMarketplaceFields({
-        'Full bid amount': req.body.full_bid_amount,
+        'Full bid amount': normalizedFullBidAmount,
       });
+      if (
+        guestCoverage === 'BOTH' &&
+        (regularGuestAmount <= 0 || vipCateringAmount <= 0)
+      ) {
+        throw buildError(
+          'Enter separate Regular Guests and VIP Catering amounts when applying for Both.',
+          400
+        );
+      }
     }
     const liquorLicenseSatisfied = await hasSatisfiedLiquorLicenseRequirement({
       event,
@@ -4401,6 +4443,12 @@ exports.submitBid = async (req, res, next) => {
       requestedStatus === 'SUBMITTED' && !requiresPayment ? new Date() : null;
     const bidPayload = {
       ...req.body,
+      guest_coverage: guestCoverage,
+      regular_guest_amount:
+        guestCoverage === 'BOTH' ? regularGuestAmount : null,
+      vip_catering_amount:
+        guestCoverage === 'BOTH' ? vipCateringAmount : null,
+      full_bid_amount: normalizedFullBidAmount,
       event_id: req.params.eventId,
       vendor_user_id: req.user._id,
       food_truck_id: foodTruck._id,
@@ -5449,6 +5497,16 @@ exports.awardBids = async (req, res, next) => {
     if (selectedBids.length !== selectedBidIds.length) {
       throw buildError('One or more selected bids are invalid', 400);
     }
+    const minimumAwards = Math.max(
+      1,
+      vendorAwardLimit - (selectedBids.some((bid) => bid.guest_coverage === 'BOTH') ? 1 : 0)
+    );
+    if (selectedBids.length < minimumAwards) {
+      throw buildError(
+        `Select at least ${minimumAwards} vendor(s). One fewer is allowed only when a selected vendor covers Both Regular and VIP Guests.`,
+        400
+      );
+    }
 
     const baseAmount = roundMoney(
       selectedBids.reduce(
@@ -5587,6 +5645,16 @@ exports.adminAwardBids = async (req, res, next) => {
 
     if (selectedBids.length !== selectedBidIds.length) {
       throw buildError('One or more selected bids are invalid', 400);
+    }
+    const minimumAwards = Math.max(
+      1,
+      vendorAwardLimit - (selectedBids.some((bid) => bid.guest_coverage === 'BOTH') ? 1 : 0)
+    );
+    if (selectedBids.length < minimumAwards) {
+      throw buildError(
+        `Select at least ${minimumAwards} vendor(s). One fewer is allowed only when a selected vendor covers Both Regular and VIP Guests.`,
+        400
+      );
     }
 
     const coordinatorUserId = event.customer_user_id;
