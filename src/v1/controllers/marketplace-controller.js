@@ -357,8 +357,15 @@ const normalizeMarketplaceVendorCount = (body) => {
   const serviceTypes = asArray(body.service_types?.length ? body.service_types : body.service_type);
   if (body.primary_service_style === 'Food Truck' || serviceTypes.includes('Food Truck')) {
     const guestCount = Number(body.number_of_guests || 0) +
-      (body.catered_vip_section_enabled ? 0 : Number(body.vip_guest_count || 0));
-    return Math.max(1, Math.ceil(guestCount / 100));
+      Number(body.vip_guest_count || 0);
+    const baseMaximum = Math.max(1, Math.ceil(guestCount / 100));
+    const separateVipVendor = body.separate_vip_vendor_required ? 1 : 0;
+    const minimum = 1 + separateVipVendor;
+    const maximum = baseMaximum + separateVipVendor;
+    const requested = Number(body.number_of_vendors_needed);
+    return Number.isFinite(requested)
+      ? Math.max(minimum, Math.min(Math.floor(requested), maximum))
+      : maximum;
   }
 
   return Math.max(1, Number(body.number_of_vendors_needed || 1));
@@ -396,7 +403,12 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     equipmentNeeded = ['None'];
   }
 
-  const paymentResponsibility = body.payment_responsibility || 'NONE';
+  const cateredVipSectionEnabled = Boolean(body.catered_vip_section_enabled);
+  const separateVipVendorRequired =
+    cateredVipSectionEnabled && Boolean(body.separate_vip_vendor_required);
+  const paymentResponsibility = cateredVipSectionEnabled
+    ? 'BOTH'
+    : body.payment_responsibility || 'NONE';
   let vendorFee = roundMoney(body.vendor_fee || 0);
   let budgetedAmount = roundMoney(body.budgeted_amount || 0);
   if (paymentResponsibility === 'COORDINATOR') {
@@ -422,7 +434,6 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
         ? body.vendors_required_to_giveaway_food
         : null
       : null;
-  const cateredVipSectionEnabled = Boolean(body.catered_vip_section_enabled);
   const vipGuestCount = Math.max(0, Number(body.vip_guest_count || 0));
   const rawEventDurationHours = Number(body.event_duration_hours || 0);
   const rawEventDurationMinutes = Number(body.event_duration_minutes || 0);
@@ -461,6 +472,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     free_food_provider: freeFoodProvider,
 	    vendors_required_to_giveaway_food: vendorsRequiredToGiveawayFood,
 	    catered_vip_section_enabled: cateredVipSectionEnabled,
+    separate_vip_vendor_required: separateVipVendorRequired,
     vip_guest_count: vipGuestCount,
 	    tax_exemption_status:
       body.charitable_event || body.religious_organization
@@ -477,6 +489,22 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
         ? new Date(Date.now() + DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000)
         : existingEvent?.draft_expires_at || null,
   });
+
+  if (normalized.ticket_sales_enabled) {
+    normalized.number_of_guests = Math.max(
+      0,
+      Number(normalized.ga_ticket_quantity || 0)
+    );
+    normalized.vip_guest_count = Math.max(
+      0,
+      Number(normalized.vip_ticket_quantity || 0)
+    );
+  } else {
+    normalized.ga_ticket_quantity = 0;
+    normalized.ga_ticket_price = 0;
+    normalized.vip_ticket_quantity = 0;
+    normalized.vip_ticket_price = 0;
+  }
 
   if (isDraft) {
     const draftRequiredFields = [
@@ -512,6 +540,13 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     Number(normalized.event_duration_minutes || 0) <= 0
   ) {
     throw buildError('Event duration is required.', 400);
+  }
+  if (
+    Number(normalized.number_of_guests || 0) +
+      Number(normalized.vip_guest_count || 0) <
+    1
+  ) {
+    throw buildError('At least one regular or VIP guest is required.', 400);
   }
 
   if (normalized.event_type === 'Other' && !hasText(normalized.event_type_other)) {
@@ -555,14 +590,14 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   if (
     paymentResponsibility === 'BOTH' &&
     cateredVipSectionEnabled &&
-    vipGuestCount < 1
+    Number(normalized.vip_guest_count || 0) < 1
   ) {
     throw buildError('VIP guest count is required for the catered VIP section.', 400);
   }
   if (['COORDINATOR', 'BOTH'].includes(paymentResponsibility)) {
     const budgetGuestCount =
       Number(normalized.number_of_guests || 0) +
-      (cateredVipSectionEnabled ? vipGuestCount : 0);
+      Number(normalized.vip_guest_count || 0);
     const minimumBudget = budgetGuestCount * 25;
     if (budgetedAmount < minimumBudget) {
       throw buildError(`Budget amount must be at least $${minimumBudget.toFixed(2)} for the paid guest count.`, 400);
@@ -572,12 +607,6 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   if (normalized.ticket_sales_enabled) {
     const gaQuantity = Number(normalized.ga_ticket_quantity || 0);
     const vipQuantity = Number(normalized.vip_ticket_quantity || 0);
-    if (gaQuantity < 0 || gaQuantity > normalized.number_of_guests) {
-      throw buildError('GA ticket quantity cannot exceed the number of guests.', 400);
-    }
-    if (vipQuantity < 0 || vipQuantity > Number(normalized.vip_guest_count || 0)) {
-      throw buildError('VIP ticket quantity cannot exceed the number of VIP guests.', 400);
-    }
     if (gaQuantity + vipQuantity < 1) {
       throw buildError('At least one GA or VIP ticket is required.', 400);
     }

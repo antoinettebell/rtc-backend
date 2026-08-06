@@ -323,7 +323,7 @@ const mSchema = mongoose.Schema(
       required: function requiredNumberOfGuests() {
         return this.status !== 'DRAFT';
       },
-      min: 1,
+      min: 0,
     },
     number_of_vendors_needed: {
       type: Number,
@@ -370,6 +370,10 @@ const mSchema = mongoose.Schema(
       },
     },
     catered_vip_section_enabled: {
+      type: Boolean,
+      default: false,
+    },
+    separate_vip_vendor_required: {
       type: Boolean,
       default: false,
     },
