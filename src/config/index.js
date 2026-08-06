@@ -11,6 +11,12 @@ module.exports = {
     frontendBaseURL: process.env.FRONTEND_BASE_URL,
     publicTicketBaseURL:
       process.env.PUBLIC_TICKET_BASE_URL || 'https://tickets.roundthecornerapp.com',
+    customerIosAppStoreURL:
+      process.env.CUSTOMER_IOS_APP_STORE_URL ||
+      'https://apps.apple.com/us/app/round-da-corner-eats/id6748915125',
+    customerAndroidPlayStoreURL:
+      process.env.CUSTOMER_ANDROID_PLAY_STORE_URL ||
+      'https://play.google.com/store/apps/details?id=com.ea.rtcuser&pcampaignid=web_share',
   },
   JWT: {
     secret: process.env.JWT_SECRET_KEY,
