@@ -7,7 +7,8 @@ exports.list = async (req, res, next) => {
       type: req.query.type,
       status: req.query.status,
     });
-    return res.data({ forms }, 'Operational compliance forms');
+    const truckUnits = await Service.getTruckUnits(req.user);
+    return res.data({ forms, truckUnits }, 'Operational compliance forms');
   } catch (error) {
     return next(error);
   }
@@ -19,7 +20,8 @@ exports.current = async (req, res, next) => {
       user: req.user,
       type: req.params.type,
     });
-    return res.data({ form }, 'Current operational compliance form');
+    const truckUnits = await Service.getTruckUnits(req.user);
+    return res.data({ form, truckUnits }, 'Current operational compliance form');
   } catch (error) {
     return next(error);
   }

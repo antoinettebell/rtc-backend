@@ -901,7 +901,7 @@ exports.shiftAction = async (req, res, next) => {
 exports.dashboard = async (req, res, next) => {
   try {
     const { user } = req;
-    const { foodTruck, assignedLocation, assignedTruckUnit } =
+    const { employee, foodTruck, assignedLocation, assignedTruckUnit } =
       await assertEmployeeCanUseShift(user);
 
     const dashboard = await EmployeeSessionService.getEmployeeDashboard({
@@ -914,6 +914,9 @@ exports.dashboard = async (req, res, next) => {
       assignedLocation,
       assignedTruckUnit,
     });
+    dashboard.employee_schedule = employee.schedule_assignments || [];
+    dashboard.schedule_time_zone =
+      foodTruck.schedule_time_zone || 'America/New_York';
 
     return res.data({ dashboard }, 'Employee dashboard');
   } catch (e) {

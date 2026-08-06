@@ -53,6 +53,16 @@ class OperationalComplianceFormService {
     return { vendor_user_id: user._id, food_truck_id: foodTruck._id };
   }
 
+  async getTruckUnits(user) {
+    const scope = await this.getScope(user);
+    const foodTruck = await FoodTruckModel.findById(scope.food_truck_id)
+      .select('truck_units')
+      .lean();
+    return (foodTruck?.truck_units || [])
+      .filter((unit) => !unit.is_archived)
+      .map((unit) => ({ _id: unit._id, name: unit.name }));
+  }
+
   validateType(type) {
     if (!FORM_TYPES.includes(type)) {
       throw errorWithCode('Invalid operational compliance form type.');
