@@ -30,6 +30,11 @@ const actorType = (user) =>
     ? 'EMPLOYEE'
     : 'VENDOR';
 
+const preparedByName = (user) => {
+  if (actorType(user) === 'VENDOR') return 'Vendor';
+  return [user.first_name, user.last_name].filter(Boolean).join(' ');
+};
+
 class OperationalComplianceFormService {
   async getScope(user) {
     if (actorType(user) === 'EMPLOYEE') {
@@ -73,12 +78,18 @@ class OperationalComplianceFormService {
       form_type: type,
       status: { $in: ['DRAFT', 'SUBMITTED'] },
     }).sort({ createdAt: -1 });
-    if (existing) return existing;
+    if (existing) {
+      if (!String(existing.prepared_by_name || '').trim()) {
+        existing.prepared_by_name = preparedByName(user);
+        await existing.save();
+      }
+      return existing;
+    }
 
     return Model.create({
       ...scope,
       form_type: type,
-      prepared_by_name: [user.first_name, user.last_name].filter(Boolean).join(' '),
+      prepared_by_name: preparedByName(user),
       checklist_items: buildChecklistItems(type),
     });
   }

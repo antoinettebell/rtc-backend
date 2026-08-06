@@ -19,6 +19,7 @@ const EMPLOYEE_SHIFT_EXEMPT_ROUTES = [
   '/vendor-employee/dashboard',
   '/vendor-employee/session/action',
   '/vendor-employee/session/end',
+  '/operational-compliance',
 ];
 
 const IGNORE_ROUTES = [
