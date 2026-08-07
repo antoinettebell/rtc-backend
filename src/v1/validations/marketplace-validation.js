@@ -252,6 +252,12 @@ module.exports = {
     body: Joi.object({}),
   },
 
+  revokeAward: {
+    body: Joi.object({
+      reason: Joi.string().trim().max(500).allow(null, ''),
+    }),
+  },
+
   createFinalEventPayment: {
     body: Joi.object({
       bid_id: Joi.string().trim().allow(null, ''),

@@ -335,6 +335,13 @@ router.post(
 );
 
 router.post(
+  '/events/:eventId/awards/:bidId/revoke',
+  allowedTo(['CUSTOMER']),
+  validate(Validation.revokeAward),
+  Controller.revokeAward
+);
+
+router.post(
   '/events/:eventId/final-payment',
   allowedTo(['CUSTOMER', 'VENDOR']),
   validate(Validation.createFinalEventPayment),

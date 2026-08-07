@@ -125,6 +125,11 @@ const mSchema = mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    superseded_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
     marked_paid_by_admin_user_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'users',

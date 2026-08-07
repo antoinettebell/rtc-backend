@@ -3238,6 +3238,7 @@ const findActiveMarketplacePayment = async (query) =>
     {
       ...query,
       payment_status: { $in: ['PENDING', 'PROCESSING', 'PAID', 'FAILED'] },
+      superseded_at: null,
     },
     { singleResult: true }
   );
@@ -5964,6 +5965,90 @@ exports.acceptApplication = async (req, res, next) => {
     return res.data(
       { marketplaceApplication: application },
       vendorFeeRequired ? 'Vendor application accepted; payment is due' : 'Vendor application accepted'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.revokeAward = async (req, res, next) => {
+  try {
+    const event = await getOwnedEvent(req.params.eventId, req.user._id);
+    const bid = await MarketplaceBidService.getByData(
+      {
+        event_id: event.event_id,
+        bid_id: req.params.bidId,
+        bid_status: 'AWARDED',
+        archived_at: null,
+      },
+      { singleResult: true }
+    );
+    if (!bid) throw buildError('Awarded vendor not found.', 404);
+
+    const linkedApplication = bid.linked_application_id
+      ? await MarketplaceApplicationService.getByData(
+          { application_id: bid.linked_application_id },
+          { singleResult: true }
+        )
+      : null;
+    if (linkedApplication?.payment_status === 'PAID') {
+      throw buildError(
+        `This vendor has already paid a non-refundable vendor fee. Contact support at ${MARKETPLACE_PHONE_NUMBER} before changing this award.`,
+        409
+      );
+    }
+
+    if (linkedApplication) {
+      linkedApplication.application_status = 'NOT_SELECTED';
+      linkedApplication.payment_status = 'CANCELLED';
+      linkedApplication.archived_at = new Date();
+      linkedApplication.archived_reason = req.body.reason || 'Award revoked by coordinator';
+      await linkedApplication.save();
+    }
+    bid.bid_status = 'NOT_AWARDED';
+    bid.awarded_coverage = null;
+    bid.linked_application_id = null;
+    bid.combined_vendor_fee_waived = false;
+    bid.payment_status = 'NOT_REQUIRED';
+    await bid.save();
+
+    await MarketplaceBidService.getModel().updateMany(
+      {
+        event_id: event.event_id,
+        bid_id: { $ne: bid.bid_id },
+        bid_status: 'NOT_AWARDED',
+        archived_at: null,
+      },
+      { $set: { bid_status: 'UNDER_REVIEW' } }
+    );
+    if (event.award_payment_id) {
+      await MarketplacePaymentService.update(
+        { payment_id: event.award_payment_id },
+        { superseded_at: new Date() },
+        { getNew: false }
+      );
+    }
+    event.status = 'REOPENED';
+    event.award_payment_id = null;
+    event.award_payment_status = 'NOT_REQUIRED';
+    await event.save();
+
+    await MarketplaceCommunications.sendMarketplaceCommunication({
+      userId: bid.vendor_user_id,
+      title: 'Marketplace award revoked',
+      body: `${event.event_name || 'Your event'} award was revoked by the coordinator.${req.body.reason ? ` Reason: ${req.body.reason}` : ''}`,
+      data: {
+        notificationType: 'MARKETPLACE_AWARD_REVOKED',
+        eventId: event.event_id,
+        bidId: bid.bid_id,
+      },
+      channels: ['push', 'email'],
+      metadata: { eventId: event.event_id, bidId: bid.bid_id },
+    });
+
+    return res.data(
+      { marketplaceEvent: event, marketplaceBid: bid },
+      'Award revoked; remaining proposals are available for selection'
     );
   } catch (e) {
     return next(e);
