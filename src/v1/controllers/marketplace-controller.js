@@ -4368,6 +4368,26 @@ exports.submitBid = async (req, res, next) => {
     const requestedStatus = req.body.bid_status || 'SUBMITTED';
     const currentRound = event.current_submission_round || 1;
 
+    if (roundMoney(event.budgeted_amount || 0) <= 0) {
+      throw buildError('This event uses the application flow, not bids', 400);
+    }
+
+    const existingApplication = await MarketplaceApplicationService.getByData(
+      {
+        event_id: req.params.eventId,
+        vendor_user_id: req.user._id,
+        submission_round: currentRound,
+        application_status: { $nin: ['WITHDRAWN'] },
+      },
+      { singleResult: true }
+    );
+    if (existingApplication) {
+      throw buildError(
+        'You already chose the vendor-paid application option for this event. Delete or withdraw it before submitting a bid.',
+        409
+      );
+    }
+
     const existingBid = await MarketplaceBidService.getByData(
       {
         event_id: req.params.eventId,
@@ -4437,8 +4457,9 @@ exports.submitBid = async (req, res, next) => {
       await requireSignedVendorAgreementForSubmission(req.user._id);
     }
 
-    const vendorFee = roundMoney(event.vendor_fee || 0);
-    const requiresPayment = vendorFee > 0 && !isBidRevision;
+    // A bid competes for the coordinator-paid award. The vendor attendance
+    // fee belongs only to the mutually exclusive application path.
+    const requiresPayment = false;
     const submittedAt =
       requestedStatus === 'SUBMITTED' && !requiresPayment ? new Date() : null;
     const bidPayload = {
@@ -4899,6 +4920,22 @@ exports.submitApplication = async (req, res, next) => {
 
     if (roundMoney(event.vendor_fee || 0) <= 0) {
       throw buildError('This event uses the bid flow, not applications', 400);
+    }
+
+    const existingBid = await MarketplaceBidService.getByData(
+      {
+        event_id: req.params.eventId,
+        vendor_user_id: req.user._id,
+        submission_round: currentRound,
+        bid_status: { $nin: ['WITHDRAWN'] },
+      },
+      { singleResult: true }
+    );
+    if (existingBid) {
+      throw buildError(
+        'You already chose the coordinator-paid bid option for this event. Delete or withdraw it before submitting an application.',
+        409
+      );
     }
 
     const existingApplication = await MarketplaceApplicationService.getByData(
