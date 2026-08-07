@@ -81,6 +81,15 @@ const mSchema = mongoose.Schema(
           type: Number,
           default: 1,
         },
+        hasAdditionalCost: {
+          type: Boolean,
+          default: false,
+        },
+        additionalCost: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
         isSameItem: {
           type: Boolean,
           default: false,

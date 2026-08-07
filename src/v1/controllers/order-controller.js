@@ -1535,20 +1535,14 @@ const findComboSubItem = (subItems = [], comboMenuItemId) => {
 const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName }) => {
   const subItems = Array.isArray(parentMenuItem?.subItem) ? parentMenuItem.subItem : [];
   const requestedItems = Array.isArray(comboItems) ? comboItems : [];
-  const missingRequiredItem = subItems.find((subItem) => {
-    return !requestedItems.some((comboItem) => {
-      const requestedId =
-        comboItem?.comboMenuItemId?.toString?.() || comboItem?.comboMenuItemId;
-      return Boolean(findComboSubItem([subItem], requestedId));
-    });
-  });
-
-  if (missingRequiredItem) {
-    const missingName = getComboChildMenuItem(missingRequiredItem)?.name;
+  const requiredCount = Math.min(
+    Math.max(Number(parentMenuItem?.comboSidesPerOrder) || 1, 1),
+    subItems.length,
+    5
+  );
+  if (requestedItems.length !== requiredCount) {
     throw new Error(
-      `Please complete all included items for the "${itemName}"${
-        missingName ? `, including "${missingName}"` : ''
-      }`
+      `Please select exactly ${requiredCount} combo item${requiredCount === 1 ? '' : 's'} for the "${itemName}"`
     );
   }
 
@@ -1607,8 +1601,14 @@ const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName })
         _id: getComboChildId(subItemMatch),
         comboMenuItemId: getComboChildId(subItemMatch),
         qty: comboItem.qty || 1,
+        hasAdditionalCost: !!subItemMatch?.hasAdditionalCost,
+        additionalCost: subItemMatch?.hasAdditionalCost
+          ? Number(subItemMatch?.additionalCost) || 0
+          : 0,
         total:
-          selectedOptionCost * Math.max(1, Number(comboItem.qty) || 1),
+          (selectedOptionCost + (subItemMatch?.hasAdditionalCost
+            ? Number(subItemMatch?.additionalCost) || 0
+            : 0)) * Math.max(1, Number(comboItem.qty) || 1),
         selectedFlavors: childMenuItem?.hasFlavors ? selectedFlavors : [],
         selectedToppings: childMenuItem?.hasToppings ? selectedToppings : [],
         selectedComboSides,

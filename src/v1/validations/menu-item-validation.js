@@ -128,6 +128,8 @@ module.exports = {
           Joi.object({
             menuItem: Joi.string().trim().required(),
             qty: Joi.number().min(1),
+            hasAdditionalCost: Joi.boolean(),
+            additionalCost: Joi.number().min(0),
           })
         )
         .when('itemType', {
@@ -251,6 +253,8 @@ module.exports = {
         Joi.object({
           menuItem: Joi.string().trim().required(),
           qty: Joi.number().min(1),
+          hasAdditionalCost: Joi.boolean(),
+          additionalCost: Joi.number().min(0),
         })
       ),
     }),
