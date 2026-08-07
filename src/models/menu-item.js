@@ -145,6 +145,11 @@ const mSchema = mongoose.Schema(
       },
     ],
     flavorOptions: [paidOptionSchema],
+    flavorLabel: {
+      type: String,
+      default: 'Flavor',
+      trim: true,
+    },
     flavorsPerOrder: {
       type: Number,
       default: 1,
@@ -174,6 +179,7 @@ const mSchema = mongoose.Schema(
         default: null,
       },
     ],
+    comboSideOptionCosts: [paidOptionSchema],
     comboSidesPerOrder: {
       type: Number,
       default: 1,

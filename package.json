@@ -9,6 +9,7 @@
     "test:sms": "node src/helper/sms-helper.test.js",
     "test:employee-shifts": "node src/v1/services/employee-operational-day.test.js",
     "test:reviews": "node src/helper/review-url-helper.test.js",
+    "test:menu-csv": "node src/v1/services/menu-csv-import-service.test.js",
     "migrate:reviews": "node scripts/migrate-review-ratings.js"
   },
   "author": "Tailor",

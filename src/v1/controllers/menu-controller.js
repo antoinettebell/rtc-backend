@@ -42,12 +42,14 @@ const nestedMenuItemSelect = {
   hasFlavors: 1,
   flavors: 1,
   flavorOptions: 1,
+  flavorLabel: 1,
   flavorsPerOrder: 1,
   hasToppings: 1,
   toppings: 1,
   toppingOptions: 1,
   toppingsPerOrder: 1,
   comboSideOptions: 1,
+  comboSideOptionCosts: 1,
   comboSidesPerOrder: 1,
   subItem: 1,
 };
@@ -557,12 +559,14 @@ exports.add = async (req, res, next) => {
         hasFlavors,
         flavors,
         flavorOptions,
+        flavorLabel,
         flavorsPerOrder,
         hasToppings,
         toppings,
         toppingOptions,
         toppingsPerOrder,
         comboSideOptions,
+        comboSideOptionCosts,
         comboSidesPerOrder,
       },
       user,
@@ -646,6 +650,10 @@ exports.add = async (req, res, next) => {
       : [];
     const normalizedComboSideOptions =
       itemType === 'COMBO' ? normalizeComboSideOptions(comboSideOptions || []) : [];
+    const normalizedComboSideOptionCosts =
+      itemType === 'COMBO'
+        ? normalizePaidOptions(comboSideOptionCosts, normalizedComboSideOptions)
+        : [];
     if (
       itemType === 'COMBO' &&
       normalizedComboSideOptions.length > 0 &&
@@ -702,12 +710,14 @@ exports.add = async (req, res, next) => {
       hasFlavors: hasFlavors || false,
       flavors: normalizedFlavors,
       flavorOptions: normalizedFlavorOptions,
+      flavorLabel: String(flavorLabel || 'Flavor').trim() || 'Flavor',
       flavorsPerOrder: hasFlavors ? flavorsPerOrder || 1 : 1,
       hasToppings: hasToppings || false,
       toppings: normalizedToppings,
       toppingOptions: normalizedToppingOptions,
       toppingsPerOrder: hasToppings ? toppingsPerOrder || 1 : 1,
       comboSideOptions: normalizedComboSideOptions,
+      comboSideOptionCosts: normalizedComboSideOptionCosts,
       comboSidesPerOrder: normalizedComboSidesPerOrder,
     });
 
@@ -766,12 +776,14 @@ exports.update = async (req, res, next) => {
         hasFlavors,
         flavors,
         flavorOptions,
+        flavorLabel,
         flavorsPerOrder,
         hasToppings,
         toppings,
         toppingOptions,
         toppingsPerOrder,
         comboSideOptions,
+        comboSideOptionCosts,
         comboSidesPerOrder,
       },
       params: { id },
@@ -875,6 +887,15 @@ exports.update = async (req, res, next) => {
       : [];
     const normalizedComboSideOptions =
       itemType === 'COMBO' ? normalizeComboSideOptions(comboSideOptions || []) : [];
+    const normalizedComboSideOptionCosts =
+      itemType === 'COMBO'
+        ? normalizePaidOptions(
+            comboSideOptionCosts === undefined
+              ? item.comboSideOptionCosts
+              : comboSideOptionCosts,
+            normalizedComboSideOptions
+          )
+        : [];
     if (
       itemType === 'COMBO' &&
       normalizedComboSideOptions.length > 0 &&
@@ -939,12 +960,14 @@ exports.update = async (req, res, next) => {
       hasFlavors: hasFlavors || false,
       flavors: normalizedFlavors,
       flavorOptions: normalizedFlavorOptions,
+      flavorLabel: String(flavorLabel || item.flavorLabel || 'Flavor').trim() || 'Flavor',
       flavorsPerOrder: hasFlavors ? flavorsPerOrder || 1 : 1,
       hasToppings: hasToppings || false,
       toppings: normalizedToppings,
       toppingOptions: normalizedToppingOptions,
       toppingsPerOrder: hasToppings ? toppingsPerOrder || 1 : 1,
       comboSideOptions: normalizedComboSideOptions,
+      comboSideOptionCosts: normalizedComboSideOptionCosts,
       comboSidesPerOrder: normalizedComboSidesPerOrder,
     });
 

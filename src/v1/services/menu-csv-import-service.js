@@ -495,6 +495,7 @@ class MenuCsvImportService {
         normalizedFlavors,
         this.parseOptionCostMap(row.flavorCosts, 'flavorCosts', row._rowNumber)
       ),
+      flavorLabel: String(row.flavorLabel || 'Flavor').trim() || 'Flavor',
       flavorsPerOrder,
     };
   }
@@ -554,6 +555,7 @@ class MenuCsvImportService {
     if (itemType !== 'COMBO') {
       return {
         comboSideOptions: [],
+        comboSideOptionCosts: [],
         comboSidesPerOrder: 1,
       };
     }
@@ -572,6 +574,7 @@ class MenuCsvImportService {
     if (comboSideOptions.length === 0) {
       return {
         comboSideOptions: [],
+        comboSideOptionCosts: [],
         comboSidesPerOrder: 1,
       };
     }
@@ -590,6 +593,10 @@ class MenuCsvImportService {
 
     return {
       comboSideOptions,
+      comboSideOptionCosts: this.buildPaidOptions(
+        comboSideOptions,
+        this.parseOptionCostMap(row.comboSideCosts, 'comboSideCosts', row._rowNumber)
+      ),
       comboSidesPerOrder,
     };
   }
