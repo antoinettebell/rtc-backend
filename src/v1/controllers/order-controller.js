@@ -1459,6 +1459,21 @@ const validateComboSideSelections = ({ menuItem, selectedComboSides, itemName })
   return selected;
 };
 
+const getComboSideSelectionCost = (menuItem, selectedComboSides) => {
+  const pricedOptions = Array.isArray(menuItem?.comboSideOptionCosts)
+    ? menuItem.comboSideOptionCosts
+    : [];
+  return (Array.isArray(selectedComboSides) ? selectedComboSides : []).reduce(
+    (sum, selectedName) => {
+      const option = pricedOptions.find(
+        (candidate) => candidate?.name === selectedName
+      );
+      return sum + (option?.hasCost ? Number(option.cost) || 0 : 0);
+    },
+    0
+  );
+};
+
 const getComboChildMenuItem = (subItem) => {
   if (subItem?.menuItem && typeof subItem.menuItem === 'object') {
     return subItem.menuItem;
@@ -1563,6 +1578,10 @@ const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName })
           : [];
 
       let selectedOptionCost = 0;
+      selectedOptionCost += getComboSideSelectionCost(
+        childMenuItem,
+        selectedComboSides
+      );
 
       if (childMenuItem?.hasFlavors) {
         selectedOptionCost += validateSelectionsAndGetCost({
@@ -1798,6 +1817,14 @@ exports.validateOrder = async (req, res, next) => {
               : [];
           let selectedOptionsCost = 0;
           let selectedDiscountOptionsCost = 0;
+          selectedOptionsCost += getComboSideSelectionCost(
+            menuIds[item.menuItemId],
+            selectedComboSides
+          );
+          selectedDiscountOptionsCost += getComboSideSelectionCost(
+            discountSourceItem,
+            selectedDiscountComboSides
+          );
 
           if (hasFlavors) {
             selectedOptionsCost += validateSelectionsAndGetCost({
@@ -3624,6 +3651,14 @@ exports.add = async (req, res, next) => {
               : [];
           let selectedOptionsCost = 0;
           let selectedDiscountOptionsCost = 0;
+          selectedOptionsCost += getComboSideSelectionCost(
+            menuIds[item.menuItemId],
+            selectedComboSides
+          );
+          selectedDiscountOptionsCost += getComboSideSelectionCost(
+            discountSourceItem,
+            selectedDiscountComboSides
+          );
 
           if (hasFlavors) {
             selectedOptionsCost += validateSelectionsAndGetCost({

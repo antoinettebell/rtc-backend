@@ -92,6 +92,7 @@ module.exports = {
         otherwise: Joi.optional(),
       }),
       flavorOptions: Joi.array().items(paidOptionValidation).max(15),
+      flavorLabel: Joi.string().trim().max(40).allow(''),
       flavorsPerOrder: Joi.number().min(1).max(5).when('hasFlavors', {
         is: true,
         then: Joi.required(),
@@ -114,6 +115,7 @@ module.exports = {
         then: Joi.optional(),
         otherwise: Joi.optional(),
       }),
+      comboSideOptionCosts: Joi.array().items(paidOptionValidation).max(15),
       comboSidesPerOrder: Joi.number().min(1).max(5).when('itemType', {
         is: 'COMBO',
         then: Joi.optional(),
@@ -215,6 +217,7 @@ module.exports = {
         otherwise: Joi.optional(),
       }),
       flavorOptions: Joi.array().items(paidOptionValidation).max(15),
+      flavorLabel: Joi.string().trim().max(40).allow(''),
       flavorsPerOrder: Joi.number().min(1).max(5).when('hasFlavors', {
         is: true,
         then: Joi.required(),
@@ -237,6 +240,7 @@ module.exports = {
         then: Joi.optional(),
         otherwise: Joi.optional(),
       }),
+      comboSideOptionCosts: Joi.array().items(paidOptionValidation).max(15),
       comboSidesPerOrder: Joi.number().min(1).max(5).when('itemType', {
         is: 'COMBO',
         then: Joi.optional(),

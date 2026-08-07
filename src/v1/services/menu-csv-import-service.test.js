@@ -51,6 +51,36 @@ assert.deepStrictEqual(
   { buyQty: 1, getQty: 1, discount: 1, repeatable: true }
 );
 
+const sides = menuCsvImportService.parseComboSides({
+  _rowNumber: 6,
+  itemType: 'COMBO',
+  comboSideOptions: 'Fries|Onion Rings|Fried Okra',
+  comboSideCosts: 'Onion Rings:2.00|Fried Okra:2.00',
+  comboSidesPerOrder: '1',
+});
+assert.deepStrictEqual(sides.comboSideOptionCosts, [
+  { name: 'Fries', hasCost: false, cost: 0 },
+  { name: 'Onion Rings', hasCost: true, cost: 2 },
+  { name: 'Fried Okra', hasCost: true, cost: 2 },
+]);
+
+const labeledFlavors = menuCsvImportService.parseFlavors({
+  _rowNumber: 7,
+  hasFlavors: 'TRUE',
+  flavorLabel: 'Wing Sauce',
+  flavors: 'BBQ|Hot Honey',
+  flavorsPerOrder: '1',
+});
+assert.equal(labeledFlavors.flavorLabel, 'Wing Sauce');
+
+const legacyFlavors = menuCsvImportService.parseFlavors({
+  _rowNumber: 8,
+  hasFlavors: 'TRUE',
+  flavors: 'Mild|Hot',
+  flavorsPerOrder: '1',
+});
+assert.equal(legacyFlavors.flavorLabel, 'Flavor');
+
 (async () => {
   const nameMap = new Map([
     ['fries', individualId],
