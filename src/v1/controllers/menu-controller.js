@@ -682,21 +682,22 @@ exports.add = async (req, res, next) => {
       itemType === 'COMBO'
         ? normalizePaidOptions(comboSideOptionCosts, normalizedComboSideOptions)
         : [];
+    const comboChoiceCount = Array.isArray(subItem) ? subItem.length : 0;
     if (
       itemType === 'COMBO' &&
-      normalizedComboSideOptions.length > 0 &&
-      Number(comboSidesPerOrder) > normalizedComboSideOptions.length
+      comboChoiceCount > 0 &&
+      Number(comboSidesPerOrder) > comboChoiceCount
     ) {
       return res.error(
-        new Error('# of Sides per Order cannot exceed # of Side Options.'),
+        new Error('Sides per Order cannot exceed the number of combo items.'),
         409
       );
     }
     const normalizedComboSidesPerOrder =
-      itemType === 'COMBO' && normalizedComboSideOptions.length > 0
+      itemType === 'COMBO' && comboChoiceCount > 0
         ? Math.min(
             Math.max(Number(comboSidesPerOrder) || 1, 1),
-            normalizedComboSideOptions.length,
+            comboChoiceCount,
             5
           )
         : 1;
@@ -931,21 +932,28 @@ exports.update = async (req, res, next) => {
             normalizedComboSideOptions
           )
         : [];
+    const nextComboChoiceCount = Array.isArray(subItem)
+      ? subItem.length
+      : Array.isArray(item.subItem) ? item.subItem.length : 0;
+    const nextComboSidesPerOrder =
+      comboSidesPerOrder === undefined
+        ? item.comboSidesPerOrder
+        : comboSidesPerOrder;
     if (
       itemType === 'COMBO' &&
-      normalizedComboSideOptions.length > 0 &&
-      Number(comboSidesPerOrder) > normalizedComboSideOptions.length
+      nextComboChoiceCount > 0 &&
+      Number(nextComboSidesPerOrder) > nextComboChoiceCount
     ) {
       return res.error(
-        new Error('# of Sides per Order cannot exceed # of Side Options.'),
+        new Error('Sides per Order cannot exceed the number of combo items.'),
         409
       );
     }
     const normalizedComboSidesPerOrder =
-      itemType === 'COMBO' && normalizedComboSideOptions.length > 0
+      itemType === 'COMBO' && nextComboChoiceCount > 0
         ? Math.min(
-            Math.max(Number(comboSidesPerOrder) || 1, 1),
-            normalizedComboSideOptions.length,
+            Math.max(Number(nextComboSidesPerOrder) || 1, 1),
+            nextComboChoiceCount,
             5
           )
         : 1;
