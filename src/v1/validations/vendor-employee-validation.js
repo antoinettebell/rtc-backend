@@ -1,5 +1,28 @@
 const { Joi } = require('express-validation');
 
+const scheduleRow = Joi.object({
+  day: Joi.string().valid('sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat').required(),
+  enabled: Joi.boolean().required(),
+  clock_in: Joi.string().pattern(/^([01]\d|2[0-3]):[0-5]\d$/).when('enabled', { is: true, then: Joi.required(), otherwise: Joi.allow('') }),
+  clock_out: Joi.string().pattern(/^([01]\d|2[0-3]):[0-5]\d$/).when('enabled', { is: true, then: Joi.required(), otherwise: Joi.allow('') }),
+});
+const scheduleAssignment = Joi.object({
+  truck_unit_id: Joi.string().trim().required(),
+  location_id: Joi.string().trim().required(),
+  days: Joi.array().items(scheduleRow).length(7).required(),
+});
+const scheduleAssignments = Joi.array().items(scheduleAssignment).max(7).custom((assignments, helpers) => {
+  const usedDays = new Set();
+  for (const assignment of assignments) {
+    for (const row of assignment.days) {
+      if (!row.enabled) continue;
+      if (usedDays.has(row.day)) return helpers.message({ custom: 'An employee can only have one truck and location assignment per day.' });
+      usedDays.add(row.day);
+    }
+  }
+  return usedDays.size ? assignments : helpers.message({ custom: 'Employee schedule must include at least one workday.' });
+});
+
 const employeePin = Joi.string()
   .trim()
   .pattern(/^\d{4}$/)
@@ -39,7 +62,7 @@ module.exports = {
   add: {
     body: Joi.object({
       food_truck_id: Joi.string().trim().required(),
-      assigned_location_id: Joi.string().trim().required(),
+      assigned_location_id: Joi.string().trim().allow(null, ''),
       assigned_truck_unit_id: Joi.string().trim().allow(null, ''),
       first_name: Joi.string().trim().required(),
       last_name: Joi.string().trim().required(),
@@ -56,6 +79,8 @@ module.exports = {
       pin: employeePin,
       is_active: Joi.boolean(),
       is_working: Joi.boolean(),
+      weekly_schedule: Joi.array().items(scheduleRow).max(7),
+      schedule_assignments: scheduleAssignments,
     }),
   },
 
@@ -63,7 +88,7 @@ module.exports = {
     body: Joi.object({
       vendor_user_id: Joi.string().trim().required(),
       food_truck_id: Joi.string().trim().required(),
-      assigned_location_id: Joi.string().trim().required(),
+      assigned_location_id: Joi.string().trim().allow(null, ''),
       assigned_truck_unit_id: Joi.string().trim().allow(null, ''),
       first_name: Joi.string().trim().required(),
       last_name: Joi.string().trim().required(),
@@ -80,6 +105,8 @@ module.exports = {
       pin: employeePin,
       is_active: Joi.boolean(),
       is_working: Joi.boolean(),
+      weekly_schedule: Joi.array().items(scheduleRow).max(7),
+      schedule_assignments: scheduleAssignments,
     }),
   },
 
@@ -101,6 +128,9 @@ module.exports = {
       employee_rate: Joi.number().min(0).allow(null),
       is_active: Joi.boolean(),
       is_working: Joi.boolean(),
+      weekly_schedule: Joi.array().items(scheduleRow).max(7),
+      schedule_assignments: scheduleAssignments,
+      archive_schedule: Joi.boolean(),
     }).min(1),
   },
 

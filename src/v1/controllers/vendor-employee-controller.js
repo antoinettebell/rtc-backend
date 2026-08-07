@@ -11,6 +11,7 @@ const MailHelper = require('../../helper/mail-helper');
 const { JWT } = require('../../config');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const { getEmployeeScheduleState, getEmployeeScheduleAssignment } = require('../../helper/employee-weekly-schedule');
 
 const entityName = 'VendorEmployee';
 
@@ -211,11 +212,15 @@ exports.vendorShiftAction = async (req, res, next) => {
       if (!latestSession?.ended_at || latestSession.is_active) {
         return res.error(new Error('No clocked-out shift exists for this operational day'), 409);
       }
+      const scheduled = employee.schedule_assignments?.length
+        ? getEmployeeScheduleAssignment(employee.schedule_assignments, new Date(), foodTruck.schedule_time_zone || 'America/New_York')
+        : null;
+      const overrideLocationId = scheduled?.assignment?.location_id || latestSession.location_id || employee.assigned_location_id;
       employeeSession = await EmployeeSessionService.startSessionForEmployee({
         employee,
         foodTruck,
         assignedLocation: (foodTruck.locations || []).find(
-          (location) => location._id?.toString() === employee.assigned_location_id?.toString()
+          (location) => location._id?.toString() === overrideLocationId?.toString()
         ),
         isVendorOverride: true,
         overrideReason: reason,
@@ -325,6 +330,7 @@ exports.update = async (req, res, next) => {
       vendor_user_id: user._id,
       employee_id: id,
       update: body,
+      actor_user_id: user._id,
     });
 
     if (
@@ -535,10 +541,7 @@ exports.adminAdd = async (req, res, next) => {
 
 exports.adminUpdate = async (req, res, next) => {
   try {
-    const {
-      params: { id },
-      body,
-    } = req;
+    const { params: { id }, body, user } = req;
 
     const employee = await Service.getByData(
       { _id: id, is_archived: false },
@@ -551,6 +554,7 @@ exports.adminUpdate = async (req, res, next) => {
       vendor_user_id: employee.vendor_user_id,
       employee_id: id,
       update: body,
+      actor_user_id: user?._id || employee.vendor_user_id,
     });
 
     if (body.is_working === false || body.is_active === false) {
@@ -703,14 +707,14 @@ const assertEmployeeCanUseShift = async (user) => {
   );
   await assertEmployeeManagementAllowed(foodTruck);
 
-  const assignedLocation = Service.getAssignedLocation(
-    foodTruck,
-    employee.assigned_location_id
-  );
-  const assignedTruckUnit = Service.getAssignedTruckUnit(
-    foodTruck,
-    employee.assigned_truck_unit_id
-  );
+  const hasCardSchedule = employee.schedule_assignments?.length > 0;
+  const scheduled = hasCardSchedule ? getEmployeeScheduleAssignment(employee.schedule_assignments, new Date(), foodTruck.schedule_time_zone || 'America/New_York') : null;
+  const fallbackAssignment = hasCardSchedule ? employee.schedule_assignments.find((assignment) => assignment?.location_id && assignment?.truck_unit_id) : null;
+  const activeOrFallbackAssignment = scheduled?.assignment || fallbackAssignment;
+  const assignedLocationId = hasCardSchedule ? activeOrFallbackAssignment?.location_id : employee.assigned_location_id;
+  const assignedTruckUnitId = hasCardSchedule ? activeOrFallbackAssignment?.truck_unit_id : employee.assigned_truck_unit_id;
+  const assignedLocation = Service.getAssignedLocation(foodTruck, assignedLocationId);
+  const assignedTruckUnit = assignedLocationId ? Service.getAssignedTruckUnit(foodTruck, assignedTruckUnitId) : null;
   if (!assignedLocation) {
     const error = new Error('Employee assigned location is unavailable');
     error.code = 404;
@@ -741,12 +745,18 @@ exports.shiftAction = async (req, res, next) => {
     let authToken = null;
 
     if (action === 'START') {
-      if (!employee.is_working) {
+      const hasWeeklySchedule = (employee.schedule_assignments?.length > 0) || (employee.weekly_schedule?.length > 0);
+      const scheduleState = employee.schedule_assignments?.length
+        ? getEmployeeScheduleAssignment(employee.schedule_assignments, new Date(), foodTruck.schedule_time_zone || 'America/New_York') || { withinWindow: false }
+        : hasWeeklySchedule ? getEmployeeScheduleState(employee.weekly_schedule, new Date(), foodTruck.schedule_time_zone || 'America/New_York') : null;
+      if (hasWeeklySchedule && !scheduleState.withinWindow) {
         return res.error(
-          new Error('Employee must be On Duty before starting a shift'),
+          new Error('You are not within your scheduled clock-in window. Please see your manager.'),
           403
         );
       }
+      if (hasWeeklySchedule && !employee.is_working) { employee.is_working = true; await employee.save(); }
+      else if (!hasWeeklySchedule && !employee.is_working) return res.error(new Error('Employee must be On Duty before starting a shift'), 403);
 
       const latestSession =
         await EmployeeSessionService.getLatestOperationalDaySession(
@@ -770,6 +780,7 @@ exports.shiftAction = async (req, res, next) => {
         employee,
         foodTruck,
         assignedLocation,
+        assignedTruckUnit,
       });
       authToken = jwt.sign(
         {
@@ -780,8 +791,8 @@ exports.shiftAction = async (req, res, next) => {
           employee_session_id: employeeSession.employee_session_id,
           vendor_user_id: employee.vendor_user_id,
           food_truck_id: employee.food_truck_id,
-          assigned_location_id: employee.assigned_location_id,
-          assigned_truck_unit_id: employee.assigned_truck_unit_id || null,
+          assigned_location_id: assignedLocation._id,
+          assigned_truck_unit_id: assignedTruckUnit?._id || null,
         },
         JWT.secret,
         { expiresIn: '168h' }
@@ -845,32 +856,16 @@ exports.shiftAction = async (req, res, next) => {
 exports.dashboard = async (req, res, next) => {
   try {
     const { user } = req;
-    const foodTruck = await Service.getVendorFoodTruck(
-      user.vendor_user_id,
-      user.food_truck_id
-    );
-    const assignedLocation = Service.getAssignedLocation(
-      foodTruck,
-      user.assigned_location_id
-    );
-    const assignedTruckUnit = Service.getAssignedTruckUnit(
-      foodTruck,
-      user.assigned_truck_unit_id
-    );
-
-    if (!assignedLocation) {
-      return res.error(
-        new Error('Employee assigned location is unavailable'),
-        404
-      );
-    }
+    const { employee, foodTruck, assignedLocation, assignedTruckUnit } = await assertEmployeeCanUseShift(user);
 
     const dashboard = await EmployeeSessionService.getEmployeeDashboard({
-      user,
+      user: { ...user, assigned_location_id: assignedLocation._id, assigned_truck_unit_id: assignedTruckUnit?._id || null },
       foodTruck,
       assignedLocation,
       assignedTruckUnit,
     });
+    dashboard.employee_schedule = employee.schedule_assignments || [];
+    dashboard.schedule_time_zone = foodTruck.schedule_time_zone || 'America/New_York';
 
     return res.data({ dashboard }, 'Employee dashboard');
   } catch (e) {
