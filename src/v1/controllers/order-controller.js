@@ -1741,7 +1741,10 @@ exports.validateOrder = async (req, res, next) => {
       menuIds[item._id.toString()] = item;
     });
 
-    if (items.length !== Object.keys(menuIds).length) {
+    const requestedMenuItemCount = new Set(
+      items.map((item) => String(item.menuItemId))
+    ).size;
+    if (requestedMenuItemCount !== Object.keys(menuIds).length) {
       return res.error(new Error('Order items mismatched'), 409);
     }
 
@@ -3576,7 +3579,10 @@ exports.add = async (req, res, next) => {
       menuIds[item._id.toString()] = item;
     });
 
-    if (items.length !== Object.keys(menuIds).length) {
+    const requestedMenuItemCount = new Set(
+      items.map((item) => String(item.menuItemId))
+    ).size;
+    if (requestedMenuItemCount !== Object.keys(menuIds).length) {
       return res.error(new Error('Order items mismatched'), 409);
     }
 
