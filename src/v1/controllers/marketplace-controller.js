@@ -360,10 +360,10 @@ const normalizeMarketplaceEventLocation = (body) => {
 const normalizeMarketplaceVendorCount = (body) => {
   const serviceTypes = asArray(body.service_types?.length ? body.service_types : body.service_type);
   if (body.primary_service_style === 'Food Truck' || serviceTypes.includes('Food Truck')) {
-    const guestCount = Number(body.number_of_guests || 0) +
-      Number(body.vip_guest_count || 0);
-    const baseMaximum = Math.max(1, Math.ceil(guestCount / 100));
     const separateVipVendor = body.separate_vip_vendor_required ? 1 : 0;
+    const generalGuestCount = Number(body.number_of_guests || 0) +
+      (separateVipVendor ? 0 : Number(body.vip_guest_count || 0));
+    const baseMaximum = Math.max(1, Math.ceil(generalGuestCount / 100));
     const minimum = 1 + separateVipVendor;
     const maximum = baseMaximum + separateVipVendor;
     const requested = Number(body.number_of_vendors_needed);
