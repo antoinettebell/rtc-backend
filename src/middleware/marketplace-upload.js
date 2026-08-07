@@ -28,6 +28,22 @@ const storage = multer.diskStorage({
 const isSupportedMarketplaceUpload = (file) =>
   allowedMarketplaceMimeTypes.has(file?.mimetype);
 
+const normalizeMarketplaceMimeType = (file) => {
+  const extension = path.extname(file?.originalname || '').toLowerCase();
+  const mimeByExtension = {
+    '.pdf': 'application/pdf',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.heic': 'image/heic',
+    '.heif': 'image/heif',
+  };
+  if (mimeByExtension[extension]) {
+    file.mimetype = mimeByExtension[extension];
+  }
+  return file;
+};
+
 async function convertHEIC(filePath) {
   const inputBuffer = fs.readFileSync(filePath);
   const pngBuffer = await heicConvert({
@@ -44,6 +60,7 @@ async function convertHEIC(filePath) {
 const uploadItem = multer({
   storage,
   fileFilter: function (req, file, callback) {
+    normalizeMarketplaceMimeType(file);
     if (isSupportedMarketplaceUpload(file)) {
       callback(null, true);
     } else {
@@ -86,5 +103,6 @@ module.exports = {
   MAX_MARKETPLACE_FILE_SIZE,
   allowedMarketplaceMimeTypes,
   isSupportedMarketplaceUpload,
+  normalizeMarketplaceMimeType,
   single: () => uploadMiddleware,
 };

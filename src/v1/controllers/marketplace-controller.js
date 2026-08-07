@@ -810,19 +810,45 @@ const createAgreementAudit = ({
 const BID_ATTACHMENT_TYPES = {
   BID_MENU_PDF: {
     folder: 'marketplace/bids/menu-pdfs',
-    allowedMimeTypes: ['application/pdf'],
+    allowedMimeTypes: [
+      'application/pdf',
+      'image/png',
+      'image/jpg',
+      'image/jpeg',
+      'image/heic',
+      'image/heif',
+    ],
   },
   BID_IMAGE: {
     folder: 'marketplace/bids/images',
-    allowedMimeTypes: ['image/png', 'image/jpg', 'image/jpeg', 'image/heic'],
+    allowedMimeTypes: [
+      'image/png',
+      'image/jpg',
+      'image/jpeg',
+      'image/heic',
+      'image/heif',
+    ],
   },
   APPLICATION_MENU_PDF: {
     folder: 'marketplace/applications/menu-pdfs',
-    allowedMimeTypes: ['application/pdf'],
+    allowedMimeTypes: [
+      'application/pdf',
+      'image/png',
+      'image/jpg',
+      'image/jpeg',
+      'image/heic',
+      'image/heif',
+    ],
   },
   APPLICATION_IMAGE: {
     folder: 'marketplace/applications/images',
-    allowedMimeTypes: ['image/png', 'image/jpg', 'image/jpeg', 'image/heic'],
+    allowedMimeTypes: [
+      'image/png',
+      'image/jpg',
+      'image/jpeg',
+      'image/heic',
+      'image/heif',
+    ],
   },
   PERMIT_LICENSE: {
     folder: 'marketplace/bids/permits-licenses',
@@ -832,6 +858,7 @@ const BID_ATTACHMENT_TYPES = {
       'image/jpg',
       'image/jpeg',
       'image/heic',
+      'image/heif',
     ],
   },
   AGREEMENT_DOCUMENT: {
@@ -842,6 +869,7 @@ const BID_ATTACHMENT_TYPES = {
       'image/jpg',
       'image/jpeg',
       'image/heic',
+      'image/heif',
     ],
   },
   REQUIREMENT_DOCUMENT: {
@@ -851,6 +879,8 @@ const BID_ATTACHMENT_TYPES = {
       'image/png',
       'image/jpg',
       'image/jpeg',
+      'image/heic',
+      'image/heif',
     ],
   },
 };
