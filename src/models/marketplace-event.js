@@ -374,6 +374,15 @@ const mSchema = mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    vip_section_enabled: {
+      type: Boolean,
+      default: false,
+    },
+    vip_section_details: {
+      type: String,
+      default: null,
+      maxlength: 1000,
+    },
     fully_catered_event: {
       type: Boolean,
       default: false,

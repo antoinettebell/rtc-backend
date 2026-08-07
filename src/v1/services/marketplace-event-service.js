@@ -8,6 +8,9 @@ const {
   MarketplacePaymentModel,
 } = require('../../models');
 const { BaseService } = require('../../common-services');
+const {
+  getMarketplaceFilledSlotSummary,
+} = require('../../helper/marketplace-participation-helper');
 
 class MarketplaceEventService extends BaseService {
   constructor() {
@@ -141,13 +144,11 @@ class MarketplaceEventService extends BaseService {
       application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
       archived_at: null,
     }).lean();
-    const vipVendorsSelected = activeAwardedBids.filter((bid) =>
-      ['VIP', 'BOTH'].includes(bid.awarded_coverage || bid.guest_coverage)
-    ).length;
-    const vendorGaSlotsFilled = activeAwardedApplications.length +
-      activeAwardedBids.filter((bid) =>
-        (bid.awarded_coverage || bid.guest_coverage) === 'REGULAR'
-      ).length;
+    const filledSlots = getMarketplaceFilledSlotSummary({
+      bids: activeAwardedBids,
+      applications: activeAwardedApplications,
+      separateVipVendorRequired: event.separate_vip_vendor_required,
+    });
     const uniqueVendorIds = new Set(
       [...activeAwardedBids, ...activeAwardedApplications]
         .map((record) => String(record.vendor_user_id || ''))
@@ -164,8 +165,9 @@ class MarketplaceEventService extends BaseService {
         ticket_checkout_clicks: Number(event.ticket_click_count || 0),
         tickets_sold:
           Number(event.ga_tickets_sold || 0) + Number(event.vip_tickets_sold || 0),
-        vip_vendors_selected: vipVendorsSelected,
-        vendor_ga_slots_filled: vendorGaSlotsFilled,
+        vip_vendors_selected: filledSlots.vipSlotsFilled,
+        vendor_ga_slots_filled: filledSlots.gaSlotsFilled,
+        combined_vendors_selected: filledSlots.combinedVendors,
         unique_vendors_selected: uniqueVendorIds.size,
       },
     };

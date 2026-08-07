@@ -54,7 +54,12 @@ const {
 } = require('../../helper/event-coordinator-profile');
 const {
   getAllowedBidCoverages,
+  getAllowedAwardCoverages,
   getMarketplaceBudgetGuestCount,
+  getMarketplaceVendorCapacity,
+  getMarketplaceServiceRequirements,
+  getMarketplaceFilledSlotSummary,
+  isMarketplaceVendorReductionBlocked,
 } = require('../../helper/marketplace-participation-helper');
 
 const buildError = (message, code = 400) => {
@@ -360,12 +365,8 @@ const normalizeMarketplaceEventLocation = (body) => {
 const normalizeMarketplaceVendorCount = (body) => {
   const serviceTypes = asArray(body.service_types?.length ? body.service_types : body.service_type);
   if (body.primary_service_style === 'Food Truck' || serviceTypes.includes('Food Truck')) {
-    const guestCount = Number(body.number_of_guests || 0) +
-      Number(body.vip_guest_count || 0);
-    const baseMaximum = Math.max(1, Math.ceil(guestCount / 100));
-    const separateVipVendor = body.separate_vip_vendor_required ? 1 : 0;
-    const minimum = 1 + separateVipVendor;
-    const maximum = baseMaximum + separateVipVendor;
+    const { calculatedMaximum: maximum } = getMarketplaceVendorCapacity(body);
+    const minimum = 1;
     const requested = Number(body.number_of_vendors_needed);
     return Number.isFinite(requested)
       ? Math.max(minimum, Math.min(Math.floor(requested), maximum))
@@ -427,9 +428,10 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     equipmentNeeded = ['None'];
   }
 
+  const vipSectionEnabled = Boolean(body.vip_section_enabled);
   const fullyCateredEvent = Boolean(body.fully_catered_event);
   const cateredVipSectionEnabled =
-    !fullyCateredEvent && Boolean(body.catered_vip_section_enabled);
+    vipSectionEnabled && !fullyCateredEvent && Boolean(body.catered_vip_section_enabled);
   const gaFoodSalesAllowed =
     cateredVipSectionEnabled && Boolean(body.ga_food_sales_allowed);
   const waiveVendorFeeForCombinedAward =
@@ -440,7 +442,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     ? 'COORDINATOR'
     : cateredVipSectionEnabled
       ? gaFoodSalesAllowed ? 'BOTH' : 'COORDINATOR'
-      : body.payment_responsibility || 'NONE';
+      : 'VENDOR';
   let vendorFee = roundMoney(body.vendor_fee || 0);
   let budgetedAmount = roundMoney(body.budgeted_amount || 0);
   if (paymentResponsibility === 'COORDINATOR') {
@@ -466,7 +468,9 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
         ? body.vendors_required_to_giveaway_food
         : null
       : null;
-  const vipGuestCount = Math.max(0, Number(body.vip_guest_count || 0));
+  const vipGuestCount = vipSectionEnabled
+    ? Math.max(0, Number(body.vip_guest_count || 0))
+    : 0;
   const rawEventDurationHours = Number(body.event_duration_hours || 0);
   const rawEventDurationMinutes = Number(body.event_duration_minutes || 0);
   const eventDurationHours = Number.isFinite(rawEventDurationHours)
@@ -504,6 +508,10 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     free_food_provider: freeFoodProvider,
 	    vendors_required_to_giveaway_food: vendorsRequiredToGiveawayFood,
     catered_vip_section_enabled: cateredVipSectionEnabled,
+    vip_section_enabled: vipSectionEnabled,
+    vip_section_details: vipSectionEnabled
+      ? String(body.vip_section_details || '').trim() || null
+      : null,
     fully_catered_event: fullyCateredEvent,
     ga_food_sales_allowed: gaFoodSalesAllowed,
     waive_vendor_fee_for_combined_award: waiveVendorFeeForCombinedAward,
@@ -526,18 +534,8 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
         : existingEvent?.draft_expires_at || null,
   });
 
-  if (normalized.ticket_sales_enabled) {
-    normalized.number_of_guests = Math.max(
-      0,
-      Number(normalized.ga_ticket_quantity || 0)
-    );
-    normalized.vip_guest_count = Math.max(
-      0,
-      Number(normalized.vip_ticket_quantity || 0)
-    );
-  } else {
-    normalized.ga_ticket_quantity = 0;
-    normalized.ga_ticket_price = 0;
+  normalized.number_of_guests = Math.max(0, Number(normalized.number_of_guests || 0));
+  if (!vipSectionEnabled) {
     normalized.vip_ticket_quantity = 0;
     normalized.vip_ticket_price = 0;
   }
@@ -3442,9 +3440,7 @@ const resolveAwardSelections = (event, selectedBids, requestedSelections = []) =
   return selectedBids.map((bid) => {
     const awardCoverage = requestedByBidId.get(bid.bid_id) || bid.guest_coverage;
     const offeredCoverage = bid.guest_coverage || 'REGULAR';
-    const allowedAwards = offeredCoverage === 'BOTH'
-      ? getAllowedBidCoverages(event)
-      : [offeredCoverage];
+    const allowedAwards = getAllowedAwardCoverages(event, offeredCoverage);
     if (!allowedAwards.includes(awardCoverage)) {
       throw buildError(
         `Vendor ${bid.bid_id} did not offer ${awardCoverage} services.`,
@@ -3808,6 +3804,43 @@ exports.updateEvent = async (req, res, next) => {
     if (['AWARDED', 'CANCELLED'].includes(event.status)) {
       throw buildError('Awarded or cancelled events cannot be edited.', 400);
     }
+    const gaCommitted = Number(event.ga_tickets_sold || 0) + Number(event.ga_tickets_reserved || 0);
+    const vipCommitted = Number(event.vip_tickets_sold || 0) + Number(event.vip_tickets_reserved || 0);
+    if (req.body.ga_ticket_quantity != null && Number(req.body.ga_ticket_quantity) < gaCommitted) {
+      throw buildError(`GA Ticket Capacity cannot be lower than ${gaCommitted} sold or reserved ticket(s).`, 409);
+    }
+    if (req.body.vip_ticket_quantity != null && Number(req.body.vip_ticket_quantity) < vipCommitted) {
+      throw buildError(`VIP Ticket Capacity cannot be lower than ${vipCommitted} sold or reserved ticket(s).`, 409);
+    }
+    if (req.body.vip_section_enabled === false && vipCommitted > 0) {
+      throw buildError('The VIP section cannot be disabled after VIP tickets have been sold or reserved.', 409);
+    }
+    const protectedParticipationFields = [
+      'fully_catered_event',
+      'catered_vip_section_enabled',
+      'ga_food_sales_allowed',
+      'separate_vip_vendor_required',
+      'waive_vendor_fee_for_combined_award',
+      'vendor_fee_payment_deadline',
+      'payment_responsibility',
+    ];
+    const participationChanged = protectedParticipationFields.some(
+      (field) => req.body[field] !== undefined &&
+        String(req.body[field] ?? '') !== String(event[field] ?? '')
+    );
+    if (req.body.vip_section_enabled === false || participationChanged) {
+      const [existingBids, existingApplications, existingPayments] = await Promise.all([
+        MarketplaceBidService.getByData({ event_id: event.event_id, archived_at: null }, { lean: true }),
+        MarketplaceApplicationService.getByData({ event_id: event.event_id, archived_at: null }, { lean: true }),
+        MarketplacePaymentService.getByData({ event_id: event.event_id }, { lean: true }),
+      ]);
+      if (existingBids.length || existingApplications.length || existingPayments.length) {
+        throw buildError(
+          `Participation and payment rules cannot be changed after marketplace activity begins. Contact support at ${MARKETPLACE_PHONE_NUMBER}.`,
+          409
+        );
+      }
+    }
     if (req.body.number_of_vendors_needed != null) {
       const [filledBids, filledApplications] = await Promise.all([
         MarketplaceBidService.getByData(
@@ -3823,14 +3856,25 @@ exports.updateEvent = async (req, res, next) => {
           { lean: true }
         ),
       ]);
-      const filledVendorCount = new Set(
-        [...filledBids, ...filledApplications]
-          .map((record) => String(record.vendor_user_id || ''))
-          .filter(Boolean)
-      ).size;
-      if (Number(req.body.number_of_vendors_needed) < filledVendorCount) {
+      const proposedEvent = { ...toPlainObject(event), ...req.body };
+      const selectedRequirement = Number(req.body.number_of_vendors_needed);
+      const { gaRequirement, vipRequirement } =
+        getMarketplaceServiceRequirements(proposedEvent, selectedRequirement);
+      const filled = getMarketplaceFilledSlotSummary({
+        bids: filledBids,
+        applications: filledApplications,
+        separateVipVendorRequired: proposedEvent.separate_vip_vendor_required,
+        gaRequirement,
+        vipRequirement,
+      });
+      if (isMarketplaceVendorReductionBlocked({
+        selectedRequirement,
+        gaRequirement,
+        vipRequirement,
+        filled,
+      })) {
         throw buildError(
-          `By decreasing vendors, you will be required to refund vendor fees. Please contact support to refund vendors that are no longer needed for the event ${MARKETPLACE_PHONE_NUMBER}. The vendor count cannot be lower than ${filledVendorCount} filled slot(s).`,
+          `By decreasing vendors, you will be required to refund vendor fees. Please contact support to refund vendors that are no longer needed for the event: ${MARKETPLACE_PHONE_NUMBER}. GA filled: ${filled.gaSlotsFilled}; VIP filled: ${filled.vipSlotsFilled}; minimum unique vendors: ${filled.minimumUniqueVendors}.`,
           409
         );
       }

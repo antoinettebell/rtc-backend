@@ -86,6 +86,8 @@ const marketplaceEventBody = {
   free_food_provider: Joi.string().trim().allow(null, ''),
   vendors_required_to_giveaway_food: Joi.boolean().allow(null),
   catered_vip_section_enabled: Joi.boolean().default(false),
+  vip_section_enabled: Joi.boolean().default(false),
+  vip_section_details: Joi.string().trim().max(1000).allow(null, ''),
   fully_catered_event: Joi.boolean().default(false),
   ga_food_sales_allowed: Joi.boolean().allow(null),
   waive_vendor_fee_for_combined_award: Joi.boolean().allow(null),
@@ -125,7 +127,7 @@ module.exports = {
   },
 
   updateEvent: {
-    body: Joi.object(marketplaceEventBody),
+    body: Joi.object(marketplaceEventBody).min(1).prefs({ noDefaults: true }),
   },
 
   reopenEvent: {
