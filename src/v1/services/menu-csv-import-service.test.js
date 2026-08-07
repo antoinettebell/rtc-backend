@@ -39,4 +39,17 @@ const legacyFlavors = importer.parseFlavors({
 });
 
 assert.strictEqual(legacyFlavors.flavorLabel, 'Flavor');
+
+assert.deepStrictEqual(importer.parseComboItemQuantities({ _rowNumber: 6 }, 2), [1, 1]);
+assert.deepStrictEqual(
+  importer.parseComboItemQuantities({ _rowNumber: 6, comboItemQuantities: '2|3' }, 2),
+  [2, 3]
+);
+['0', '-1', '1.5', 'abc', '100'].forEach((quantity) => {
+  assert.throws(
+    () => importer.parseComboItemQuantities({ _rowNumber: 9, comboItemQuantities: quantity }, 1),
+    /whole numbers between 1 and 99/
+  );
+});
+
 console.log('menu CSV import compatibility tests passed');
