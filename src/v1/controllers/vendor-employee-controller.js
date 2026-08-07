@@ -742,11 +742,17 @@ const assertEmployeeCanUseShift = async (user) => {
         foodTruck.schedule_time_zone || 'America/New_York'
       )
     : null;
+  const fallbackAssignment = hasCardSchedule
+    ? employee.schedule_assignments.find(
+        (assignment) => assignment?.location_id && assignment?.truck_unit_id
+      )
+    : null;
+  const activeOrFallbackAssignment = scheduled?.assignment || fallbackAssignment;
   const assignedLocationId = hasCardSchedule
-    ? scheduled?.assignment?.location_id
+    ? activeOrFallbackAssignment?.location_id
     : employee.assigned_location_id;
   const assignedTruckUnitId = hasCardSchedule
-    ? scheduled?.assignment?.truck_unit_id
+    ? activeOrFallbackAssignment?.truck_unit_id
     : employee.assigned_truck_unit_id;
   const assignedLocation = Service.getAssignedLocation(foodTruck, assignedLocationId);
   const assignedTruckUnit = assignedLocationId

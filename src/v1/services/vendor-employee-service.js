@@ -723,11 +723,17 @@ class VendorEmployeeService extends BaseService {
           foodTruck.schedule_time_zone || 'America/New_York'
         )
       : null;
+    const fallbackAssignment = hasCardSchedule
+      ? employee.schedule_assignments.find(
+          (assignment) => assignment?.location_id && assignment?.truck_unit_id
+        )
+      : null;
+    const activeOrFallbackAssignment = scheduled?.assignment || fallbackAssignment;
     const assignedLocationId = hasCardSchedule
-      ? scheduled?.assignment?.location_id
+      ? activeOrFallbackAssignment?.location_id
       : employee.assigned_location_id;
     const assignedTruckUnitId = hasCardSchedule
-      ? scheduled?.assignment?.truck_unit_id
+      ? activeOrFallbackAssignment?.truck_unit_id
       : employee.assigned_truck_unit_id;
     const assignedLocation = this.getAssignedLocation(foodTruck, assignedLocationId);
     const assignedTruckUnit = assignedLocationId
@@ -735,7 +741,7 @@ class VendorEmployeeService extends BaseService {
       : null;
 
     if (!assignedLocation) {
-      throw buildError('You are not currently scheduled for a truck and location.', 403);
+      throw buildError('No truck and location are assigned to this employee.', 403);
     }
 
     const plan = foodTruck.planId
@@ -754,6 +760,9 @@ class VendorEmployeeService extends BaseService {
       throw customError;
     }
 
+    if (hasCardSchedule && employee.is_working !== !!scheduled?.withinWindow) {
+      employee.is_working = !!scheduled?.withinWindow;
+    }
     employee.last_login_at = new Date();
     await employee.save();
 
