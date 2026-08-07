@@ -69,11 +69,9 @@ exports.sendOTP = async (verificationType, payload, email, oldOTPs = []) => {
     msg
   ).replaceAll('####OTP####', otp);
 
-  try {
-    await MailHelper.sendMail(email, subject, template);
-  } catch (e) {
-    console.log('Mail not sent.');
-    console.log('=======', e);
+  const delivery = await MailHelper.sendMail(email, subject, template);
+  if (!delivery?.sent) {
+    throw new Error('Verification email could not be sent. Please try again.');
   }
 
   const newOTPs = [...oldOTPs, await bcrypt.hash(otp, 12)];
@@ -116,13 +114,15 @@ exports.sendWelcomeToVendor = async (vendor) => {
 };
 
 exports.sendNewVendorReqToAdmin = async (vendor, foodTruck) => {
+  const vendorBusinessName =
+    foodTruck?.name || vendor.eventVendorBusinessName || 'Marketplace Vendor';
   const template = NEW_VENDOR_TO_ADMIN.replaceAll(
     '####url####',
     `${server.frontendBaseURL}/vendor/detail/?q=${vendor._id}`
   )
     .replaceAll('####name####', vendor.firstName)
     .replaceAll('####email####', vendor.email)
-    .replaceAll('####ft####', foodTruck.name);
+    .replaceAll('####ft####', vendorBusinessName);
 
   try {
     await MailHelper.sendMail(

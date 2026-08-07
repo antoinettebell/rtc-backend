@@ -900,8 +900,9 @@ exports.verifyOTP = async (req, res, next) => {
 
     let isMatching = false;
     for (const hash of verifyToken.otp || []) {
-      if ((await bcrypt.compare(otp, hash)) || otp === '010101') {
+      if (await bcrypt.compare(otp, hash)) {
         isMatching = true;
+        break;
       }
     }
     if (!isMatching) {
@@ -987,10 +988,12 @@ const verifyUser = async (body) => {
       { singleResult: true }
     );
 
-    ft.verified = true;
-    await ft.save();
+    if (ft) {
+      ft.verified = true;
+      await ft.save();
+    }
 
-    existRecord.foodTruck = ft;
+    existRecord.foodTruck = ft || null;
 
     await MailHelper.sendNewVendorReqToAdmin(existRecord, ft);
   }
