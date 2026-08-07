@@ -52,6 +52,10 @@ const {
 const {
   buildTaxIdUpdate,
 } = require('../../helper/event-coordinator-profile');
+const {
+  getAllowedBidCoverages,
+  getMarketplaceBudgetGuestCount,
+} = require('../../helper/marketplace-participation-helper');
 
 const buildError = (message, code = 400) => {
   const error = new Error(message);
@@ -423,12 +427,20 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     equipmentNeeded = ['None'];
   }
 
-  const cateredVipSectionEnabled = Boolean(body.catered_vip_section_enabled);
+  const fullyCateredEvent = Boolean(body.fully_catered_event);
+  const cateredVipSectionEnabled =
+    !fullyCateredEvent && Boolean(body.catered_vip_section_enabled);
+  const gaFoodSalesAllowed =
+    cateredVipSectionEnabled && Boolean(body.ga_food_sales_allowed);
+  const waiveVendorFeeForCombinedAward =
+    gaFoodSalesAllowed && Boolean(body.waive_vendor_fee_for_combined_award);
   const separateVipVendorRequired =
     cateredVipSectionEnabled && Boolean(body.separate_vip_vendor_required);
-  const paymentResponsibility = cateredVipSectionEnabled
-    ? 'BOTH'
-    : body.payment_responsibility || 'NONE';
+  const paymentResponsibility = fullyCateredEvent
+    ? 'COORDINATOR'
+    : cateredVipSectionEnabled
+      ? gaFoodSalesAllowed ? 'BOTH' : 'COORDINATOR'
+      : body.payment_responsibility || 'NONE';
   let vendorFee = roundMoney(body.vendor_fee || 0);
   let budgetedAmount = roundMoney(body.budgeted_amount || 0);
   if (paymentResponsibility === 'COORDINATOR') {
@@ -491,7 +503,11 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     free_food_offered: freeFoodOffered,
     free_food_provider: freeFoodProvider,
 	    vendors_required_to_giveaway_food: vendorsRequiredToGiveawayFood,
-	    catered_vip_section_enabled: cateredVipSectionEnabled,
+    catered_vip_section_enabled: cateredVipSectionEnabled,
+    fully_catered_event: fullyCateredEvent,
+    ga_food_sales_allowed: gaFoodSalesAllowed,
+    waive_vendor_fee_for_combined_award: waiveVendorFeeForCombinedAward,
+    vendor_fee_payment_deadline: body.vendor_fee_payment_deadline || null,
     separate_vip_vendor_required: separateVipVendorRequired,
     vip_guest_count: vipGuestCount,
 	    tax_exemption_status:
@@ -592,6 +608,26 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
       );
     }
   }
+  if (
+    cateredVipSectionEnabled &&
+    body.ga_food_sales_allowed !== true &&
+    body.ga_food_sales_allowed !== false
+  ) {
+    throw buildError(
+      'Please answer whether vendors may sell food to GA guests.',
+      400
+    );
+  }
+  if (
+    gaFoodSalesAllowed &&
+    body.waive_vendor_fee_for_combined_award !== true &&
+    body.waive_vendor_fee_for_combined_award !== false
+  ) {
+    throw buildError(
+      'Please answer whether the vendor fee is waived for a combined award.',
+      400
+    );
+  }
   if (serviceTypes.includes('Food Truck') && ['Plated', 'Formal'].includes(primaryServiceStyle)) {
     throw buildError('Food Truck cannot use Plated/Formal Service as its primary style.', 400);
   }
@@ -608,6 +644,29 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     throw buildError('Budget amount and vendor fee are required when both parties pay.', 400);
   }
   if (
+    ['VENDOR', 'BOTH'].includes(paymentResponsibility) &&
+    !normalized.vendor_fee_payment_deadline
+  ) {
+    throw buildError('Last Date to Accept Payments is required when vendors pay a fee.', 400);
+  }
+  if (
+    normalized.vendor_fee_payment_deadline &&
+    normalized.event_date &&
+    new Date(normalized.vendor_fee_payment_deadline) >= new Date(normalized.event_date)
+  ) {
+    throw buildError('Last Date to Accept Payments must be before the event date.', 400);
+  }
+  if (
+    normalized.vendor_fee_payment_deadline &&
+    normalized.event_close_date &&
+    new Date(normalized.vendor_fee_payment_deadline) <= new Date(normalized.event_close_date)
+  ) {
+    throw buildError(
+      'Last Date to Accept Payments must be after the application/bid deadline.',
+      400
+    );
+  }
+  if (
     paymentResponsibility === 'BOTH' &&
     cateredVipSectionEnabled &&
     Number(normalized.vip_guest_count || 0) < 1
@@ -615,9 +674,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     throw buildError('VIP guest count is required for the catered VIP section.', 400);
   }
   if (['COORDINATOR', 'BOTH'].includes(paymentResponsibility)) {
-    const budgetGuestCount =
-      Number(normalized.number_of_guests || 0) +
-      Number(normalized.vip_guest_count || 0);
+    const budgetGuestCount = getMarketplaceBudgetGuestCount(normalized);
     const minimumBudget = budgetGuestCount * 25;
     if (budgetedAmount < minimumBudget) {
       throw buildError(`Budget amount must be at least $${minimumBudget.toFixed(2)} for the paid guest count.`, 400);
@@ -660,7 +717,52 @@ const sendEventClosedNotification = async (event) => {
   }
 };
 
+const notifyMissedVendorFeePayments = async () => {
+  const overdueApplications = await MarketplaceApplicationService.getByData({
+    application_status: 'PAYMENT_DUE',
+    payment_status: { $ne: 'PAID' },
+    payment_due_at: { $lte: new Date() },
+    payment_missed_notified_at: null,
+  });
+  for (const application of overdueApplications) {
+    const event = await MarketplaceEventService.getByData(
+      { event_id: application.event_id },
+      { singleResult: true, lean: true }
+    );
+    if (!event) continue;
+    await MarketplaceCommunications.sendMarketplaceCommunications([
+      {
+        userId: event.customer_user_id,
+        title: 'Vendor failed to submit payment',
+        body: `Please reopen event or revoke the award and award another vendor. Contact support with any questions or help: ${MARKETPLACE_PHONE_NUMBER}`,
+        data: {
+          notificationType: 'MARKETPLACE_VENDOR_PAYMENT_MISSED',
+          eventId: event.event_id,
+          applicationId: application.application_id,
+        },
+        channels: ['push', 'email'],
+        metadata: { eventId: event.event_id, applicationId: application.application_id },
+      },
+      {
+        userId: application.vendor_user_id,
+        title: 'Vendor event payment deadline missed',
+        body: `Your payment deadline for ${event.event_name || 'the event'} has passed. Contact the coordinator in the app or RTC support at ${MARKETPLACE_PHONE_NUMBER}.`,
+        data: {
+          notificationType: 'MARKETPLACE_VENDOR_PAYMENT_MISSED',
+          eventId: event.event_id,
+          applicationId: application.application_id,
+        },
+        channels: ['push', 'email'],
+        metadata: { eventId: event.event_id, applicationId: application.application_id },
+      },
+    ]);
+    application.payment_missed_notified_at = new Date();
+    await application.save();
+  }
+};
+
 const closeExpiredMarketplaceEvents = async () => {
+  await notifyMissedVendorFeePayments();
   const now = new Date();
   const expiredEvents = await MarketplaceEventService.getByData(
     {
@@ -978,7 +1080,9 @@ const isVendorPaymentSatisfied = (event = {}, bid = null, application = null) =>
   }
 
   if (bid) {
-    return bid.payment_status === 'PAID' || bid.bid_status === 'SUBMITTED';
+    if (bid.bid_status === 'SUBMITTED') return true;
+    if ((bid.awarded_coverage || bid.guest_coverage) !== 'BOTH') return true;
+    return bid.combined_vendor_fee_waived === true || bid.payment_status === 'PAID';
   }
 
   return (
@@ -3258,6 +3362,16 @@ const finalizePaidVendorPayment = async (payment) => {
       },
       { getNew: true }
     );
+    if (application?.source_bid_id) {
+      await MarketplaceBidService.update(
+        { bid_id: application.source_bid_id },
+        {
+          payment_id: payment.payment_id,
+          payment_status: 'PAID',
+        },
+        { getNew: false }
+      );
+    }
 
     if (existingApplication?.payment_status !== 'PAID') {
       const event = await MarketplaceEventService.getByData(
@@ -3317,6 +3431,69 @@ const finalizePaidVendorPayment = async (payment) => {
   return { marketplaceBid: bid };
 };
 
+const resolveAwardSelections = (event, selectedBids, requestedSelections = []) => {
+  const requestedByBidId = new Map(
+    (requestedSelections || []).map((selection) => [
+      selection.bid_id,
+      String(selection.award_coverage || '').toUpperCase(),
+    ])
+  );
+  return selectedBids.map((bid) => {
+    const awardCoverage = requestedByBidId.get(bid.bid_id) || bid.guest_coverage;
+    const offeredCoverage = bid.guest_coverage || 'REGULAR';
+    const allowedAwards = offeredCoverage === 'BOTH'
+      ? getAllowedBidCoverages(event)
+      : [offeredCoverage];
+    if (!allowedAwards.includes(awardCoverage)) {
+      throw buildError(
+        `Vendor ${bid.bid_id} did not offer ${awardCoverage} services.`,
+        400
+      );
+    }
+    return { bid_id: bid.bid_id, award_coverage: awardCoverage };
+  });
+};
+
+const applyAwardSelections = async (event, selectedBids, awardSelections) => {
+  const coverageByBidId = new Map(
+    awardSelections.map((selection) => [selection.bid_id, selection.award_coverage])
+  );
+  for (const bid of selectedBids) {
+    const awardCoverage = coverageByBidId.get(bid.bid_id) || bid.guest_coverage;
+    const combinedFeeWaived =
+      awardCoverage === 'BOTH' && event.waive_vendor_fee_for_combined_award === true;
+    bid.awarded_coverage = awardCoverage;
+    bid.combined_vendor_fee_waived = combinedFeeWaived;
+    bid.payment_status = combinedFeeWaived ? 'NOT_REQUIRED' :
+      awardCoverage === 'BOTH' && event.ga_food_sales_allowed ? 'PENDING' : 'NOT_REQUIRED';
+    bid.bid_status = 'AWARDED';
+
+    if (awardCoverage === 'BOTH' && event.ga_food_sales_allowed) {
+      let linkedApplication = await MarketplaceApplicationService.getByData(
+        { source_bid_id: bid.bid_id },
+        { singleResult: true }
+      );
+      if (!linkedApplication) {
+        linkedApplication = await MarketplaceApplicationService.create({
+          event_id: event.event_id,
+          vendor_user_id: bid.vendor_user_id,
+          food_truck_id: bid.food_truck_id,
+          submission_round: bid.submission_round || event.current_submission_round || 1,
+          source_bid_id: bid.bid_id,
+          application_status: combinedFeeWaived ? 'CONFIRMED' : 'PAYMENT_DUE',
+          payment_status: combinedFeeWaived ? 'NOT_REQUIRED' : 'PENDING',
+          payment_due_at: combinedFeeWaived
+            ? null
+            : event.vendor_fee_payment_deadline || null,
+          submitted_at: bid.submitted_at || new Date(),
+        });
+      }
+      bid.linked_application_id = linkedApplication.application_id;
+    }
+    await bid.save();
+  }
+};
+
 const completeSignedAward = async (payment) => {
   if (payment.payment_type !== 'COORDINATOR_AWARD_FEE') {
     return null;
@@ -3333,10 +3510,17 @@ const completeSignedAward = async (payment) => {
   );
   const alreadyAwarded = existingEvent?.status === 'AWARDED';
 
-  await MarketplaceBidService.getModel().updateMany(
-    { event_id: payment.event_id, bid_id: { $in: selectedBidIds }, archived_at: null },
-    { $set: { bid_status: 'AWARDED' } }
+  const selectedBids = await MarketplaceBidService.getByData({
+    event_id: payment.event_id,
+    bid_id: { $in: selectedBidIds },
+    archived_at: null,
+  });
+  const awardSelections = resolveAwardSelections(
+    existingEvent,
+    selectedBids,
+    payment.award_selections || []
   );
+  await applyAwardSelections(existingEvent, selectedBids, awardSelections);
 
   await MarketplaceBidService.getModel().updateMany(
     { event_id: payment.event_id, bid_id: { $nin: selectedBidIds }, archived_at: null },
@@ -3622,6 +3806,33 @@ exports.updateEvent = async (req, res, next) => {
     const event = await getOwnedEvent(req.params.eventId, req.user._id);
     if (['AWARDED', 'CANCELLED'].includes(event.status)) {
       throw buildError('Awarded or cancelled events cannot be edited.', 400);
+    }
+    if (req.body.number_of_vendors_needed != null) {
+      const [filledBids, filledApplications] = await Promise.all([
+        MarketplaceBidService.getByData(
+          { event_id: event.event_id, bid_status: 'AWARDED', archived_at: null },
+          { lean: true }
+        ),
+        MarketplaceApplicationService.getByData(
+          {
+            event_id: event.event_id,
+            application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
+            archived_at: null,
+          },
+          { lean: true }
+        ),
+      ]);
+      const filledVendorCount = new Set(
+        [...filledBids, ...filledApplications]
+          .map((record) => String(record.vendor_user_id || ''))
+          .filter(Boolean)
+      ).size;
+      if (Number(req.body.number_of_vendors_needed) < filledVendorCount) {
+        throw buildError(
+          `By decreasing vendors, you will be required to refund vendor fees. Please contact support to refund vendors that are no longer needed for the event ${MARKETPLACE_PHONE_NUMBER}. The vendor count cannot be lower than ${filledVendorCount} filled slot(s).`,
+          409
+        );
+      }
     }
     const updatePayload = preserveSavedMarketplaceLocationFields(
       {
@@ -4444,17 +4655,22 @@ exports.submitBid = async (req, res, next) => {
       throw buildError('Submit the revised bid to update your response.', 400);
     }
 
-    const cateredVipEnabled = event.catered_vip_section_enabled === true;
-    const guestCoverage = cateredVipEnabled
-      ? String(req.body.guest_coverage || 'REGULAR').toUpperCase()
-      : 'REGULAR';
-    if (!['REGULAR', 'VIP', 'BOTH'].includes(guestCoverage)) {
-      throw buildError('Select Regular Guests, VIP Guests, or Both.', 400);
+    const allowedCoverages = getAllowedBidCoverages(event);
+    const guestCoverage = String(
+      req.body.guest_coverage || allowedCoverages[0]
+    ).toUpperCase();
+    if (!allowedCoverages.includes(guestCoverage)) {
+      throw buildError(
+        `This event only accepts: ${allowedCoverages.join(', ')}.`,
+        400
+      );
     }
     const regularGuestAmount = roundMoney(req.body.regular_guest_amount || 0);
     const vipCateringAmount = roundMoney(req.body.vip_catering_amount || 0);
     const normalizedFullBidAmount = guestCoverage === 'BOTH'
-      ? roundMoney(regularGuestAmount + vipCateringAmount)
+      ? event.fully_catered_event
+        ? roundMoney(regularGuestAmount + vipCateringAmount)
+        : vipCateringAmount
       : roundMoney(req.body.full_bid_amount || 0);
 
     if (requestedStatus !== 'DRAFT') {
@@ -4463,10 +4679,13 @@ exports.submitBid = async (req, res, next) => {
       });
       if (
         guestCoverage === 'BOTH' &&
-        (regularGuestAmount <= 0 || vipCateringAmount <= 0)
+        ((event.fully_catered_event && regularGuestAmount <= 0) ||
+          vipCateringAmount <= 0)
       ) {
         throw buildError(
-          'Enter separate Regular Guests and VIP Catering amounts when applying for Both.',
+          event.fully_catered_event
+            ? 'Enter separate Regular Guests and VIP Catering amounts when offering Both.'
+            : 'Enter the VIP Catering amount for a combined VIP Catering and GA Sales offer.',
           400
         );
       }
@@ -4496,7 +4715,9 @@ exports.submitBid = async (req, res, next) => {
       ...req.body,
       guest_coverage: guestCoverage,
       regular_guest_amount:
-        guestCoverage === 'BOTH' ? regularGuestAmount : null,
+        guestCoverage === 'BOTH' && event.fully_catered_event
+          ? regularGuestAmount
+          : null,
       vip_catering_amount:
         guestCoverage === 'BOTH' ? vipCateringAmount : null,
       full_bid_amount: normalizedFullBidAmount,
@@ -5564,9 +5785,14 @@ exports.awardBids = async (req, res, next) => {
     if (selectedBids.length !== selectedBidIds.length) {
       throw buildError('One or more selected bids are invalid', 400);
     }
+    const awardSelections = resolveAwardSelections(
+      event,
+      selectedBids,
+      req.body.award_selections || []
+    );
     const minimumAwards = Math.max(
       1,
-      vendorAwardLimit - (selectedBids.some((bid) => bid.guest_coverage === 'BOTH') ? 1 : 0)
+      vendorAwardLimit - (awardSelections.some((item) => item.award_coverage === 'BOTH') ? 1 : 0)
     );
     if (selectedBids.length < minimumAwards) {
       throw buildError(
@@ -5594,6 +5820,7 @@ exports.awardBids = async (req, res, next) => {
         marketplacePayment = await MarketplacePaymentService.create({
           event_id: event.event_id,
           selected_bid_ids: selectedBidIds,
+          award_selections: awardSelections,
           payer_user_id: req.user._id,
           payer_type: 'CUSTOMER',
           payment_type: 'COORDINATOR_AWARD_FEE',
@@ -5606,6 +5833,7 @@ exports.awardBids = async (req, res, next) => {
         await createPaymentAudit(marketplacePayment, req, 'CREATE');
       } else if (marketplacePayment.payment_status === 'PENDING') {
         marketplacePayment.selected_bid_ids = selectedBidIds;
+        marketplacePayment.award_selections = awardSelections;
         marketplacePayment.base_amount = baseAmount;
         marketplacePayment.fee_amount = feeAmount;
         marketplacePayment.total_amount = feeAmount;
@@ -5636,10 +5864,7 @@ exports.awardBids = async (req, res, next) => {
       );
     }
 
-    await MarketplaceBidService.getModel().updateMany(
-      { event_id: req.params.eventId, bid_id: { $in: selectedBidIds }, archived_at: null },
-      { $set: { bid_status: 'AWARDED' } }
-    );
+    await applyAwardSelections(event, selectedBids, awardSelections);
 
     await MarketplaceBidService.getModel().updateMany(
       { event_id: req.params.eventId, bid_id: { $nin: selectedBidIds }, archived_at: null },
@@ -5667,6 +5892,78 @@ exports.awardBids = async (req, res, next) => {
     return res.data(
       { awarded_bid_ids: selectedBidIds, marketplaceEvent: event },
       'Marketplace bids awarded'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.acceptApplication = async (req, res, next) => {
+  try {
+    const event = await getOwnedEvent(req.params.eventId, req.user._id);
+    const application = await MarketplaceApplicationService.getByData(
+      {
+        event_id: event.event_id,
+        application_id: req.params.applicationId,
+        application_status: { $in: ['SUBMITTED', 'UNDER_REVIEW'] },
+        archived_at: null,
+      },
+      { singleResult: true }
+    );
+    if (!application) {
+      throw buildError('This vendor application is no longer available.', 404);
+    }
+
+    const acceptedApplications = await MarketplaceApplicationService.getByData(
+      {
+        event_id: event.event_id,
+        application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
+        archived_at: null,
+      },
+      { lean: true }
+    );
+    const acceptedVendorIds = new Set(
+      acceptedApplications.map((item) => String(item.vendor_user_id))
+    );
+    if (
+      !acceptedVendorIds.has(String(application.vendor_user_id)) &&
+      acceptedVendorIds.size >= Math.max(1, Number(event.number_of_vendors_needed || 1))
+    ) {
+      throw buildError('All available vendor GA slots have already been filled.', 409);
+    }
+
+    const vendorFeeRequired = roundMoney(event.vendor_fee || 0) > 0;
+    if (vendorFeeRequired && !event.vendor_fee_payment_deadline) {
+      throw buildError(
+        'Set the Last Date to Accept Payments on the event before accepting vendors.',
+        409
+      );
+    }
+    application.application_status = vendorFeeRequired ? 'PAYMENT_DUE' : 'CONFIRMED';
+    application.payment_status = vendorFeeRequired ? 'PENDING' : 'NOT_REQUIRED';
+    application.payment_due_at = vendorFeeRequired
+      ? event.vendor_fee_payment_deadline || null
+      : null;
+    await application.save();
+
+    await MarketplaceCommunications.sendMarketplaceCommunication({
+      userId: application.vendor_user_id,
+      title: vendorFeeRequired ? 'Vendor application accepted — payment due' : 'Vendor application accepted',
+      body: vendorFeeRequired
+        ? `Your application for ${event.event_name || 'the event'} was accepted. Pay the vendor fee by ${new Date(application.payment_due_at).toLocaleDateString('en-US')}.`
+        : `Your application for ${event.event_name || 'the event'} was accepted.`,
+      data: {
+        notificationType: 'MARKETPLACE_APPLICATION_ACCEPTED',
+        eventId: event.event_id,
+        applicationId: application.application_id,
+      },
+      channels: ['push', 'email'],
+      metadata: { eventId: event.event_id, applicationId: application.application_id },
+    });
+
+    return res.data(
+      { marketplaceApplication: application },
+      vendorFeeRequired ? 'Vendor application accepted; payment is due' : 'Vendor application accepted'
     );
   } catch (e) {
     return next(e);
@@ -5713,9 +6010,14 @@ exports.adminAwardBids = async (req, res, next) => {
     if (selectedBids.length !== selectedBidIds.length) {
       throw buildError('One or more selected bids are invalid', 400);
     }
+    const awardSelections = resolveAwardSelections(
+      event,
+      selectedBids,
+      req.body.award_selections || []
+    );
     const minimumAwards = Math.max(
       1,
-      vendorAwardLimit - (selectedBids.some((bid) => bid.guest_coverage === 'BOTH') ? 1 : 0)
+      vendorAwardLimit - (awardSelections.some((item) => item.award_coverage === 'BOTH') ? 1 : 0)
     );
     if (selectedBids.length < minimumAwards) {
       throw buildError(
@@ -5744,6 +6046,7 @@ exports.adminAwardBids = async (req, res, next) => {
         marketplacePayment = await MarketplacePaymentService.create({
           event_id: event.event_id,
           selected_bid_ids: selectedBidIds,
+          award_selections: awardSelections,
           payer_user_id: coordinatorUserId,
           payer_type: 'CUSTOMER',
           payment_type: 'COORDINATOR_AWARD_FEE',
@@ -5762,6 +6065,7 @@ exports.adminAwardBids = async (req, res, next) => {
         );
       } else if (marketplacePayment.payment_status === 'PENDING') {
         marketplacePayment.selected_bid_ids = selectedBidIds;
+        marketplacePayment.award_selections = awardSelections;
         marketplacePayment.base_amount = baseAmount;
         marketplacePayment.fee_amount = feeAmount;
         marketplacePayment.total_amount = feeAmount;
@@ -5792,10 +6096,7 @@ exports.adminAwardBids = async (req, res, next) => {
       );
     }
 
-    await MarketplaceBidService.getModel().updateMany(
-      { event_id: req.params.eventId, bid_id: { $in: selectedBidIds }, archived_at: null },
-      { $set: { bid_status: 'AWARDED' } }
-    );
+    await applyAwardSelections(event, selectedBids, awardSelections);
 
     await MarketplaceBidService.getModel().updateMany(
       { event_id: req.params.eventId, bid_id: { $nin: selectedBidIds }, archived_at: null },
@@ -7183,6 +7484,16 @@ exports.createApplicationVendorFeePayment = async (req, res, next) => {
     if (!event || roundMoney(event.vendor_fee || 0) <= 0) {
       throw buildError('Vendor fee payment is not available for this event', 400);
     }
+    if (
+      application.payment_due_at &&
+      new Date(application.payment_due_at) < new Date()
+    ) {
+      await notifyMissedVendorFeePayments();
+      throw buildError(
+        `The vendor payment deadline has passed. Contact the coordinator or RTC support at ${MARKETPLACE_PHONE_NUMBER}.`,
+        410
+      );
+    }
 
     if (!['ACCEPTED', 'PAYMENT_DUE'].includes(application.application_status)) {
       throw buildError(
@@ -7238,6 +7549,13 @@ exports.createApplicationVendorFeePayment = async (req, res, next) => {
       application.application_status = 'PAYMENT_DUE';
     }
     await application.save();
+    if (application.source_bid_id) {
+      await MarketplaceBidService.update(
+        { bid_id: application.source_bid_id },
+        { payment_id: marketplacePayment.payment_id, payment_status: 'PENDING' },
+        { getNew: false }
+      );
+    }
 
     await createPaymentAudit(marketplacePayment, req, 'CREATE');
 

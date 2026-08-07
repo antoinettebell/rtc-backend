@@ -374,6 +374,23 @@ const mSchema = mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    fully_catered_event: {
+      type: Boolean,
+      default: false,
+    },
+    ga_food_sales_allowed: {
+      type: Boolean,
+      default: false,
+    },
+    waive_vendor_fee_for_combined_award: {
+      type: Boolean,
+      default: false,
+    },
+    vendor_fee_payment_deadline: {
+      type: Date,
+      default: null,
+      index: true,
+    },
     separate_vip_vendor_required: {
       type: Boolean,
       default: false,

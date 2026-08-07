@@ -328,6 +328,13 @@ router.post(
 );
 
 router.post(
+  '/events/:eventId/applications/:applicationId/accept',
+  allowedTo(['CUSTOMER']),
+  validate(Validation.acceptApplication),
+  Controller.acceptApplication
+);
+
+router.post(
   '/events/:eventId/final-payment',
   allowedTo(['CUSTOMER', 'VENDOR']),
   validate(Validation.createFinalEventPayment),

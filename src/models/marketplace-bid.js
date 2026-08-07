@@ -51,6 +51,20 @@ const mSchema = mongoose.Schema(
       enum: ['REGULAR', 'VIP', 'BOTH'],
       default: 'REGULAR',
     },
+    awarded_coverage: {
+      type: String,
+      enum: ['REGULAR', 'VIP', 'BOTH', null],
+      default: null,
+    },
+    combined_vendor_fee_waived: {
+      type: Boolean,
+      default: false,
+    },
+    linked_application_id: {
+      type: String,
+      default: null,
+      index: true,
+    },
     regular_guest_amount: {
       type: Number,
       default: null,

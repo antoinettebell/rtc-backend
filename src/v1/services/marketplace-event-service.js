@@ -131,11 +131,43 @@ class MarketplaceEventService extends BaseService {
       }));
     }
 
+    const activeAwardedBids = await MarketplaceBidModel.find({
+      event_id,
+      bid_status: 'AWARDED',
+      archived_at: null,
+    }).lean();
+    const activeAwardedApplications = await MarketplaceApplicationModel.find({
+      event_id,
+      application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
+      archived_at: null,
+    }).lean();
+    const vipVendorsSelected = activeAwardedBids.filter((bid) =>
+      ['VIP', 'BOTH'].includes(bid.awarded_coverage || bid.guest_coverage)
+    ).length;
+    const vendorGaSlotsFilled = activeAwardedApplications.length +
+      activeAwardedBids.filter((bid) =>
+        (bid.awarded_coverage || bid.guest_coverage) === 'REGULAR'
+      ).length;
+    const uniqueVendorIds = new Set(
+      [...activeAwardedBids, ...activeAwardedApplications]
+        .map((record) => String(record.vendor_user_id || ''))
+        .filter(Boolean)
+    );
+
     return {
       ...event,
       images,
       awarded_bids,
       awarded_applications,
+      marketplace_metrics: {
+        views: Number(event.event_impression_count || 0),
+        ticket_checkout_clicks: Number(event.ticket_click_count || 0),
+        tickets_sold:
+          Number(event.ga_tickets_sold || 0) + Number(event.vip_tickets_sold || 0),
+        vip_vendors_selected: vipVendorsSelected,
+        vendor_ga_slots_filled: vendorGaSlotsFilled,
+        unique_vendors_selected: uniqueVendorIds.size,
+      },
     };
   }
 

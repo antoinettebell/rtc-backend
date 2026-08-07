@@ -177,6 +177,20 @@ const mSchema = mongoose.Schema(
       type: Date,
       default: null,
     },
+    payment_due_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    payment_missed_notified_at: {
+      type: Date,
+      default: null,
+    },
+    source_bid_id: {
+      type: String,
+      default: null,
+      index: true,
+    },
     archived_at: {
       type: Date,
       default: null,

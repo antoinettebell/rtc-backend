@@ -86,6 +86,10 @@ const marketplaceEventBody = {
   free_food_provider: Joi.string().trim().allow(null, ''),
   vendors_required_to_giveaway_food: Joi.boolean().allow(null),
   catered_vip_section_enabled: Joi.boolean().default(false),
+  fully_catered_event: Joi.boolean().default(false),
+  ga_food_sales_allowed: Joi.boolean().allow(null),
+  waive_vendor_fee_for_combined_award: Joi.boolean().allow(null),
+  vendor_fee_payment_deadline: Joi.date().allow(null, ''),
   separate_vip_vendor_required: Joi.boolean().default(false),
   vip_guest_count: Joi.number().integer().min(0).allow(null, ''),
   cuisine_preferences: Joi.array().items(Joi.string()).default([]),
@@ -237,7 +241,15 @@ module.exports = {
   awardBids: {
     body: Joi.object({
       bid_ids: Joi.array().items(Joi.string().required()).min(1).required(),
+      award_selections: Joi.array().items(Joi.object({
+        bid_id: Joi.string().required(),
+        award_coverage: Joi.string().valid('REGULAR', 'VIP', 'BOTH').required(),
+      })).default([]),
     }),
+  },
+
+  acceptApplication: {
+    body: Joi.object({}),
   },
 
   createFinalEventPayment: {

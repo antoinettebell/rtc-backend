@@ -27,6 +27,17 @@ const mSchema = mongoose.Schema(
       type: [String],
       default: [],
     },
+    award_selections: {
+      type: [{
+        bid_id: { type: String, required: true },
+        award_coverage: {
+          type: String,
+          enum: ['REGULAR', 'VIP', 'BOTH'],
+          required: true,
+        },
+      }],
+      default: [],
+    },
     payer_user_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'users',
