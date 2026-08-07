@@ -10,6 +10,7 @@ const rows = [
     name: 'Lunch Combo',
     itemType: 'COMBO',
     comboItemNames: 'Burger|Fries',
+    comboItemQuantities: '2|1',
   },
   {
     _rowNumber: 3,
@@ -64,6 +65,12 @@ assert.deepStrictEqual(sides.comboSideOptionCosts, [
   { name: 'Fried Okra', hasCost: true, cost: 2 },
 ]);
 
+assert.deepStrictEqual(
+  menuCsvImportService.parseComboItemQuantities({ _rowNumber: 6 }, 2),
+  [1, 1],
+  'older CSV files without combo quantities must remain compatible'
+);
+
 const labeledFlavors = menuCsvImportService.parseFlavors({
   _rowNumber: 7,
   hasFlavors: 'TRUE',
@@ -98,9 +105,20 @@ assert.equal(legacyFlavors.flavorLabel, 'Flavor');
   );
 
   assert.equal(comboItems[1].menuItem.toString(), individualId.toString());
+  assert.equal(comboItems[0].qty, 2);
+  assert.equal(comboItems[1].qty, 1);
   assert.equal(bogoItems[0].itemId.toString(), individualId.toString());
   assert.equal(bogoItems[0].qty, 1);
   assert.equal(bogoItems[0].isSameItem, false);
+
+  assert.throws(
+    () =>
+      menuCsvImportService.parseComboItemQuantities(
+        { _rowNumber: 9, comboItemQuantities: '1|1.5' },
+        2
+      ),
+    /whole numbers between 1 and 99/
+  );
 
   const sameItemReward = await menuCsvImportService.resolveBogoItems(
     {

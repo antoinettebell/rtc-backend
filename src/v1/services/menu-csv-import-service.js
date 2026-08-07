@@ -377,9 +377,10 @@ class MenuCsvImportService {
     );
 
     if (comboItemIds.length > 0) {
-      return comboItemIds.map((menuItem) => ({
+      const quantities = this.parseComboItemQuantities(row, comboItemIds.length);
+      return comboItemIds.map((menuItem, index) => ({
         menuItem,
-        qty: 1,
+        qty: quantities[index],
       }));
     }
 
@@ -388,6 +389,25 @@ class MenuCsvImportService {
 
   parseComboItemNames(row) {
     return this.parseStringArray(row.comboItemNames);
+  }
+
+  parseComboItemQuantities(row, itemCount) {
+    const rawQuantities = String(row.comboItemQuantities || '')
+      .split('|')
+      .map((value) => value.trim());
+
+    return Array.from({ length: itemCount }, (_, index) => {
+      const rawValue = rawQuantities[index];
+      const quantity = rawValue ? Number(rawValue) : 1;
+
+      if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
+        throw new Error(
+          `Row ${row._rowNumber}: comboItemQuantities values must be whole numbers between 1 and 99.`
+        );
+      }
+
+      return quantity;
+    });
   }
 
   parseBogoItemNames(row) {
@@ -479,9 +499,10 @@ class MenuCsvImportService {
     }
 
     const comboItemNames = this.parseComboItemNames(row);
+    const quantities = this.parseComboItemQuantities(row, comboItemNames.length);
     const subItems = [];
 
-    for (const comboItemName of comboItemNames) {
+    for (const [index, comboItemName] of comboItemNames.entries()) {
       const normalizedName = comboItemName.toLowerCase();
       let menuItemId = menuItemNameMap.get(normalizedName);
 
@@ -507,7 +528,7 @@ class MenuCsvImportService {
 
       subItems.push({
         menuItem: menuItemId,
-        qty: 1,
+        qty: quantities[index],
       });
     }
 
