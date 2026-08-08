@@ -88,7 +88,60 @@ const legacyFlavors = menuCsvImportService.parseFlavors({
 });
 assert.equal(legacyFlavors.flavorLabel, 'Flavor');
 
+assert.equal(
+  menuCsvImportService.escapeRegex('Chicken (Hot) + Rice'),
+  'Chicken \\(Hot\\) \\+ Rice',
+  'reference names must be treated as literal text'
+);
+
 (async () => {
+  const referenceId = new Types.ObjectId();
+  const fakeReferenceModel = {
+    find(query) {
+      assert.equal(query.deletedAt, null);
+      assert(query.name.test('sIdEs'));
+      return {
+        select: async () => [{ _id: referenceId, name: 'Sides' }],
+      };
+    },
+  };
+  const resolvedReferenceId = await menuCsvImportService.resolveReferenceName(
+    fakeReferenceModel,
+    'Sides',
+    'globalCategoryName',
+    12
+  );
+  assert.equal(resolvedReferenceId.toString(), referenceId.toString());
+
+  await assert.rejects(
+    () =>
+      menuCsvImportService.resolveReferenceName(
+        { find: () => ({ select: async () => [] }) },
+        'Unknown Diet',
+        'dietNames',
+        13
+      ),
+    /Row 13: dietNames "Unknown Diet" was not found/
+  );
+
+  await assert.rejects(
+    () =>
+      menuCsvImportService.resolveReferenceName(
+        {
+          find: () => ({
+            select: async () => [
+              { _id: new Types.ObjectId(), name: 'Vegan' },
+              { _id: new Types.ObjectId(), name: 'vegan' },
+            ],
+          }),
+        },
+        'Vegan',
+        'dietNames',
+        14
+      ),
+    /matches multiple records/
+  );
+
   const nameMap = new Map([
     ['fries', individualId],
     ['burger', burgerId],

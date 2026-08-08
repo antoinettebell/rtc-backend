@@ -8,6 +8,8 @@ const {
   UserModel,
   FoodTruckModel,
   categoriesModel,
+  MeatModel,
+  DietModel,
 } = require('../../models');
 const { addObjectFromBuffer } = require('../../helper/aws');
 const {
@@ -217,6 +219,30 @@ class MenuCsvImportService {
       .split('|')
       .map((item) => item.trim())
       .filter(Boolean);
+  }
+
+  escapeRegex(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  async resolveReferenceName(Model, value, fieldName, rowNumber) {
+    const name = this.parseRequiredString(value, fieldName, rowNumber);
+    const matches = await Model.find({
+      name: new RegExp(`^${this.escapeRegex(name)}$`, 'i'),
+      deletedAt: null,
+    }).select('_id name');
+
+    if (matches.length === 0) {
+      throw new Error(`Row ${rowNumber}: ${fieldName} "${name}" was not found.`);
+    }
+
+    if (matches.length > 1) {
+      throw new Error(
+        `Row ${rowNumber}: ${fieldName} "${name}" matches multiple records. Contact support to remove the duplicate name.`
+      );
+    }
+
+    return matches[0]._id;
   }
 
   parseOptionCostMap(value, fieldName, rowNumber) {
@@ -752,7 +778,7 @@ class MenuCsvImportService {
     };
   }
 
-  parseDietObjectIds(row) {
+  async resolveDietObjectIds(row) {
     const indexedDietKeys = Object.keys(row)
       .filter((key) => /^diet\[\d+\]$/i.test(key))
       .sort(
@@ -770,7 +796,38 @@ class MenuCsvImportService {
       );
     }
 
+    const dietNames = this.parseStringArray(row.dietNames);
+    if (dietNames.length > 0) {
+      return Promise.all(
+        dietNames.map((name) =>
+          this.resolveReferenceName(
+            DietModel,
+            name,
+            'dietNames',
+            row._rowNumber
+          )
+        )
+      );
+    }
+
     return this.parseObjectIdArray(row.dietIds, 'dietIds', row._rowNumber);
+  }
+
+  async resolveMeatId(row) {
+    if (row.meatId) {
+      return this.parseOptionalObjectId(row.meatId, 'meatId', row._rowNumber);
+    }
+
+    if (row.meatName) {
+      return this.resolveReferenceName(
+        MeatModel,
+        row.meatName,
+        'meatName',
+        row._rowNumber
+      );
+    }
+
+    return null;
   }
 
   resolveVendorUserId(row, vendorUserId) {
@@ -802,6 +859,16 @@ class MenuCsvImportService {
 
   async resolveGlobalCategoryId(row) {
     const categorySourceValue = this.getGlobalCategorySourceValue(row);
+
+    if (!categorySourceValue && row.globalCategoryName) {
+      return this.resolveReferenceName(
+        categoriesModel,
+        row.globalCategoryName,
+        'globalCategoryName',
+        row._rowNumber
+      );
+    }
+
     const categoryObjectId = this.parseRequiredObjectId(
       categorySourceValue,
       row.globalCategoryId ? 'globalCategoryId' : 'categoryId',
@@ -856,7 +923,8 @@ class MenuCsvImportService {
     userId,
     imgUrls,
     subItem = [],
-    bogoItems = []
+    bogoItems = [],
+    referenceIds = {}
   ) {
     const flavorSettings = this.parseFlavors(row);
     const toppingSettings = this.parseToppings(row);
@@ -894,7 +962,7 @@ class MenuCsvImportService {
       itemType: row.itemType || 'INDIVIDUAL',
       meatWellness: row.meatWellness || 'NA',
       categoryId,
-      meatId: this.parseOptionalObjectId(row.meatId, 'meatId', row._rowNumber),
+      meatId: referenceIds.meatId || null,
       preparationTime: this.parseNumber(
         row.preparationTime,
         0,
@@ -908,7 +976,7 @@ class MenuCsvImportService {
       ...comboSideSettings,
       newDish: this.parseBoolean(row.newDish, false),
       popularDish: this.parseBoolean(row.popularDish, false),
-      diet: this.parseDietObjectIds(row),
+      diet: referenceIds.dietIds || [],
       subItem,
       userId,
       deletedAt: null,
@@ -1071,13 +1139,18 @@ class MenuCsvImportService {
           rowUserId,
           menuItemNameMap
         );
+        const referenceIds = {
+          meatId: await this.resolveMeatId(row),
+          dietIds: await this.resolveDietObjectIds(row),
+        };
         const menuItem = this.buildMenuItem(
           row,
           categoryId,
           rowUserId,
           imgUrls,
           subItem,
-          bogoItems
+          bogoItems,
+          referenceIds
         );
         if (menuItem.newDish && !canHighlightNewDish) {
           menuItem.newDish = false;
