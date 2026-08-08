@@ -632,6 +632,12 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   if (alcoholRequired && !permitsRequired.includes('Alcohol')) {
     throw buildError('Alcohol Permit is required when Alcohol Service is selected.', 400);
   }
+  if (paymentResponsibility === 'BOTH' && !cateredVipSectionEnabled) {
+    throw buildError(
+      'Both is only available when the event includes a catered VIP section.',
+      400
+    );
+  }
   if (paymentResponsibility === 'COORDINATOR' && budgetedAmount <= 0) {
     throw buildError('Budget amount is required when the event coordinator pays vendors.', 400);
   }
