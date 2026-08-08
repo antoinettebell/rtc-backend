@@ -26,6 +26,7 @@ const IGNORE_ROUTES = [
   '/public/food-truck-filter',
   '/public/food-truck-filter-new',
   '/public/food-truck/',
+  '/public/near-me',
   '/public/coupon-validate',
   '/public/global-search',
 ];
