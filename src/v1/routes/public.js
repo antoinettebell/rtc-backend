@@ -187,7 +187,6 @@ router.post('/marketplace/docusign/webhook', MarketplaceController.docusignWebho
 /** [GET] /api/v1/public/marketplace/events/:eventId */
 router.get(
   '/marketplace/events/:eventId',
-  authenticate,
   MarketplaceController.getPublicOpenEvent
 );
 
