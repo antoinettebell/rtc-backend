@@ -43,6 +43,7 @@ const {
   isPublicMarketplaceEventEligible,
   sanitizePublicMarketplaceEvent,
 } = require('../../helper/public-marketplace-event-helper');
+const { resolveMarketplaceTaxExemptionUpdate } = require('../../helper/marketplace-tax-exemption-helper');
 const {
   isMarketplacePaymentMethodAllowed,
 } = require('../../helper/marketplace-payment-policy-helper');
@@ -491,6 +492,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   const totalEventDurationMinutes = hasLegacyDurationHours
     ? eventDurationHours * 60 + eventDurationMinutes
     : eventDurationMinutes;
+  const taxExemptionUpdate = resolveMarketplaceTaxExemptionUpdate(body, existingEvent);
 
   const normalized = normalizeMarketplaceEventLocation({
     ...body,
@@ -523,16 +525,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     vendor_fee_payment_deadline: body.vendor_fee_payment_deadline || null,
     separate_vip_vendor_required: separateVipVendorRequired,
     vip_guest_count: vipGuestCount,
-	    tax_exemption_status:
-      body.charitable_event || body.religious_organization
-        ? existingEvent?.tax_exemption_status === 'APPROVED'
-          ? 'APPROVED'
-          : 'PENDING'
-        : 'NOT_REQUESTED',
-	    tax_exemption_entity_use_code:
-      existingEvent?.tax_exemption_status === 'APPROVED'
-        ? existingEvent.tax_exemption_entity_use_code
-        : null,
+    ...taxExemptionUpdate,
 		    draft_expires_at:
 	      isDraft && !existingEvent?.draft_expires_at
         ? new Date(Date.now() + DRAFT_TTL_DAYS * 24 * 60 * 60 * 1000)

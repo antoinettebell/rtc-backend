@@ -39,4 +39,20 @@ const winterTiming = getMarketplaceEventTiming({
 });
 assert.strictEqual(winterTiming.start_at.toISOString(), '2026-12-04T23:30:00.000Z');
 
+const midnightTiming = getMarketplaceEventTiming({
+  ...event,
+  event_time: '00:00',
+  event_duration_minutes: 60,
+});
+assert.strictEqual(midnightTiming.start_at.toISOString(), '2026-08-04T04:00:00.000Z');
+assert.strictEqual(midnightTiming.end_at.toISOString(), '2026-08-04T05:00:00.000Z');
+
+const crossMidnightTiming = getMarketplaceEventTiming({
+  ...event,
+  event_time: '23:30',
+  event_duration_minutes: 120,
+});
+assert.strictEqual(crossMidnightTiming.start_at.toISOString(), '2026-08-05T03:30:00.000Z');
+assert.strictEqual(crossMidnightTiming.end_at.toISOString(), '2026-08-05T05:30:00.000Z');
+
 console.log('marketplace event close helper tests passed');
