@@ -33,6 +33,10 @@ const DocuSignHelper = require('../../helper/docusign-helper');
 const {
   reconcileVendorAgreementEnvelope,
 } = require('../../helper/marketplace-vendor-agreement-reconciliation');
+const {
+  buildSignedAgreementAttachmentContext,
+  resolveMarketplaceAgreementVendorContext,
+} = require('../../helper/marketplace-agreement-vendor-context');
 const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
 const MailHelper = require('../../helper/mail-helper');
 const {
@@ -54,6 +58,7 @@ const {
 const { docusign } = require('../../config');
 const {
   EventVendorApplicationModel,
+  EventVendorProfileModel,
   OperationalNotificationModel,
 } = require('../../models');
 const {
@@ -1379,10 +1384,13 @@ const getAnnualAgreementExpiry = (signedAt = new Date()) => {
   return expiry;
 };
 
-const getValidVendorAgreement = async (vendorUserId) =>
+const getValidVendorAgreement = async (vendorUserId, eventVendorProfileId = null) =>
   MarketplaceVendorAgreementService.getByData(
     {
       vendor_user_id: vendorUserId,
+      ...(eventVendorProfileId
+        ? { event_vendor_profile_id: eventVendorProfileId }
+        : {}),
       status: 'SIGNED',
       expires_at: { $gt: new Date() },
       governance_template_id: docusign.governanceTemplateId,
@@ -5605,7 +5613,18 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
       throw buildError('Only vendors can sign marketplace agreements', 403);
     }
 
-    const foodTruck = await getVendorMarketplaceFoodTruck(req.user._id);
+    const { foodTruck, eventVendorProfile } =
+      await resolveMarketplaceAgreementVendorContext({
+        user: req.user,
+        findApprovedEventVendorProfile: (vendorUserId) =>
+          EventVendorProfileModel.findOne({
+            vendor_user_id: vendorUserId,
+            status: 'ACTIVE',
+            review_status: 'APPROVED',
+          }).lean(),
+        findFoodTruck: (vendorUserId) =>
+          getVendorMarketplaceFoodTruck(vendorUserId),
+      });
     const event = await MarketplaceEventService.getByData(
       { event_id: req.body.event_id },
       { singleResult: true }
@@ -5629,18 +5648,22 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
       String(req.body.force_new_agreement || '').toLowerCase() === 'true';
     const validAgreement = req.body.reconcile_only === true
       ? null
-      : await getValidVendorAgreement(req.user._id);
+      : await getValidVendorAgreement(
+          req.user._id,
+          eventVendorProfile?.profile_id || null
+        );
     if (validAgreement && !forceNewAgreement) {
-      await persistSignedAgreementAttachment({
-        status: 'SIGNED',
-        envelope_id: validAgreement.envelope_id,
-        event_id: event.event_id,
-        bid_id: bid?.bid_id || null,
-        application_id: application?.application_id || null,
-        vendor_user_id: req.user._id,
-        food_truck_id: foodTruck._id,
-        reuse_existing_signed_document: true,
-      });
+      await persistSignedAgreementAttachment(
+        buildSignedAgreementAttachmentContext({
+          agreement: validAgreement,
+          eventId: event.event_id,
+          bidId: bid?.bid_id || null,
+          applicationId: application?.application_id || null,
+          vendorUserId: req.user._id,
+          foodTruck,
+          reuseExistingSignedDocument: true,
+        })
+      );
 
       return res.data(
         {
@@ -5657,6 +5680,9 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
           {
             vendor_user_id: req.user._id,
             event_id: event.event_id,
+            ...(eventVendorProfile
+              ? { event_vendor_profile_id: eventVendorProfile.profile_id }
+              : {}),
             ...(bid ? { bid_id: bid.bid_id } : {}),
             ...(application ? { application_id: application.application_id } : {}),
             status: {
@@ -5741,6 +5767,7 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
         agreement = await MarketplaceVendorAgreementService.create({
           vendor_user_id: req.user._id,
           food_truck_id: foodTruck?._id || null,
+          event_vendor_profile_id: eventVendorProfile?.profile_id || null,
           event_id: event.event_id,
           bid_id: bid?.bid_id || null,
           application_id: application?.application_id || null,

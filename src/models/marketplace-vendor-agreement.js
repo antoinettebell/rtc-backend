@@ -20,6 +20,11 @@ const mSchema = mongoose.Schema(
       default: null,
       index: true,
     },
+    event_vendor_profile_id: {
+      type: String,
+      default: null,
+      index: true,
+    },
     event_id: {
       type: String,
       default: null,

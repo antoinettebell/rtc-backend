@@ -8,6 +8,7 @@ const {
   UserModel,
   MarketplacePaymentModel,
   MarketplaceVendorAgreementModel,
+  MarketplaceAttachmentModel,
 } = require('../../models');
 const { addObjectWithKey } = require('../../helper/aws');
 const { docusign } = require('../../config');
@@ -32,6 +33,9 @@ const {
 } = require('../../helper/event-vendor-profile-lifecycle');
 const { reconcileRepositoryPhotoCounters } = require('../../helper/event-vendor-photo-counter');
 const { enqueueObjectCleanup } = require('../../helper/event-vendor-photo-cleanup');
+const {
+  buildSignedAgreementAttachmentLink,
+} = require('../../helper/marketplace-agreement-vendor-context');
 
 const TYPES = ['MERCHANDISE', 'SERVICE', 'OTHER'];
 const error = (message, code = 400) => Object.assign(new Error(message), { code });
@@ -536,6 +540,7 @@ exports.submitApplication = async (req, res, next) => {
     if (electricityRequired && req.body.electricity_fee_acknowledged !== true) throw error('Acknowledge the electricity fee');
     const agreement = await MarketplaceVendorAgreementModel.findOne({
       vendor_user_id: req.user._id,
+      event_vendor_profile_id: profile.profile_id,
       status: 'SIGNED',
       expires_at: { $gt: new Date() },
       governance_template_id: docusign.governanceTemplateId,
@@ -581,6 +586,16 @@ exports.submitApplication = async (req, res, next) => {
       await MarketplaceVendorAgreementModel.updateOne(
         { agreement_id: agreement.agreement_id },
         { $set: { application_id: application.application_id } }
+      );
+      const attachmentLink = buildSignedAgreementAttachmentLink({
+        eventId: event.event_id,
+        vendorUserId: req.user._id,
+        envelopeId: agreement.envelope_id,
+        applicationId: application.application_id,
+      });
+      await MarketplaceAttachmentModel.updateMany(
+        attachmentLink.query,
+        attachmentLink.update
       );
     }
     await EventVendorPhotoModel.updateMany(
