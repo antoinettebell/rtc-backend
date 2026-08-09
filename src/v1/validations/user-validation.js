@@ -135,7 +135,12 @@ module.exports = {
 
   bankDetail: {
     body: Joi.object({
-      accountHolderName: Joi.string().required(),
+      accountHolderName: Joi.when('paymentMethod', {
+        is: Joi.valid('ACH', 'CHECK'),
+        then: Joi.string().trim().required(),
+        otherwise: Joi.string().trim().allow('', null).optional(),
+      }),
+      walletPaymentHandle: Joi.string().trim().allow('', null).optional(),
       paymentMethod: Joi.string()
         .valid('CASHAPP', 'PAYPAL', 'VENMO', 'ACH', 'CHECK')
         .required(),
@@ -165,13 +170,21 @@ module.exports = {
         otherwise: Joi.string().allow('').optional(),
       }),
       //new fileds
-      currency: Joi.string()
-        .uppercase()
-        .length(3)
-        .pattern(/^[A-Z]{3}$/)
-        .required(),
+      currency: Joi.when('paymentMethod', {
+        is: Joi.valid('CASHAPP', 'PAYPAL', 'VENMO'),
+        then: Joi.string()
+          .uppercase()
+          .length(3)
+          .pattern(/^[A-Z]{3}$/)
+          .required(),
+        otherwise: Joi.string().allow('', null).optional(),
+      }),
 
-      remittanceEmail: Joi.string().optional().lowercase().trim(),
+      remittanceEmail: Joi.when('paymentMethod', {
+        is: Joi.valid('CASHAPP', 'PAYPAL', 'VENMO'),
+        then: Joi.string().email().required().lowercase().trim(),
+        otherwise: Joi.string().allow('', null).optional().lowercase().trim(),
+      }),
 
       bankAddressLine1: Joi.when('paymentMethod', {
         is: Joi.valid('ACH', 'CHECK'),
@@ -183,34 +196,22 @@ module.exports = {
       bankState: Joi.when('paymentMethod', { is: Joi.valid('ACH', 'CHECK'), then: Joi.string().trim().required(), otherwise: Joi.string().allow('').optional() }),
       bankPostal: Joi.when('paymentMethod', { is: Joi.valid('ACH', 'CHECK'), then: Joi.string().trim().required(), otherwise: Joi.string().allow('').optional() }),
 
-      // swiftCode: Joi.when('currency', {
-      //   is: Joi.valid('USD'),
-      //   then: Joi.string().required(),
-      //   otherwise: Joi.string().optional().allow(null, ''),
-      // }),
-
-      // iban: Joi.when('currency', {
-      //   is: Joi.valid('USD'),
-      //   then: Joi.string().required(),
-      //   otherwise: Joi.string().optional().allow(null, ''),
-      // }),
-
-      // swiftCode: Joi.when('currency', {
-      //   is: Joi.valid('USD'),
-      //   then: Joi.string().optional().allow(null, ''),
-      //   otherwise: Joi.string().required().messages({
-      //     'any.required': 'Swift Code is required when currency is not USD',
-      //   }),
-      // }),
-
-      // iban: Joi.when('currency', {
-      //   is: Joi.valid('USD'),
-      //   then: Joi.string().optional().allow(null, ''),
-      //   otherwise: Joi.string().required().messages({
-      //     'any.required': 'IBAN is required when currency is not USD',
-      //   }),
-      // }),
-
+      swiftCode: Joi.string().trim().uppercase()
+        .pattern(/^[A-Z0-9]{8}([A-Z0-9]{3})?$/)
+        .allow('', null).optional(),
+      iban: Joi.string().trim().uppercase()
+        .pattern(/^[A-Z0-9]{15,34}$/)
+        .allow('', null).optional(),
+    }).custom((value, helpers) => {
+      if (
+        ['CASHAPP', 'PAYPAL', 'VENMO'].includes(value.paymentMethod) &&
+        !String(value.walletPaymentHandle || value.accountHolderName || '').trim()
+      ) {
+        return helpers.message({
+          custom: 'Payment handle / account identifier is required',
+        });
+      }
+      return value;
     }),
   },
 

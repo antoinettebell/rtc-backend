@@ -2,6 +2,7 @@ const assert = require('assert');
 const {
   getEmployeeScheduleState,
   getEmployeeScheduleAssignment,
+  getEffectiveEmployeeAssignment,
 } = require('./employee-weekly-schedule');
 
 const monday = [{ day: 'mon', enabled: true, clock_in: '09:00', clock_out: '17:00' }];
@@ -31,6 +32,28 @@ assert.equal(
     .assignment.truck_unit_id,
   'truck-b'
 );
+
+const effective = getEffectiveEmployeeAssignment({
+  employee: {
+    assigned_location_id: 'legacy-location',
+    assigned_truck_unit_id: 'legacy-truck',
+    schedule_assignments: assignments,
+  },
+  now: new Date('2026-08-05T10:30:00Z'),
+  timeZone: 'UTC',
+});
+assert.equal(effective.locationId, assignments[1].location_id);
+assert.equal(effective.truckUnitId, assignments[1].truck_unit_id);
+
+const legacyEffective = getEffectiveEmployeeAssignment({
+  employee: {
+    assigned_location_id: 'legacy-location',
+    assigned_truck_unit_id: 'legacy-truck',
+    schedule_assignments: [],
+  },
+});
+assert.equal(legacyEffective.locationId, 'legacy-location');
+assert.equal(legacyEffective.truckUnitId, 'legacy-truck');
 assert.equal(
   getEmployeeScheduleAssignment(assignments, new Date('2026-08-06T10:30:00Z'), 'UTC'),
   null

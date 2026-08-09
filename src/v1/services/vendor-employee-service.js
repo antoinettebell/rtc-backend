@@ -12,6 +12,7 @@ const { maskTaxId } = require('../../helper/event-coordinator-profile');
 const {
   getEmployeeScheduleState,
   getEmployeeScheduleAssignment,
+  getEffectiveEmployeeAssignment,
 } = require('../../helper/employee-weekly-schedule');
 const {
   assertVendorPlanCapability,
@@ -716,6 +717,11 @@ class VendorEmployeeService extends BaseService {
     }
 
     const hasCardSchedule = employee.schedule_assignments?.length > 0;
+    const effectiveAssignment = getEffectiveEmployeeAssignment({
+      employee,
+      now: new Date(),
+      timeZone: foodTruck.schedule_time_zone || 'America/New_York',
+    });
     const scheduled = hasCardSchedule
       ? getEmployeeScheduleAssignment(
           employee.schedule_assignments,
@@ -723,18 +729,8 @@ class VendorEmployeeService extends BaseService {
           foodTruck.schedule_time_zone || 'America/New_York'
         )
       : null;
-    const fallbackAssignment = hasCardSchedule
-      ? employee.schedule_assignments.find(
-          (assignment) => assignment?.location_id && assignment?.truck_unit_id
-        )
-      : null;
-    const activeOrFallbackAssignment = scheduled?.assignment || fallbackAssignment;
-    const assignedLocationId = hasCardSchedule
-      ? activeOrFallbackAssignment?.location_id
-      : employee.assigned_location_id;
-    const assignedTruckUnitId = hasCardSchedule
-      ? activeOrFallbackAssignment?.truck_unit_id
-      : employee.assigned_truck_unit_id;
+    const assignedLocationId = effectiveAssignment.locationId;
+    const assignedTruckUnitId = effectiveAssignment.truckUnitId;
     const assignedLocation = this.getAssignedLocation(foodTruck, assignedLocationId);
     const assignedTruckUnit = assignedLocationId
       ? this.getAssignedTruckUnit(foodTruck, assignedTruckUnitId)

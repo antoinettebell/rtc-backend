@@ -22,6 +22,10 @@ const entityName = 'User';
 const MailHelper = require('../../helper/mail-helper');
 const Utils = require('../../helper/utils');
 const disposableDomains = require('disposable-email-domains');
+const {
+  buildBankDetailUpdate,
+  hydrateLegacyWalletPaymentHandle,
+} = require('../../helper/bank-detail-payment-method');
 const CustomNotification = require('../../helper/custom-notification');
 
 /**
@@ -89,6 +93,7 @@ exports.list = async (req, res, next) => {
             // Encrypt bank details before sending to frontend
             item.bankDetail = EncryptionService.encryptFields(bankDetail, [
               'accountHolderName',
+              'walletPaymentHandle',
               'bankName',
               'accountNumber',
               'routingNumber',
@@ -876,6 +881,7 @@ exports.getBankDetail = async (req, res, next) => {
       // decrypt bank details before sending to frontend
       data = EncryptionService.decryptFields(data, [
         'accountHolderName',
+        'walletPaymentHandle',
         'bankName',
         'accountNumber',
         'routingNumber',
@@ -892,6 +898,7 @@ exports.getBankDetail = async (req, res, next) => {
         "bankState",
         "bankPostal",
       ]);
+      data = hydrateLegacyWalletPaymentHandle(data);
     }
     return res.data({ bankDetail: data }, `Bank detail`);
   } catch (e) {
@@ -974,14 +981,15 @@ exports.addBankDetail = async (req, res, next) => {
     let {
       body: {
         accountHolderName,
+        walletPaymentHandle,
         bankName,
         accountNumber,
         routingNumber,
         accountType,
         remittanceEmail,
         currency,
-        // swiftCode,
-        // iban,
+        swiftCode,
+        iban,
         paymentMethod,
         paymentQrCodeUrl,
         bankAddressLine1,
@@ -1004,27 +1012,55 @@ exports.addBankDetail = async (req, res, next) => {
       }
     }
 
-    const requiresBankDetails = ['ACH', 'CHECK'].includes(paymentMethod);
-    const data = await BankDetailService.updateTheDetail(user._id, {
-      accountHolderName,
-      bankName: requiresBankDetails ? bankName : '',
-      accountNumber: requiresBankDetails ? accountNumber : '',
-      routingNumber: requiresBankDetails ? routingNumber : '',
-      accountType: requiresBankDetails ? accountType : '',
-      remittanceEmail: remittanceEmail ?? null,
-      currency,
-      // swiftCode:swiftCode ?? null,
-      // iban: iban ?? null,
-      paymentMethod,
-      paymentQrCodeUrl: requiresBankDetails ? '' : paymentQrCodeUrl,
-      bankAddressLine1: requiresBankDetails ? bankAddressLine1 : '',
-      bankAddressLine2: requiresBankDetails ? bankAddressLine2 || '' : '',
-      bankCity: requiresBankDetails ? bankCity : '',
-      bankState: requiresBankDetails ? bankState : '',
-      bankPostal: requiresBankDetails ? bankPostal : '',
-    });
+    const data = await BankDetailService.updateTheDetail(
+      user._id,
+      buildBankDetailUpdate({
+        accountHolderName,
+        walletPaymentHandle,
+        bankName,
+        accountNumber,
+        routingNumber,
+        accountType,
+        remittanceEmail,
+        currency,
+        swiftCode,
+        iban,
+        paymentMethod,
+        paymentQrCodeUrl,
+        bankAddressLine1,
+        bankAddressLine2,
+        bankCity,
+        bankState,
+        bankPostal,
+      })
+    );
 
-    return res.data({ bankDetail: data }, `Bank detail updated`);
+    const responseData = EncryptionService.decryptFields(
+      data?.toObject ? data.toObject() : data,
+      [
+        'accountHolderName',
+        'walletPaymentHandle',
+        'bankName',
+        'accountNumber',
+        'routingNumber',
+        'accountType',
+        'remittanceEmail',
+        'currency',
+        'swiftCode',
+        'iban',
+        'paymentMethod',
+        'paymentQrCodeUrl',
+        'bankAddressLine1',
+        'bankAddressLine2',
+        'bankCity',
+        'bankState',
+        'bankPostal',
+      ]
+    );
+    return res.data(
+      { bankDetail: hydrateLegacyWalletPaymentHandle(responseData) },
+      `Bank detail updated`
+    );
   } catch (e) {
     return next(e);
   }

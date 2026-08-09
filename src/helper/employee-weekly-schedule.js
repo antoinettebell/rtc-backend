@@ -49,6 +49,31 @@ const getEmployeeScheduleAssignment = (
   return null;
 };
 
+const getEffectiveEmployeeAssignment = ({
+  employee,
+  now = new Date(),
+  timeZone = 'America/New_York',
+}) => {
+  const assignments = Array.isArray(employee?.schedule_assignments)
+    ? employee.schedule_assignments
+    : [];
+  const scheduled = assignments.length
+    ? getEmployeeScheduleAssignment(assignments, now, timeZone)
+    : null;
+  const fallbackAssignment = assignments.find(
+    (assignment) => assignment?.location_id && assignment?.truck_unit_id
+  );
+  const assignment = scheduled?.assignment || fallbackAssignment || null;
+
+  return {
+    assignment,
+    withinWindow: !!scheduled?.withinWindow,
+    locationId: assignment?.location_id || employee?.assigned_location_id || null,
+    truckUnitId:
+      assignment?.truck_unit_id || employee?.assigned_truck_unit_id || null,
+  };
+};
+
 module.exports = {
   DAY_KEYS,
   EARLY_MINUTES,
@@ -56,4 +81,5 @@ module.exports = {
   parseTime,
   getEmployeeScheduleState,
   getEmployeeScheduleAssignment,
+  getEffectiveEmployeeAssignment,
 };

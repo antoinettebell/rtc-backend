@@ -21,6 +21,7 @@ const {
   canUseTapToPay,
 } = require('../../helper/vendor-plan-helper');
 const VendorComplianceService = require('../services/vendor-compliance-service');
+const OperationalComplianceFormService = require('../services/operational-compliance-form-service');
 const {
   addObjectFromBufferWithKey,
   addObjectWithKey,
@@ -29,6 +30,9 @@ const {
 const PaymentHelper = require('../../helper/payment-helper');
 const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
 const DocuSignHelper = require('../../helper/docusign-helper');
+const {
+  reconcileVendorAgreementEnvelope,
+} = require('../../helper/marketplace-vendor-agreement-reconciliation');
 const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
 const MailHelper = require('../../helper/mail-helper');
 const {
@@ -48,7 +52,10 @@ const {
   isMarketplacePaymentMethodAllowed,
 } = require('../../helper/marketplace-payment-policy-helper');
 const { docusign } = require('../../config');
-const { EventVendorApplicationModel } = require('../../models');
+const {
+  EventVendorApplicationModel,
+  OperationalNotificationModel,
+} = require('../../models');
 const {
   moderateMarketplaceText,
 } = require('../../helper/marketplace-content-moderation');
@@ -4972,11 +4979,14 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       throw buildError('Only vendors can view marketplace notifications', 403);
     }
 
-    await getVendorMarketplaceFoodTruck(req.user._id, {
+    const vendorFoodTruck = await getVendorMarketplaceFoodTruck(req.user._id, {
       enforceCompliance: false,
     });
+    await OperationalComplianceFormService.retryPendingNotificationsForVendor(
+      req.user._id
+    );
 
-    const [questions, bids, applications, closedCandidateBids, closedCandidateApplications] = await Promise.all([
+    const [questions, bids, applications, closedCandidateBids, closedCandidateApplications, operationalNotifications] = await Promise.all([
       MarketplaceEventQuestionService.getByData(
         {
           vendor_user_id: req.user._id,
@@ -5055,6 +5065,10 @@ exports.vendorNotificationSummary = async (req, res, next) => {
         },
         { sort: { updated_at: -1, submitted_at: -1, created_at: -1 }, lean: true }
       ),
+      OperationalNotificationModel.find({ vendor_user_id: req.user._id })
+        .sort({ occurred_at: -1 })
+        .limit(50)
+        .lean(),
     ]);
 
     const unreadQuestions = questions.filter((question) =>
@@ -5168,7 +5182,36 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       })
       .filter(Boolean);
 
+    const operationalNotificationList = operationalNotifications.map((item) => {
+      const truckUnit = (vendorFoodTruck.truck_units || []).find(
+        (unit) => String(unit._id) === String(item.truck_unit_id)
+      );
+      const location = (vendorFoodTruck.locations || []).find(
+        (entry) => String(entry._id) === String(item.location_id)
+      );
+      const formLabel = String(item.form_type || '')
+        .toLowerCase()
+        .replaceAll('_', ' ');
+      return {
+        id: `operational-${item._id}`,
+        notification_id: String(item._id),
+        type: 'OPERATIONAL_COMPLIANCE',
+        title: `${item.employee_name} ${item.action === 'SAVED' ? 'saved' : 'submitted'} ${formLabel}`,
+        subtitle: [truckUnit?.name, location?.address || location?.name]
+          .filter(Boolean)
+          .join(' · ') || 'Open the operations form.',
+        employee_name: item.employee_name,
+        form_id: String(item.form_id),
+        form_type: item.form_type,
+        truck_unit_id: item.truck_unit_id,
+        location_id: item.location_id,
+        occurred_at: item.occurred_at,
+        acknowledged: !!item.acknowledged_at,
+      };
+    });
+
     const marketplaceNotificationList = [
+      ...operationalNotificationList,
       ...messageNotifications,
       ...bidNotifications,
       ...applicationNotifications,
@@ -5185,10 +5228,32 @@ exports.vendorNotificationSummary = async (req, res, next) => {
           applicationNotifications.length +
           closedBidNotifications.length +
           closedApplicationNotifications.length,
+        operational_unread_count: operationalNotificationList.filter(
+          (item) => !item.acknowledged
+        ).length,
         total_count: marketplaceNotificationList.length,
       },
       'Vendor marketplace notifications'
     );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.acknowledgeVendorNotifications = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only vendors can acknowledge notifications', 403);
+    }
+    await OperationalNotificationModel.updateMany(
+      {
+        _id: { $in: req.body.notification_ids },
+        vendor_user_id: req.user._id,
+        acknowledged_at: null,
+      },
+      { $set: { acknowledged_at: new Date() } }
+    );
+    return res.data({}, 'Vendor notifications acknowledged');
   } catch (e) {
     return next(e);
   }
@@ -5562,7 +5627,9 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
       req.body.force_new_agreement === true ||
       String(req.body.force_new || '').toLowerCase() === 'true' ||
       String(req.body.force_new_agreement || '').toLowerCase() === 'true';
-    const validAgreement = await getValidVendorAgreement(req.user._id);
+    const validAgreement = req.body.reconcile_only === true
+      ? null
+      : await getValidVendorAgreement(req.user._id);
     if (validAgreement && !forceNewAgreement) {
       await persistSignedAgreementAttachment({
         status: 'SIGNED',
@@ -5584,7 +5651,7 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
       );
     }
 
-    const existingAgreement = forceNewAgreement
+    let existingAgreement = forceNewAgreement
       ? null
       : await MarketplaceVendorAgreementService.getByData(
           {
@@ -5592,10 +5659,65 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
             event_id: event.event_id,
             ...(bid ? { bid_id: bid.bid_id } : {}),
             ...(application ? { application_id: application.application_id } : {}),
-            status: { $in: ['PENDING_SIGNATURE', 'SENT', 'VIEWED'] },
+            status: {
+              $in: [
+                'PENDING_SIGNATURE',
+                'SENT',
+                'VIEWED',
+                'CANCELLED',
+                'DECLINED',
+                'VOIDED',
+                'ERROR',
+                'SIGNED',
+              ],
+            },
           },
           { singleResult: true, sort: { created_at: -1 } }
         );
+
+    if (existingAgreement?.envelope_id) {
+      const reconciliation = await reconcileVendorAgreementEnvelope({
+        agreement: existingAgreement,
+        getEnvelopeStatus: DocuSignHelper.getEnvelopeStatus,
+        mapEnvelopeStatus: DocuSignHelper.mapEnvelopeStatus,
+        setSubmissionSignatureStatus,
+        persistSignedAgreementAttachment,
+        getAnnualAgreementExpiry,
+      });
+      if (reconciliation.alreadySigned) {
+        return res.data(
+          {
+            marketplaceVendorAgreement: existingAgreement,
+            already_signed: true,
+          },
+          'Vendor agreement signature reconciled'
+        );
+      }
+      if (req.body.reconcile_only === true) {
+        return res.data(
+          {
+            marketplaceVendorAgreement: existingAgreement,
+            already_signed: false,
+            signing_incomplete: true,
+          },
+          'Vendor agreement is not yet signed'
+        );
+      }
+      if (['CANCELLED', 'DECLINED', 'VOIDED', 'ERROR'].includes(
+        reconciliation.status
+      )) {
+        existingAgreement = null;
+      }
+    } else if (req.body.reconcile_only === true) {
+      return res.data(
+        {
+          marketplaceVendorAgreement: null,
+          already_signed: false,
+          signing_incomplete: true,
+        },
+        'No pending vendor agreement was found'
+      );
+    }
 
     const signer = getVendorSignerInfo(req.user);
     if (!signer.signerEmail) {
@@ -5693,28 +5815,28 @@ exports.vendorAgreementReturn = async (req, res, next) => {
     agreement.return_status = returnStatus;
 
     try {
-      if (returnStatus === 'completed') {
-        let envelopeStatus = 'SIGNED';
-        if (agreement.envelope_id) {
-          const envelope = await DocuSignHelper.getEnvelopeStatus(agreement.envelope_id);
-          envelopeStatus = DocuSignHelper.mapEnvelopeStatus(envelope.status);
-          agreement.signed_at = envelope.completedDateTime
-            ? new Date(envelope.completedDateTime)
-            : new Date();
-        } else {
-          agreement.signed_at = new Date();
-        }
-        agreement.status = envelopeStatus === 'SIGNED' ? 'SIGNED' : envelopeStatus;
-        if (agreement.status === 'SIGNED') {
-          agreement.expires_at = getAnnualAgreementExpiry(agreement.signed_at);
-        }
+      if (!agreement.envelope_id) {
+        throw buildError('DocuSign envelope is unavailable for verification', 409);
+      }
+      const envelope = await DocuSignHelper.getEnvelopeStatus(
+        agreement.envelope_id
+      );
+      const envelopeStatus = DocuSignHelper.mapEnvelopeStatus(envelope.status);
+      if (envelopeStatus === 'SIGNED') {
+        agreement.status = 'SIGNED';
+        agreement.signed_at = envelope.completedDateTime
+          ? new Date(envelope.completedDateTime)
+          : new Date();
+        agreement.expires_at = getAnnualAgreementExpiry(agreement.signed_at);
       } else if (returnStatus === 'cancelled') {
         agreement.status = 'CANCELLED';
       } else if (returnStatus === 'declined') {
         agreement.status = 'DECLINED';
       } else {
-        agreement.status = 'ERROR';
-        agreement.error_message = 'Vendor returned from DocuSign with an error status.';
+        agreement.status = envelopeStatus;
+        agreement.error_message = returnStatus === 'completed'
+          ? 'DocuSign has not confirmed the completed signature.'
+          : 'Vendor returned from DocuSign with an error status.';
       }
 
       await agreement.save();

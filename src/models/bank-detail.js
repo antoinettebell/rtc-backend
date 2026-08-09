@@ -17,8 +17,9 @@ const mSchema = mongoose.Schema(
     },
     accountHolderName: {
       type: String,
-      required: true,
+      default: '',
     },
+    walletPaymentHandle: { type: String, default: '' },
     bankName: {
       type: String,
       default: '',

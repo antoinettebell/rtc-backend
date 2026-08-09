@@ -151,6 +151,12 @@ router.get(
   allowedTo(['VENDOR']),
   Controller.vendorNotificationSummary
 );
+router.post(
+  '/notifications/acknowledge',
+  allowedTo(['VENDOR']),
+  validate(Validation.acknowledgeVendorNotifications),
+  Controller.acknowledgeVendorNotifications
+);
 
 router.get(
   '/repository/files',

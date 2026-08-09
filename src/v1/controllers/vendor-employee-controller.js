@@ -14,6 +14,7 @@ const crypto = require('crypto');
 const {
   getEmployeeScheduleState,
   getEmployeeScheduleAssignment,
+  getEffectiveEmployeeAssignment,
 } = require('../../helper/employee-weekly-schedule');
 
 const entityName = 'VendorEmployee';
@@ -734,26 +735,13 @@ const assertEmployeeCanUseShift = async (user) => {
   );
   await assertEmployeeManagementAllowed(foodTruck);
 
-  const hasCardSchedule = employee.schedule_assignments?.length > 0;
-  const scheduled = hasCardSchedule
-    ? getEmployeeScheduleAssignment(
-        employee.schedule_assignments,
-        new Date(),
-        foodTruck.schedule_time_zone || 'America/New_York'
-      )
-    : null;
-  const fallbackAssignment = hasCardSchedule
-    ? employee.schedule_assignments.find(
-        (assignment) => assignment?.location_id && assignment?.truck_unit_id
-      )
-    : null;
-  const activeOrFallbackAssignment = scheduled?.assignment || fallbackAssignment;
-  const assignedLocationId = hasCardSchedule
-    ? activeOrFallbackAssignment?.location_id
-    : employee.assigned_location_id;
-  const assignedTruckUnitId = hasCardSchedule
-    ? activeOrFallbackAssignment?.truck_unit_id
-    : employee.assigned_truck_unit_id;
+  const effectiveAssignment = getEffectiveEmployeeAssignment({
+    employee,
+    now: new Date(),
+    timeZone: foodTruck.schedule_time_zone || 'America/New_York',
+  });
+  const assignedLocationId = effectiveAssignment.locationId;
+  const assignedTruckUnitId = effectiveAssignment.truckUnitId;
   const assignedLocation = Service.getAssignedLocation(foodTruck, assignedLocationId);
   const assignedTruckUnit = assignedLocationId
     ? Service.getAssignedTruckUnit(foodTruck, assignedTruckUnitId)

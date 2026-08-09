@@ -11,6 +11,7 @@ class BankDetailService extends BaseService {
     // Encrypt sensitive fields
     const encryptedData = EncryptionService.encryptFields(data, [
       'accountHolderName',
+      'walletPaymentHandle',
       'bankName', 
       'accountNumber',
       'routingNumber',

@@ -11,15 +11,20 @@ const {
 const {
   getEmployeeScheduleState,
   getEmployeeScheduleAssignment,
+  getEffectiveEmployeeAssignment,
 } = require('../helper/employee-weekly-schedule');
 const { FoodTruckModel } = require('../models');
 const EmployeeSessionService = require('../v1/services/employee-session-service');
+const {
+  EMPLOYEE_ASSIGNED_LOCATION_CLOSED_MESSAGE,
+  assertAssignedEmployeeLocationOpen,
+  isEmployeeOrderOperation,
+} = require('../helper/employee-operational-access');
 
 const EMPLOYEE_SHIFT_EXEMPT_ROUTES = [
   '/vendor-employee/dashboard',
   '/vendor-employee/session/action',
   '/vendor-employee/session/end',
-  '/operational-compliance',
 ];
 
 const IGNORE_ROUTES = [
@@ -87,25 +92,35 @@ const Authenticate = async (req, res, next) => {
         is_active: true,
         shift_status: { $in: ['STARTED', 'ON_BREAK'] },
       }).sort({ started_at: -1 }).lean();
+      const assignmentFoodTruck = await FoodTruckModel.findById(
+        employee.food_truck_id
+      )
+        .select('schedule_time_zone')
+        .lean();
+      const effectiveAssignment = getEffectiveEmployeeAssignment({
+        employee,
+        now: new Date(),
+        timeZone:
+          assignmentFoodTruck?.schedule_time_zone || 'America/New_York',
+      });
+      const effectiveAssignedLocationId = effectiveAssignment.locationId;
+      const effectiveAssignedTruckUnitId = effectiveAssignment.truckUnitId;
       if (
         activeSession &&
         !activeSession.is_vendor_override &&
         ((Array.isArray(employee.schedule_assignments) && employee.schedule_assignments.length > 0) ||
           (Array.isArray(employee.weekly_schedule) && employee.weekly_schedule.length > 0))
       ) {
-        const foodTruck = await FoodTruckModel.findById(employee.food_truck_id)
-          .select('schedule_time_zone')
-          .lean();
         const scheduleState = employee.schedule_assignments?.length
           ? getEmployeeScheduleAssignment(
               employee.schedule_assignments,
               new Date(),
-              foodTruck?.schedule_time_zone || 'America/New_York'
+              assignmentFoodTruck?.schedule_time_zone || 'America/New_York'
             ) || { withinWindow: false }
           : getEmployeeScheduleState(
               employee.weekly_schedule,
               new Date(),
-              foodTruck?.schedule_time_zone || 'America/New_York'
+              assignmentFoodTruck?.schedule_time_zone || 'America/New_York'
             );
         if (!scheduleState.withinWindow) {
           await EmployeeSessionService.endSession({
@@ -144,6 +159,23 @@ const Authenticate = async (req, res, next) => {
         throw customError;
       }
 
+      if (!isShiftExempt && isEmployeeOrderOperation(req)) {
+        const foodTruck = await FoodTruckModel.findById(employee.food_truck_id)
+          .select('truck_units')
+          .lean();
+        try {
+          assertAssignedEmployeeLocationOpen({
+            foodTruck,
+            assignedTruckUnitId: effectiveAssignedTruckUnitId,
+            assignedLocationId: effectiveAssignedLocationId,
+          });
+        } catch (accessError) {
+          customError.code = 403;
+          customError.message = EMPLOYEE_ASSIGNED_LOCATION_CLOSED_MESSAGE;
+          throw customError;
+        }
+      }
+
       req.user = {
         _id: employee._id,
         userType: 'EMPLOYEE',
@@ -161,8 +193,8 @@ const Authenticate = async (req, res, next) => {
         employee_rate: employee.employee_rate ?? null,
         vendor_user_id: employee.vendor_user_id,
         food_truck_id: employee.food_truck_id,
-        assigned_location_id: employee.assigned_location_id,
-        assigned_truck_unit_id: employee.assigned_truck_unit_id || null,
+        assigned_location_id: effectiveAssignedLocationId,
+        assigned_truck_unit_id: effectiveAssignedTruckUnitId || null,
         is_working: !!employee.is_working,
         is_shift_active: !!activeSession,
         authToken: authorization,

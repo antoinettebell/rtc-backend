@@ -14,6 +14,9 @@ const MailHelper = require('../../helper/mail-helper');
 const {
   buildEventVendorAwardDetailsHtml,
 } = require('../../helper/marketplace-award-email-helper');
+const {
+  findOrCreateEventVendorApplication,
+} = require('../../helper/event-vendor-application-idempotency');
 
 const TYPES = ['MERCHANDISE', 'SERVICE', 'OTHER'];
 const error = (message, code = 400) => Object.assign(new Error(message), { code });
@@ -157,21 +160,35 @@ exports.submitApplication = async (req, res, next) => {
     if (!agreement) throw error('Sign the Marketplace NDA and Governance Document before submitting', 409);
     const categoryFee = Math.max(...eligibleNeeds.map((need) => Number(need.fee || 0)));
     const electricityFee = electricityRequired ? Number(event.event_vendor_electricity_fee || 0) : 0;
-    const application = await EventVendorApplicationModel.create({
-      event_id: event.event_id, profile_id: profile.profile_id, vendor_user_id: user._id,
-      vendor_types: requestedTypes, business_name: profile.business_name,
-      contact_name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
-      contact_number: `${user.countryCode || ''}${user.mobileNumber || ''}`,
-      offering_bullets: bullets, average_price: Number(req.body.average_price),
-      additional_notes: String(req.body.additional_notes || '').trim() || null,
-      photos: photos.map((photo) => ({ photo_id: photo.photo_id, file_url: photo.file_url, file_key: photo.file_key })),
-      electricity_required: electricityRequired, electricity_fee: electricityFee,
-      electricity_fee_acknowledged: electricityRequired,
-      category_fee: categoryFee, checkout_subtotal: categoryFee + electricityFee,
-      nda_version: agreement.nda_version, nda_accepted_at: agreement.signed_at,
-      governance_version: agreement.governance_version, governance_accepted_at: agreement.signed_at,
-      accepted_ip: req.ip,
+    const applicationQuery = {
+      event_id: event.event_id,
+      vendor_user_id: user._id,
+    };
+    const { application } = await findOrCreateEventVendorApplication({
+      model: EventVendorApplicationModel,
+      query: applicationQuery,
+      payload: {
+        event_id: event.event_id, profile_id: profile.profile_id, vendor_user_id: user._id,
+        vendor_types: requestedTypes, business_name: profile.business_name,
+        contact_name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
+        contact_number: `${user.countryCode || ''}${user.mobileNumber || ''}`,
+        offering_bullets: bullets, average_price: Number(req.body.average_price),
+        additional_notes: String(req.body.additional_notes || '').trim() || null,
+        photos: photos.map((photo) => ({ photo_id: photo.photo_id, file_url: photo.file_url, file_key: photo.file_key })),
+        electricity_required: electricityRequired, electricity_fee: electricityFee,
+        electricity_fee_acknowledged: electricityRequired,
+        category_fee: categoryFee, checkout_subtotal: categoryFee + electricityFee,
+        nda_version: agreement.nda_version, nda_accepted_at: agreement.signed_at,
+        governance_version: agreement.governance_version, governance_accepted_at: agreement.signed_at,
+        accepted_ip: req.ip,
+      },
     });
+    if (!agreement.application_id && agreement.event_id === event.event_id) {
+      await MarketplaceVendorAgreementModel.updateOne(
+        { agreement_id: agreement.agreement_id },
+        { $set: { application_id: application.application_id } }
+      );
+    }
     return res.data({ eventVendorApplication: application }, 'Marketplace Vendor application submitted');
   } catch (e) { return next(e); }
 };

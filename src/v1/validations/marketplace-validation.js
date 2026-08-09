@@ -486,6 +486,13 @@ module.exports = {
       bid_id: Joi.string().trim().allow(null, ''),
       application_id: Joi.string().trim().allow(null, ''),
       return_url: Joi.string().trim().allow(null, ''),
+      reconcile_only: Joi.boolean().default(false),
+    }),
+  },
+
+  acknowledgeVendorNotifications: {
+    body: Joi.object({
+      notification_ids: Joi.array().items(Joi.string().trim()).min(1).required(),
     }),
   },
 

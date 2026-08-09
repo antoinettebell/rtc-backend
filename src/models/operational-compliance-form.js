@@ -41,6 +41,10 @@ const schema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    employee_internal_id: { type: String, default: null, index: true },
+    employee_session_id: { type: String, default: null, index: true },
+    truck_unit_id: { type: String, default: null, index: true },
+    location_id: { type: String, default: null, index: true },
     form_type: {
       type: String,
       enum: ['INVENTORY', 'OPENING_CHECKLIST', 'CLOSING_CHECKLIST'],
@@ -56,6 +60,7 @@ const schema = new mongoose.Schema(
     prepared_by_name: { type: String, trim: true, maxlength: 80, default: '' },
     initials: { type: String, trim: true, maxlength: 10, default: '' },
     truck_unit: { type: String, trim: true, maxlength: 80, default: '' },
+    location_label: { type: String, trim: true, maxlength: 250, default: '' },
     form_date: { type: Date, default: Date.now },
     inventory_items: { type: [inventoryItemSchema], default: [] },
     checklist_items: { type: [checklistItemSchema], default: [] },
@@ -73,10 +78,30 @@ const schema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    notification_pending_action: {
+      type: String,
+      enum: ['SAVED', 'SUBMITTED', null],
+      default: null,
+      index: true,
+    },
+    notification_event_key: { type: String, default: null },
+    notification_error: { type: String, default: null },
   },
   { timestamps: true }
 );
 
 schema.index({ food_truck_id: 1, form_type: 1, status: 1, createdAt: -1 });
+schema.index({ employee_session_id: 1, form_type: 1, status: 1 });
+schema.index({ food_truck_id: 1, truck_unit_id: 1, location_id: 1, form_type: 1, status: 1 });
+schema.index(
+  { employee_session_id: 1, form_type: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      employee_session_id: { $type: 'string' },
+      status: { $in: ['DRAFT', 'SUBMITTED'] },
+    },
+  }
+);
 
 module.exports = mongoose.model('operational_compliance_forms', schema);
