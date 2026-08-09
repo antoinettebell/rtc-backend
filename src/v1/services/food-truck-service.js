@@ -1,6 +1,7 @@
 const { FoodTruckModel: Model,UserRestrictDietModel } = require('../../models');
 const { BaseService } = require('../../common-services');
 const mongoose = require('mongoose');
+const { getSearchTerms } = require('../../helper/food-truck-search-helper');
 
 const escapeRegExp = (value = '') =>
   value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -836,29 +837,22 @@ class FoodTruckService extends BaseService {
       }
   
       if (search?.trim()) {
-        const words = search
-          .trim()
-          .toLowerCase()
-          .split(/\s+/)
-          .filter((w) => w);
-        const regex = new RegExp(escapeRegExp(search.trim()), 'i');
-        const wordRegexes = [
-          ...new Set(
-            words.flatMap((word) => {
-              const variants = [word];
-              if (word.endsWith('s') && word.length > 3) {
-                variants.push(word.slice(0, -1));
-              } else if (word.length > 2) {
-                variants.push(`${word}s`);
-              }
-              return variants;
-            })
-          ),
-        ].map((word) => new RegExp(escapeRegExp(word), 'i'));
+        const {
+          phraseRegex: regex,
+          exactPhraseRegex,
+          tokenRegexes: wordRegexes,
+          allowPhraseSubstring,
+        } = getSearchTerms(search);
 
         const fullPhraseConditions = [
-          { 'menu.name': regex },
-          { 'menu.description': regex },
+          { name: exactPhraseRegex },
+          ...(allowPhraseSubstring
+            ? [
+                { name: regex },
+                { 'menu.name': regex },
+                { 'menu.description': regex },
+              ]
+            : []),
         ];
 
         const wordConditions = wordRegexes.flatMap((r) => [
@@ -880,18 +874,17 @@ class FoodTruckService extends BaseService {
                   as: 'menuItem',
                   cond: {
                     $or: [
-                      {
+                      ...(allowPhraseSubstring ? [{
                         $regexMatch: {
                           input: { $ifNull: ['$$menuItem.name', ''] },
                           regex,
                         },
-                      },
-                      {
+                      }, {
                         $regexMatch: {
                           input: { $ifNull: ['$$menuItem.description', ''] },
                           regex,
                         },
-                      },
+                      }] : []),
                       ...wordRegexes.flatMap((wordRegex) => [
                         {
                           $regexMatch: {
@@ -915,13 +908,46 @@ class FoodTruckService extends BaseService {
           {
             $addFields: {
               searchScore: {
-                $size: '$matchedMenuItems',
+                $add: [
+                  { $size: '$matchedMenuItems' },
+                  {
+                    $cond: [
+                      { $regexMatch: { input: { $ifNull: ['$name', ''] }, regex: exactPhraseRegex } },
+                      1000,
+                      0,
+                    ],
+                  },
+                  {
+                    $cond: [
+                      allowPhraseSubstring ? {
+                        $regexMatch: {
+                          input: { $ifNull: ['$name', ''] },
+                          regex,
+                        },
+                      } : false,
+                      500,
+                      0,
+                    ],
+                  },
+                  ...wordRegexes.map((wordRegex) => ({
+                    $cond: [
+                      {
+                        $regexMatch: {
+                          input: { $ifNull: ['$name', ''] },
+                          regex: wordRegex,
+                        },
+                      },
+                      50,
+                      0,
+                    ],
+                  })),
+                ],
               },
             },
           },
         ];
   
-        extraSort = { searchScore: -1 };
+        extraSort = { searchScore: -1, name: 1, _id: 1 };
       }
   
       if ([true, 'true', 1, '1'].includes(available)) {
