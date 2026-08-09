@@ -29,6 +29,13 @@ class MarketplaceEventService extends BaseService {
     })
       .sort({ created_at: 1 })
       .lean();
+    const tax_exemption_certificate = await MarketplaceAttachmentModel.findOne({
+      event_id,
+      attachment_type: 'TAX_EXEMPTION_CERTIFICATE',
+      status: { $nin: ['DELETED', 'ARCHIVED', 'REJECTED'] },
+    })
+      .sort({ created_at: -1 })
+      .lean();
 
     let awarded_bids = [];
     let awarded_applications = [];
@@ -158,6 +165,7 @@ class MarketplaceEventService extends BaseService {
     return {
       ...event,
       images,
+      tax_exemption_certificate: tax_exemption_certificate || null,
       awarded_bids,
       awarded_applications,
       marketplace_metrics: {

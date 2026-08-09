@@ -38,6 +38,7 @@ const {
   buildVendorEventCloseState,
   getMarketplaceEventTiming,
 } = require('../../helper/marketplace-event-close-helper');
+const { isMarketplaceEventExpired } = require('../../helper/public-marketplace-event-helper');
 const {
   isMarketplacePaymentMethodAllowed,
 } = require('../../helper/marketplace-payment-policy-helper');
@@ -4214,20 +4215,27 @@ exports.getOpenEvents = async (req, res, next) => {
 
 exports.getPublicOpenEvent = async (req, res, next) => {
   try {
-    const event = await MarketplaceEventService.update(
+    const event = await MarketplaceEventService.getByData(
       {
         event_id: req.params.eventId,
         status: 'OPEN',
         event_visibility: 'PUBLIC',
         tax_exemption_status: { $in: ['NOT_REQUESTED', 'APPROVED'] },
       },
-      { $inc: { event_impression_count: 1 } },
-      { directApply: true, getNew: true, lean: true }
+      { singleResult: true, lean: true }
     );
 
     if (!event) {
       throw buildError('Open marketplace event not found', 404);
     }
+    if (isMarketplaceEventExpired(event)) {
+      throw buildError('Open marketplace event not found', 404);
+    }
+    await MarketplaceEventService.update(
+      { event_id: event.event_id },
+      { $inc: { event_impression_count: 1 } },
+      { directApply: true }
+    );
 
     const marketplaceEvent = await MarketplaceEventService.getWithImages(
       event.event_id

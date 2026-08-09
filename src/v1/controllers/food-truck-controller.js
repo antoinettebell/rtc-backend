@@ -33,6 +33,7 @@ const { maskTaxId } = require('../../helper/event-coordinator-profile');
 const { addObjectWithKey, removeObject } = require('../../helper/aws');
 const fs = require('fs');
 const entityName = 'FoodTruck';
+const { filterActivePublicMarketplaceEvents } = require('../../helper/public-marketplace-event-helper');
 
 // Customer ordering must receive the requirements of items nested inside
 // combos and BOGO/BOGOHO rewards, not only their display fields.
@@ -1918,7 +1919,9 @@ exports.nearMe = async (req, res, next) => {
         : [],
     ]);
 
-    const eventIds = eventList.map((event) => event.event_id);
+    const activeEventList = filterActivePublicMarketplaceEvents(eventList);
+
+    const eventIds = activeEventList.map((event) => event.event_id);
     const eventImages = eventIds.length
       ? await MarketplaceEventImageService.getByData(
           { event_id: { $in: eventIds }, status: 'ACTIVE' },
@@ -1957,7 +1960,7 @@ exports.nearMe = async (req, res, next) => {
       .filter((item) =>
         matchesFoodCuisineFilters(item, selectedCuisineIds, selectedCuisines)
       );
-    const eventItems = eventList
+    const eventItems = activeEventList
       .filter((event) => matchesEventSearch(event, search))
       .filter((event) => matchesEventTypeFilters(event, selectedEventTypes))
       .map((event) =>
