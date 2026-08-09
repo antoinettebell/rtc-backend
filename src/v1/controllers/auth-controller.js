@@ -20,7 +20,8 @@ const EncryptionService = require('../../helper/encryption');
 const disposableDomains = require('disposable-email-domains');
 const { addObject } = require('../../helper/aws');
 const fs = require('fs');
-const { PlanModel, EventVendorProfileModel } = require('../../models');
+const { PlanModel } = require('../../models');
+const { hydrateEventVendorUser } = require('../../helper/event-vendor-user-hydration');
 
 const vendorTaxDigits = (value) =>
   String(value || '').replace(/\D/g, '').slice(0, 9);
@@ -588,11 +589,7 @@ exports.loginVendor = async (req, res, next) => {
 
       if (user.userType === 'VENDOR') {
         if (user.vendorSubtype === 'EVENT_VENDOR') {
-          user.foodTruck = null;
-          user.eventVendorProfile = await EventVendorProfileModel.findOne({
-            vendor_user_id: user._id,
-            status: 'ACTIVE',
-          }).lean();
+          await hydrateEventVendorUser(user);
         } else {
         user.foodTruck = await FoodTruckService.getByData(
           { userId: user._id },

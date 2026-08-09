@@ -27,6 +27,7 @@ const {
   hydrateLegacyWalletPaymentHandle,
 } = require('../../helper/bank-detail-payment-method');
 const CustomNotification = require('../../helper/custom-notification');
+const { hydrateEventVendorUser } = require('../../helper/event-vendor-user-hydration');
 
 /**
  * To list out or find data by id of given collection
@@ -59,7 +60,10 @@ exports.list = async (req, res, next) => {
         delete item.changePassToken;
 
         if (item.userType === 'VENDOR') {
-          item.foodTruck = await FoodTruckService.getByData(
+          if (item.vendorSubtype === 'EVENT_VENDOR') {
+            await hydrateEventVendorUser(item);
+          } else {
+            item.foodTruck = await FoodTruckService.getByData(
             { userId: item._id },
             {
               singleResult: true,
@@ -81,6 +85,7 @@ exports.list = async (req, res, next) => {
               rating[item.foodTruck._id.toString()].avgRate || 0;
             item.foodTruck.totalReviews =
               rating[item.foodTruck._id.toString()].totalReviews || 0;
+          }
           }
 
           // Add bank details for vendors (encrypted for frontend)

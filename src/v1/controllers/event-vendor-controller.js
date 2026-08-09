@@ -706,7 +706,7 @@ exports.adminGetProfile = async (req, res, next) => {
       .lean();
     if (!profile) throw error('Marketplace Vendor profile not found', 404);
     const photos = await EventVendorPhotoModel.find({
-      vendor_user_id: profile.vendor_user_id._id,
+      profile_id: profile.profile_id,
       source: 'REPOSITORY',
       status: 'ACTIVE',
     }).sort({ category: 1, created_at: -1 }).lean();
