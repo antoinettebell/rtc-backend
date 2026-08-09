@@ -11,8 +11,12 @@ const MarketplaceUpload = require('../../middleware/marketplace-upload');
 
 router.get('/event-vendor/profile', allowedTo(['VENDOR']), EventVendorController.getProfile);
 router.put('/event-vendor/profile', allowedTo(['VENDOR']), EventVendorController.saveProfile);
+router.post('/event-vendor/profile/submit', allowedTo(['VENDOR']), EventVendorController.submitProfile);
 router.get('/event-vendor/photos', allowedTo(['VENDOR']), EventVendorController.listPhotos);
 router.post('/event-vendor/photos', allowedTo(['VENDOR']), MarketplaceUpload.single(), EventVendorController.uploadPhoto);
+router.post('/event-vendor/photos/:photoId/replace', allowedTo(['VENDOR']), MarketplaceUpload.single(), EventVendorController.replacePhoto);
+router.post('/event-vendor/application-photos', allowedTo(['VENDOR']), MarketplaceUpload.single(), EventVendorController.uploadApplicationPhoto);
+router.delete('/event-vendor/application-photos/:photoId', allowedTo(['VENDOR']), EventVendorController.removeApplicationPhoto);
 router.post('/event-vendor/logo', allowedTo(['VENDOR']), MarketplaceUpload.single(), EventVendorController.uploadLogo);
 router.delete('/event-vendor/photos/:photoId', allowedTo(['VENDOR']), EventVendorController.removePhoto);
 router.get('/event-vendor/events', allowedTo(['VENDOR']), EventVendorController.eligibleEvents);
@@ -20,6 +24,9 @@ router.post('/event-vendor/events/:eventId/applications', allowedTo(['VENDOR']),
 router.get('/event-vendor/applications/my', allowedTo(['VENDOR']), EventVendorController.myApplications);
 router.post('/event-vendor/applications/:applicationId/award', allowedTo(['CUSTOMER']), EventVendorController.awardApplication);
 router.get('/event-vendor/events/:eventId/applications', allowedTo(['CUSTOMER']), EventVendorController.eventApplications);
+router.get('/admin/event-vendors', allowedTo(['SUPER_ADMIN']), EventVendorController.adminListProfiles);
+router.get('/admin/event-vendors/:profileId', allowedTo(['SUPER_ADMIN']), EventVendorController.adminGetProfile);
+router.put('/admin/event-vendors/:profileId/review', allowedTo(['SUPER_ADMIN']), EventVendorController.adminReviewProfile);
 
 router.post(
   '/events',

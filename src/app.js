@@ -9,6 +9,7 @@ const { server } = require('./config');
 const cors = require('cors');
 const app = express();
 const { validatePublicReviewUrl } = require('./helper/review-url-helper');
+const { startEventVendorPhotoCleanup } = require('./helper/event-vendor-photo-cleanup');
 
 app.set('trust proxy', 'loopback');
 
@@ -23,6 +24,7 @@ const http = require('http').createServer(app);
 const reshelper = require('reshelper');
 
 require('./db/connection');
+startEventVendorPhotoCleanup();
 
 app.use(reshelper);
 

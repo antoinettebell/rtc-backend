@@ -664,6 +664,11 @@ exports.changeRequest = async (req, res, next) => {
     if (!existRecord) {
       return res.message(`user not found`, 409);
     }
+    if (existRecord.vendorSubtype === 'EVENT_VENDOR') {
+      const lifecycleError = new Error('Review Marketplace Vendors from the Marketplace Vendor approval queue');
+      lifecycleError.code = 409;
+      throw lifecycleError;
+    }
 
     existRecord.requestStatus = requestStatus;
     if (reasonForRejection && requestStatus === 'REJECTED') {

@@ -9,9 +9,18 @@ const schema = mongoose.Schema({
   file_key: { type: String, required: true },
   original_name: { type: String, default: null },
   mime_type: { type: String, default: null },
+  category: {
+    type: String,
+    enum: ['ARTISANS_CRAFTERS', 'APPAREL_ACCESSORIES', 'COMMERCIAL_RETAIL', 'LOCAL_MAKERS_SPECIALTY'],
+    default: null,
+  },
+  source: { type: String, enum: ['REPOSITORY', 'APPLICATION'], default: 'REPOSITORY', index: true },
+  event_id: { type: String, default: null, index: true },
+  expires_at: { type: Date, default: null, index: true },
   status: { type: String, enum: ['ACTIVE', 'ARCHIVED'], default: 'ACTIVE', index: true },
   archived_at: { type: Date, default: null },
 }, { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } });
 
 schema.index({ vendor_user_id: 1, status: 1 });
+schema.index({ vendor_user_id: 1, category: 1, source: 1, status: 1 });
 module.exports = mongoose.model('event-vendor-photos', schema);

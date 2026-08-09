@@ -1,4 +1,5 @@
 const fs = require('fs');
+const mongoose = require('mongoose');
 const {
   EventVendorProfileModel,
   EventVendorPhotoModel,
@@ -17,15 +18,135 @@ const {
 const {
   findOrCreateEventVendorApplication,
 } = require('../../helper/event-vendor-application-idempotency');
+const {
+  MERCHANDISE_CATEGORIES,
+  buildPhotoSlotReservation,
+  buildAdminProfileQuery,
+  getNextSubmissionCount,
+  validateReviewDecision,
+  validateApplicationPhotoUpload,
+  hasMaterialProfileChange,
+  applyMaterialMutation,
+  applyProfileUserTransaction,
+} = require('../../helper/event-vendor-profile-lifecycle');
+const { reconcileRepositoryPhotoCounters } = require('../../helper/event-vendor-photo-counter');
+const { enqueueObjectCleanup } = require('../../helper/event-vendor-photo-cleanup');
 
 const TYPES = ['MERCHANDISE', 'SERVICE', 'OTHER'];
 const error = (message, code = 400) => Object.assign(new Error(message), { code });
 const cleanTypes = (value) => [...new Set((Array.isArray(value) ? value : []).map((item) => String(item).toUpperCase()))]
   .filter((item) => TYPES.includes(item));
+const cleanCategories = (value) => [...new Set((Array.isArray(value) ? value : []).map((item) => String(item).toUpperCase()))]
+  .filter((item) => MERCHANDISE_CATEGORIES.includes(item));
 const assertEventVendor = async (userId) => {
   const user = await UserModel.findById(userId);
   if (!user || user.userType !== 'VENDOR') throw error('Vendor account required', 403);
+  if (user.vendorSubtype !== 'EVENT_VENDOR') throw error('Marketplace Vendor account required', 403);
   return user;
+};
+
+const assertApprovedProfile = async (userId) => {
+  const profile = await EventVendorProfileModel.findOne({
+    vendor_user_id: userId,
+    status: 'ACTIVE',
+  });
+  if (!profile) throw error('Complete the Marketplace Vendor profile first', 409);
+  if (profile.review_status !== 'APPROVED') {
+    throw error('Your Marketplace Vendor profile must be approved first', 403);
+  }
+  return profile;
+};
+
+const validateProfileForSubmission = async (profile) => {
+  if (!profile?.business_name || !profile?.business_description || !profile?.vendor_types?.length) {
+    throw error('Complete the Marketplace Vendor profile before submitting', 409);
+  }
+  if (!profile.logo_url) throw error('Add a business logo before submitting', 409);
+  if (profile.vendor_types.includes('MERCHANDISE')) {
+    if (!profile.merchandise_categories?.length) {
+      throw error('Select at least one merchandise category', 409);
+    }
+    const categoryCounts = await EventVendorPhotoModel.aggregate([
+      {
+        $match: {
+          vendor_user_id: profile.vendor_user_id,
+          source: 'REPOSITORY',
+          status: 'ACTIVE',
+          category: { $in: profile.merchandise_categories },
+        },
+      },
+      { $group: { _id: '$category', count: { $sum: 1 } } },
+    ]);
+    const populated = new Set(categoryCounts.filter((item) => item.count > 0).map((item) => item._id));
+    const missing = profile.merchandise_categories.filter((category) => !populated.has(category));
+    if (missing.length) throw error('Add at least one portfolio image for each selected merchandise category', 409);
+  }
+};
+
+const assertProfileEditable = (profile) => {
+  if (profile?.review_status === 'PENDING_REVIEW') {
+    throw error('This profile is awaiting review and cannot be changed', 409);
+  }
+};
+
+const reserveRepositoryPhotoSlot = async (profileId, category, session = null) => {
+  const reservation = buildPhotoSlotReservation(profileId, category);
+  if (!reservation) throw error('Select a valid merchandise category');
+  const profile = await EventVendorProfileModel.findOneAndUpdate(
+    reservation.query,
+    reservation.update,
+    { new: true, session }
+  );
+  if (!profile) throw error('This merchandise category or repository is full', 409);
+  return profile;
+};
+
+const releaseRepositoryPhotoSlot = async (profileId, category, session = null) => {
+  if (!MERCHANDISE_CATEGORIES.includes(category)) return;
+  const categoryPath = `repository_photo_counts.${category}`;
+  await EventVendorProfileModel.updateOne(
+    { profile_id: profileId, repository_photo_total: { $gt: 0 }, [categoryPath]: { $gt: 0 } },
+    { $inc: { repository_photo_total: -1, [categoryPath]: -1 } },
+    { session }
+  );
+};
+
+const suspendApprovedProfileInSession = async (profileId, userId, session) => {
+  const result = await EventVendorProfileModel.updateOne(
+    { profile_id: profileId, review_status: 'APPROVED' },
+    { $set: { review_status: 'DRAFT', rejection_reason: null } },
+    { session }
+  );
+  if (!result.modifiedCount) return false;
+  await UserModel.updateOne(
+    { _id: userId, vendorSubtype: 'EVENT_VENDOR' },
+    { $set: { requestStatus: 'PENDING', reasonForRejection: null } },
+    { session }
+  );
+  return true;
+};
+
+const withTransaction = async (work) => {
+  const session = await mongoose.startSession();
+  let result;
+  try {
+    await session.withTransaction(async () => { result = await work(session); });
+    return result;
+  } finally {
+    await session.endSession();
+  }
+};
+
+const queueObjectCleanupNonfatal = async (payload) => {
+  try {
+    await enqueueObjectCleanup(payload);
+  } catch (cleanupError) {
+    console.error('Marketplace Vendor object cleanup could not be queued', {
+      objectKey: payload.objectKey,
+      reason: payload.reason,
+      message: cleanupError.message,
+    });
+  }
 };
 
 exports.getProfile = async (req, res, next) => {
@@ -47,49 +168,263 @@ exports.saveProfile = async (req, res, next) => {
     if (!description || description.length > 300) throw error('Business description must be 1–300 characters');
     const socialLinks = (req.body.social_links || []).map((item) => String(item).trim()).filter(Boolean);
     if (socialLinks.length > 2) throw error('Up to 2 website/social links are allowed');
-    const profile = await EventVendorProfileModel.findOneAndUpdate(
-      { vendor_user_id: user._id },
-      { $set: { vendor_types: vendorTypes, business_name: businessName, business_description: description, social_links: socialLinks, status: 'ACTIVE' } },
-      { new: true, upsert: true, runValidators: true }
-    );
-    user.vendorSubtype = 'EVENT_VENDOR';
-    await user.save();
+    const merchandiseCategories = cleanCategories(req.body.merchandise_categories);
+    if (vendorTypes.includes('MERCHANDISE') && !merchandiseCategories.length) {
+      throw error('Select at least one merchandise category');
+    }
+    const profile = await applyProfileUserTransaction({
+      transact: withTransaction,
+      updateProfile: async (session) => {
+        const existing = await EventVendorProfileModel.findOne({ vendor_user_id: user._id }).session(session);
+        if (existing?.review_status === 'PENDING_REVIEW') {
+          throw error('This profile is awaiting review and cannot be edited', 409);
+        }
+        const materialChange = hasMaterialProfileChange(existing, {
+          business_name: businessName,
+          business_description: description,
+          vendor_types: vendorTypes,
+          merchandise_categories: merchandiseCategories,
+          social_links: socialLinks,
+        });
+        const reviewStatus = materialChange ? 'DRAFT' : existing?.review_status === 'APPROVED' ? 'APPROVED' : 'DRAFT';
+        const updated = await EventVendorProfileModel.findOneAndUpdate(
+          { vendor_user_id: user._id },
+          { $set: {
+            vendor_types: vendorTypes,
+            merchandise_categories: merchandiseCategories,
+            business_name: businessName,
+            business_description: description,
+            social_links: socialLinks,
+            status: 'ACTIVE',
+            review_status: reviewStatus,
+            ...(reviewStatus === 'DRAFT' ? { rejection_reason: existing?.rejection_reason || null } : {}),
+          } },
+          { new: true, upsert: true, runValidators: true, session }
+        );
+        updated.$locals.materialChange = materialChange;
+        return updated;
+      },
+      updateUser: async (session, updated) => {
+        const userUpdate = { vendorSubtype: 'EVENT_VENDOR' };
+        if (updated.$locals.materialChange) {
+          userUpdate.requestStatus = 'PENDING';
+          userUpdate.reasonForRejection = null;
+        }
+        const result = await UserModel.updateOne({ _id: user._id }, { $set: userUpdate }, { session });
+        if (!result.matchedCount) throw error('Vendor account not found', 404);
+      },
+    });
     return res.data({ eventVendorProfile: profile }, 'Marketplace Vendor profile saved');
   } catch (e) { return next(e); }
 };
 
+exports.submitProfile = async (req, res, next) => {
+  try {
+    const user = await assertEventVendor(req.user._id);
+    const profile = await EventVendorProfileModel.findOne({ vendor_user_id: user._id, status: 'ACTIVE' });
+    if (!profile) throw error('Save the Marketplace Vendor profile before submitting', 409);
+    if (profile.review_status === 'APPROVED') {
+      return res.data({ eventVendorProfile: profile }, 'Marketplace Vendor profile is already approved');
+    }
+    await validateProfileForSubmission(profile);
+    const submittedProfile = await applyProfileUserTransaction({
+      transact: withTransaction,
+      updateProfile: async (session) => {
+        const current = await EventVendorProfileModel.findOne({
+          vendor_user_id: user._id,
+          status: 'ACTIVE',
+          review_status: { $in: ['DRAFT', 'REJECTED'] },
+        }).session(session);
+        if (!current) throw error('Profile state changed before submission; refresh and try again', 409);
+        const now = new Date();
+        current.review_status = 'PENDING_REVIEW';
+        current.submitted_at = now;
+        current.submission_count = getNextSubmissionCount(current.submission_count);
+        current.reviewed_at = null;
+        current.reviewed_by = null;
+        current.review_history.push({ status: 'PENDING_REVIEW', changed_at: now });
+        return current.save({ session });
+      },
+      updateUser: async (session) => {
+        const result = await UserModel.updateOne(
+          { _id: user._id },
+          { $set: { requestStatus: 'PENDING', reasonForRejection: null } },
+          { session }
+        );
+        if (!result.matchedCount) throw error('Vendor account not found', 404);
+      },
+    });
+    return res.data({ eventVendorProfile: submittedProfile }, 'Marketplace Vendor profile submitted for review');
+  } catch (e) { return next(e); }
+};
+
 exports.uploadPhoto = async (req, res, next) => {
+  let uploadedKey = null;
+  let profile = null;
+  let category = null;
   try {
     if (!req.file || !req.file.mimetype?.startsWith('image/')) throw error('A JPG, PNG, or HEIC photo is required');
-    const profile = await EventVendorProfileModel.findOne({ vendor_user_id: req.user._id, status: 'ACTIVE' });
+    profile = await EventVendorProfileModel.findOne({ vendor_user_id: req.user._id, status: 'ACTIVE' });
     if (!profile) throw error('Complete the Marketplace Vendor profile first', 409);
-    const count = await EventVendorPhotoModel.countDocuments({ vendor_user_id: req.user._id, status: 'ACTIVE' });
-    if (count >= 10) throw error('Photo Repository holds up to 10 photos', 409);
+    assertProfileEditable(profile);
+    category = String(req.body.category || '').toUpperCase();
+    if (!MERCHANDISE_CATEGORIES.includes(category)) throw error('Select a valid merchandise category');
+    if (!(profile.merchandise_categories || []).includes(category)) {
+      throw error('Select this merchandise category in your profile before adding photos', 403);
+    }
+    await reconcileRepositoryPhotoCounters(profile.profile_id);
     const { url, key } = await addObjectWithKey(req.file, 'marketplace/event-vendors/photos');
+    uploadedKey = key;
     fs.unlink(req.file.path, () => {});
-    const photo = await EventVendorPhotoModel.create({
-      profile_id: profile.profile_id, vendor_user_id: req.user._id,
-      file_url: url, file_key: key, original_name: req.file.originalname, mime_type: req.file.mimetype,
-    });
-    return res.data({ photo }, 'Marketplace Vendor photo uploaded');
+    const mutation = await withTransaction((session) => applyMaterialMutation({
+      mutate: async () => {
+        await reserveRepositoryPhotoSlot(profile.profile_id, category, session);
+        const [created] = await EventVendorPhotoModel.create([{
+          profile_id: profile.profile_id, vendor_user_id: req.user._id,
+          file_url: url, file_key: key, original_name: req.file.originalname, mime_type: req.file.mimetype,
+          category, source: 'REPOSITORY',
+        }], { session });
+        return created;
+      },
+      suspend: () => suspendApprovedProfileInSession(profile.profile_id, req.user._id, session),
+    }));
+    const photo = mutation.value;
+    const requiresReapproval = mutation.requiresReapproval;
+    uploadedKey = null;
+    return res.data({ photo, requires_reapproval: requiresReapproval }, 'Marketplace Vendor photo uploaded');
   } catch (e) {
+    if (uploadedKey) await queueObjectCleanupNonfatal({ objectKey: uploadedKey, reason: 'FAILED_REPOSITORY_PHOTO_CREATE', protectSnapshots: false });
+    if (req.file?.path) fs.unlink(req.file.path, () => {});
+    return next(e);
+  }
+};
+
+exports.replacePhoto = async (req, res, next) => {
+  let uploadedKey = null;
+  try {
+    if (!req.file || !req.file.mimetype?.startsWith('image/')) throw error('A JPG, PNG, or HEIC photo is required');
+    const [profile, existingPhoto] = await Promise.all([
+      EventVendorProfileModel.findOne({ vendor_user_id: req.user._id, status: 'ACTIVE' }),
+      EventVendorPhotoModel.findOne({
+        photo_id: req.params.photoId,
+        vendor_user_id: req.user._id,
+        source: 'REPOSITORY',
+        status: 'ACTIVE',
+      }),
+    ]);
+    if (!profile) throw error('Complete the Marketplace Vendor profile first', 409);
+    assertProfileEditable(profile);
+    if (!existingPhoto) throw error('Repository photo not found', 404);
+    const previousKey = existingPhoto.file_key;
+    const { url, key } = await addObjectWithKey(req.file, 'marketplace/event-vendors/photos');
+    uploadedKey = key;
+    const { photo, requiresReapproval } = await withTransaction(async (session) => {
+      const updated = await EventVendorPhotoModel.findOneAndUpdate(
+        { _id: existingPhoto._id, file_key: previousKey, status: 'ACTIVE' },
+        { $set: { file_url: url, file_key: key, original_name: req.file.originalname, mime_type: req.file.mimetype } },
+        { new: true, session }
+      );
+      if (!updated) throw error('The photo changed before replacement completed', 409);
+      const suspended = await suspendApprovedProfileInSession(profile.profile_id, req.user._id, session);
+      if (previousKey) await enqueueObjectCleanup({ objectKey: previousKey, reason: 'REPOSITORY_PHOTO_REPLACED', session });
+      return { photo: updated, requiresReapproval: suspended };
+    });
+    uploadedKey = null;
+    fs.unlink(req.file.path, () => {});
+    return res.data({ photo, requires_reapproval: requiresReapproval }, 'Marketplace Vendor photo replaced');
+  } catch (e) {
+    if (uploadedKey) await queueObjectCleanupNonfatal({ objectKey: uploadedKey, reason: 'FAILED_REPOSITORY_PHOTO_REPLACEMENT', protectSnapshots: false });
+    if (req.file?.path) fs.unlink(req.file.path, () => {});
+    return next(e);
+  }
+};
+
+exports.uploadApplicationPhoto = async (req, res, next) => {
+  let uploadedKey = null;
+  let profile = null;
+  let category = null;
+  try {
+    await assertEventVendor(req.user._id);
+    if (!req.file || !req.file.mimetype?.startsWith('image/')) throw error('A JPG, PNG, or HEIC photo is required');
+    const eventId = String(req.body.event_id || '').trim();
+    if (!eventId) throw error('Event is required');
+    category = String(req.body.category || '').toUpperCase();
+    const saveToRepository = String(req.body.save_to_repository || '').toLowerCase() === 'true';
+    if (category && !MERCHANDISE_CATEGORIES.includes(category)) throw error('Select a valid merchandise category');
+    if (saveToRepository && !category) throw error('Select a merchandise category to save this photo');
+    [profile] = await Promise.all([
+      EventVendorProfileModel.findOne({ vendor_user_id: req.user._id, status: 'ACTIVE', review_status: 'APPROVED' }),
+    ]);
+    if (!profile) throw error('An approved Marketplace Vendor profile is required', 403);
+    const event = await MarketplaceEventModel.findOne({
+      event_id: eventId,
+      status: { $in: ['OPEN', 'REOPENED'] },
+      vendor_applications_closed_at: null,
+      event_close_date: { $gt: new Date() },
+    }).lean();
+    if (!event) throw error('This event is not accepting applications', 410);
+    const eligibility = validateApplicationPhotoUpload({ profile, event, category });
+    if (eligibility === 'CATEGORY_REQUIRED') throw error('A merchandise category is required for application photos', 400);
+    if (eligibility === 'CATEGORY_NOT_APPROVED') throw error('This merchandise category is not part of your approved profile', 403);
+    if (eligibility === 'MERCHANDISE_NOT_REQUESTED') throw error('This event is not accepting merchandise vendors', 403);
+    if (eligibility === 'VENDOR_NOT_ELIGIBLE') throw error('Your Marketplace Vendor profile is not eligible for this event', 403);
+    if (eligibility !== 'ELIGIBLE') throw error('This event is not accepting applications', 410);
+    if (saveToRepository) {
+      await reconcileRepositoryPhotoCounters(profile.profile_id);
+    }
+    const { url, key } = await addObjectWithKey(req.file, 'marketplace/event-vendors/application-photos');
+    uploadedKey = key;
+    fs.unlink(req.file.path, () => {});
+    const createPhoto = async (session = null) => {
+      if (saveToRepository) await reserveRepositoryPhotoSlot(profile.profile_id, category, session);
+      const [created] = await EventVendorPhotoModel.create([{
+        profile_id: profile.profile_id, vendor_user_id: req.user._id, file_url: url, file_key: key,
+        original_name: req.file.originalname, mime_type: req.file.mimetype, category: category || null,
+        source: saveToRepository ? 'REPOSITORY' : 'APPLICATION', event_id: saveToRepository ? null : eventId,
+        expires_at: saveToRepository ? null : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      }], session ? { session } : undefined);
+      const suspended = saveToRepository
+        ? await suspendApprovedProfileInSession(profile.profile_id, req.user._id, session)
+        : false;
+      return { photo: created, requiresReapproval: suspended };
+    };
+    const { photo, requiresReapproval } = saveToRepository
+      ? await withTransaction(createPhoto)
+      : await createPhoto();
+    uploadedKey = null;
+    return res.data({ photo, requires_reapproval: requiresReapproval }, saveToRepository ? 'Photo uploaded and saved to repository; profile review is required' : 'Application photo uploaded');
+  } catch (e) {
+    if (uploadedKey) await queueObjectCleanupNonfatal({ objectKey: uploadedKey, reason: 'FAILED_APPLICATION_PHOTO_CREATE', protectSnapshots: false });
     if (req.file?.path) fs.unlink(req.file.path, () => {});
     return next(e);
   }
 };
 
 exports.uploadLogo = async (req, res, next) => {
+  let uploadedKey = null;
   try {
     if (!req.file || !req.file.mimetype?.startsWith('image/')) throw error('A logo image is required');
     const profile = await EventVendorProfileModel.findOne({ vendor_user_id: req.user._id, status: 'ACTIVE' });
     if (!profile) throw error('Complete the Marketplace Vendor profile first', 409);
+    assertProfileEditable(profile);
     const { url, key } = await addObjectWithKey(req.file, 'marketplace/event-vendors/logos');
+    uploadedKey = key;
     fs.unlink(req.file.path, () => {});
-    profile.logo_url = url;
-    profile.logo_key = key;
-    await profile.save();
-    return res.data({ eventVendorProfile: profile }, 'Business logo uploaded');
+    const previousKey = profile.logo_key;
+    const { eventVendorProfile, requiresReapproval } = await withTransaction(async (session) => {
+      const updated = await EventVendorProfileModel.findOneAndUpdate(
+        { profile_id: profile.profile_id, status: 'ACTIVE' },
+        { $set: { logo_url: url, logo_key: key } },
+        { new: true, session }
+      );
+      const suspended = await suspendApprovedProfileInSession(profile.profile_id, req.user._id, session);
+      if (previousKey) await enqueueObjectCleanup({ objectKey: previousKey, reason: 'PROFILE_LOGO_REPLACED', protectSnapshots: false, session });
+      return { eventVendorProfile: updated, requiresReapproval: suspended };
+    });
+    uploadedKey = null;
+    return res.data({ eventVendorProfile, requires_reapproval: requiresReapproval }, 'Business logo uploaded');
   } catch (e) {
+    if (uploadedKey) await queueObjectCleanupNonfatal({ objectKey: uploadedKey, reason: 'FAILED_PROFILE_LOGO_UPDATE', protectSnapshots: false });
     if (req.file?.path) fs.unlink(req.file.path, () => {});
     return next(e);
   }
@@ -97,27 +432,76 @@ exports.uploadLogo = async (req, res, next) => {
 
 exports.listPhotos = async (req, res, next) => {
   try {
-    const photos = await EventVendorPhotoModel.find({ vendor_user_id: req.user._id, status: 'ACTIVE' }).sort({ created_at: -1 }).lean();
+    const eventId = String(req.query.event_id || '').trim();
+    const photos = await EventVendorPhotoModel.find({
+      vendor_user_id: req.user._id,
+      status: 'ACTIVE',
+      $or: [
+        { source: 'REPOSITORY' },
+        ...(eventId ? [{ source: 'APPLICATION', event_id: eventId }] : []),
+      ],
+    }).sort({ category: 1, created_at: -1 }).lean();
     return res.data({ photoList: photos }, 'Marketplace Vendor photos');
   } catch (e) { return next(e); }
 };
 
 exports.removePhoto = async (req, res, next) => {
   try {
-    const photo = await EventVendorPhotoModel.findOneAndUpdate(
-      { photo_id: req.params.photoId, vendor_user_id: req.user._id, status: 'ACTIVE' },
-      { $set: { status: 'ARCHIVED', archived_at: new Date() } },
-      { new: true }
-    );
-    if (!photo) throw error('Photo not found', 404);
-    return res.data({ photo }, 'Photo removed from repository');
+    const profile = await EventVendorProfileModel.findOne({ vendor_user_id: req.user._id, status: 'ACTIVE' });
+    if (!profile) throw error('Complete the Marketplace Vendor profile first', 409);
+    assertProfileEditable(profile);
+    const existingPhoto = await EventVendorPhotoModel.findOne({
+      photo_id: req.params.photoId,
+      vendor_user_id: req.user._id,
+      source: 'REPOSITORY',
+      status: 'ACTIVE',
+    });
+    if (!existingPhoto) throw error('Repository photo not found', 404);
+    const { photo, requiresReapproval } = await withTransaction(async (session) => {
+      const archived = await EventVendorPhotoModel.findOneAndUpdate(
+        { photo_id: req.params.photoId, vendor_user_id: req.user._id, status: 'ACTIVE' },
+        { $set: { status: 'ARCHIVED', archived_at: new Date() } },
+        { new: true, session }
+      );
+      if (!archived) throw error('Photo not found', 404);
+      await releaseRepositoryPhotoSlot(profile.profile_id, existingPhoto.category, session);
+      const suspended = await suspendApprovedProfileInSession(profile.profile_id, req.user._id, session);
+      if (existingPhoto.file_key) await enqueueObjectCleanup({ objectKey: existingPhoto.file_key, reason: 'REPOSITORY_PHOTO_REMOVED', session });
+      return { photo: archived, requiresReapproval: suspended };
+    });
+    return res.data({ photo, requires_reapproval: requiresReapproval }, 'Photo removed from repository');
+  } catch (e) { return next(e); }
+};
+
+exports.removeApplicationPhoto = async (req, res, next) => {
+  try {
+    const photo = await EventVendorPhotoModel.findOne({
+      photo_id: req.params.photoId,
+      vendor_user_id: req.user._id,
+      source: 'APPLICATION',
+      status: 'ACTIVE',
+    });
+    if (!photo) throw error('Application photo not found', 404);
+    const submittedSnapshot = await EventVendorApplicationModel.exists({
+      vendor_user_id: req.user._id,
+      'photos.photo_id': photo.photo_id,
+    });
+    if (submittedSnapshot) throw error('Submitted application photos cannot be removed', 409);
+    await withTransaction(async (session) => {
+      await EventVendorPhotoModel.updateOne(
+        { _id: photo._id, status: 'ACTIVE' },
+        { $set: { status: 'ARCHIVED', archived_at: new Date(), expires_at: null } },
+        { session }
+      );
+      if (photo.file_key) await enqueueObjectCleanup({ objectKey: photo.file_key, reason: 'APPLICATION_UPLOAD_REMOVED', session });
+    });
+    return res.data({ photo_id: photo.photo_id }, 'Application photo removed');
   } catch (e) { return next(e); }
 };
 
 exports.eligibleEvents = async (req, res, next) => {
   try {
-    const profile = await EventVendorProfileModel.findOne({ vendor_user_id: req.user._id, status: 'ACTIVE' }).lean();
-    if (!profile) throw error('Complete the Marketplace Vendor profile first', 409);
+    const profile = (await assertApprovedProfile(req.user._id)).toObject();
     const events = await MarketplaceEventModel.find({
       status: { $in: ['OPEN', 'REOPENED'] },
       vendor_applications_closed_at: null,
@@ -132,7 +516,7 @@ exports.submitApplication = async (req, res, next) => {
   try {
     const [user, profile, event] = await Promise.all([
       assertEventVendor(req.user._id),
-      EventVendorProfileModel.findOne({ vendor_user_id: req.user._id, status: 'ACTIVE' }).lean(),
+      EventVendorProfileModel.findOne({ vendor_user_id: req.user._id, status: 'ACTIVE', review_status: 'APPROVED' }).lean(),
       MarketplaceEventModel.findOne({ event_id: req.params.eventId, status: { $in: ['OPEN', 'REOPENED'] }, vendor_applications_closed_at: null }).lean(),
     ]);
     if (!profile) throw error('Complete the Marketplace Vendor profile first', 409);
@@ -142,7 +526,15 @@ exports.submitApplication = async (req, res, next) => {
     if (!requestedTypes.length || eligibleNeeds.length !== requestedTypes.length) throw error('This event is not requesting one or more selected vendor types', 403);
     const photoIds = [...new Set(req.body.photo_ids || [])];
     if (photoIds.length > 5) throw error('Up to 5 application photos are allowed');
-    const photos = await EventVendorPhotoModel.find({ photo_id: { $in: photoIds }, vendor_user_id: req.user._id, status: 'ACTIVE' }).lean();
+    const photos = await EventVendorPhotoModel.find({
+      photo_id: { $in: photoIds },
+      vendor_user_id: req.user._id,
+      status: 'ACTIVE',
+      $or: [
+        { source: 'REPOSITORY' },
+        { source: 'APPLICATION', event_id: event.event_id },
+      ],
+    }).lean();
     if (photos.length !== photoIds.length) throw error('One or more selected photos are unavailable');
     const bullets = (req.body.offering_bullets || []).map((item) => String(item).trim()).filter(Boolean);
     if (!bullets.length) throw error('Add at least one product or service');
@@ -174,7 +566,15 @@ exports.submitApplication = async (req, res, next) => {
         contact_number: `${user.countryCode || ''}${user.mobileNumber || ''}`,
         offering_bullets: bullets, average_price: Number(req.body.average_price),
         additional_notes: String(req.body.additional_notes || '').trim() || null,
-        photos: photos.map((photo) => ({ photo_id: photo.photo_id, file_url: photo.file_url, file_key: photo.file_key })),
+        photos: photos.map((photo) => ({
+          photo_id: photo.photo_id,
+          file_url: photo.file_url,
+          file_key: photo.file_key,
+          category: photo.category,
+          source: photo.source,
+          original_name: photo.original_name,
+          mime_type: photo.mime_type,
+        })),
         electricity_required: electricityRequired, electricity_fee: electricityFee,
         electricity_fee_acknowledged: electricityRequired,
         category_fee: categoryFee, checkout_subtotal: categoryFee + electricityFee,
@@ -189,6 +589,15 @@ exports.submitApplication = async (req, res, next) => {
         { $set: { application_id: application.application_id } }
       );
     }
+    await EventVendorPhotoModel.updateMany(
+      {
+        photo_id: { $in: photoIds },
+        vendor_user_id: req.user._id,
+        source: 'APPLICATION',
+        event_id: event.event_id,
+      },
+      { $set: { status: 'ARCHIVED', archived_at: new Date() } }
+    );
     return res.data({ eventVendorApplication: application }, 'Marketplace Vendor application submitted');
   } catch (e) { return next(e); }
 };
@@ -268,5 +677,70 @@ exports.eventApplications = async (req, res, next) => {
       .populate('vendor_user_id', 'firstName lastName email mobileNumber countryCode')
       .sort({ created_at: -1 }).lean();
     return res.data({ applicationList: applications }, 'Marketplace Vendor applications');
+  } catch (e) { return next(e); }
+};
+
+exports.adminListProfiles = async (req, res, next) => {
+  try {
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit || 20)));
+    const status = String(req.query.status || '').toUpperCase();
+    const query = buildAdminProfileQuery(status);
+    const [profiles, total] = await Promise.all([
+      EventVendorProfileModel.find(query)
+        .populate('vendor_user_id', 'firstName lastName email countryCode mobileNumber vendorSubtype requestStatus')
+        .sort({ submitted_at: -1, updated_at: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+      EventVendorProfileModel.countDocuments(query),
+    ]);
+    return res.data({ profileList: profiles, total, page, totalPages: Math.max(1, Math.ceil(total / limit)) }, 'Marketplace Vendor profiles');
+  } catch (e) { return next(e); }
+};
+
+exports.adminGetProfile = async (req, res, next) => {
+  try {
+    const profile = await EventVendorProfileModel.findOne({ profile_id: req.params.profileId, status: 'ACTIVE' })
+      .populate('vendor_user_id', 'firstName lastName email countryCode mobileNumber vendorSubtype requestStatus')
+      .lean();
+    if (!profile) throw error('Marketplace Vendor profile not found', 404);
+    const photos = await EventVendorPhotoModel.find({
+      vendor_user_id: profile.vendor_user_id._id,
+      source: 'REPOSITORY',
+      status: 'ACTIVE',
+    }).sort({ category: 1, created_at: -1 }).lean();
+    return res.data({ eventVendorProfile: profile, photoList: photos }, 'Marketplace Vendor profile review');
+  } catch (e) { return next(e); }
+};
+
+exports.adminReviewProfile = async (req, res, next) => {
+  try {
+    const reviewStatus = String(req.body.review_status || '').toUpperCase();
+    const reason = String(req.body.rejection_reason || '').trim();
+    const profile = await EventVendorProfileModel.findOne({ profile_id: req.params.profileId, status: 'ACTIVE' });
+    if (!profile) throw error('Marketplace Vendor profile not found', 404);
+    const decisionValidation = validateReviewDecision({ currentStatus: profile.review_status, nextStatus: reviewStatus, rejectionReason: reason });
+    if (decisionValidation === 'NOT_PENDING') throw error('Only submitted profiles may be reviewed', 409);
+    if (decisionValidation === 'REASON_REQUIRED') throw error('A rejection reason is required');
+    if (decisionValidation !== 'VALID') throw error('Approve or reject the profile');
+    const now = new Date();
+    profile.review_status = reviewStatus;
+    profile.reviewed_at = now;
+    profile.reviewed_by = req.user._id;
+    profile.rejection_reason = reviewStatus === 'REJECTED' ? reason : null;
+    profile.review_history.push({ status: reviewStatus, reason: profile.rejection_reason, changed_at: now, changed_by: req.user._id });
+    await profile.save();
+    await UserModel.updateOne(
+      { _id: profile.vendor_user_id, vendorSubtype: 'EVENT_VENDOR' },
+      {
+        $set: {
+          requestStatus: reviewStatus,
+          reasonForRejection: reviewStatus === 'REJECTED' ? reason : null,
+          inactive: false,
+        },
+      }
+    );
+    return res.data({ eventVendorProfile: profile }, `Marketplace Vendor profile ${reviewStatus.toLowerCase()}`);
   } catch (e) { return next(e); }
 };

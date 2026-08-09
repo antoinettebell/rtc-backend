@@ -12,6 +12,7 @@
     "test:reviews": "node src/helper/review-url-helper.test.js",
     "test:tickets": "node src/helper/event-ticket-helper.test.js && node src/helper/event-ticket-tax-helper.test.js && node src/helper/ticket-token-helper.test.js && node src/helper/public-ticket-page.test.js",
     "test:menu-import": "node src/v1/services/menu-csv-import-service.test.js",
+    "reconcile:event-vendor-photo-counters": "node scripts/reconcile-event-vendor-photo-counters.js",
     "migrate:reviews": "node scripts/migrate-review-ratings.js"
   },
   "author": "Tailor",

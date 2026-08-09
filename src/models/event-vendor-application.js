@@ -5,6 +5,10 @@ const photoSnapshotSchema = new mongoose.Schema({
   photo_id: String,
   file_url: String,
   file_key: String,
+  category: String,
+  source: String,
+  original_name: String,
+  mime_type: String,
 }, { _id: false });
 
 const schema = mongoose.Schema({

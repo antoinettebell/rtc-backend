@@ -102,6 +102,7 @@ exports.MarketplaceApplicationModel = require('./marketplace-application');
 exports.EventVendorProfileModel = require('./event-vendor-profile');
 exports.EventVendorPhotoModel = require('./event-vendor-photo');
 exports.EventVendorApplicationModel = require('./event-vendor-application');
+exports.EventVendorObjectCleanupModel = require('./event-vendor-object-cleanup');
 
 /** Define marketplace event question model */
 exports.MarketplaceEventQuestionModel = require('./marketplace-event-question');
