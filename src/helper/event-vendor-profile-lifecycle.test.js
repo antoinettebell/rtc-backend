@@ -13,6 +13,8 @@ const {
   validateApplicationPhotoUpload,
   applyMaterialMutation,
   applyProfileUserTransaction,
+  isSelectedMerchandiseCategory,
+  validateMerchandisePortfolio,
 } = require('./event-vendor-profile-lifecycle');
 
 assert.deepStrictEqual(getEventVendorLifecycle(null), {
@@ -29,6 +31,29 @@ assert.equal(validateRepositoryCapacity({ category: 'ARTISANS_CRAFTERS', categor
 assert.equal(validateRepositoryCapacity({ category: 'ARTISANS_CRAFTERS', categoryCount: 9, totalCount: 40 }), 'REPOSITORY_FULL');
 assert.equal(validateRepositoryCapacity({ category: 'ARTISANS_CRAFTERS', categoryCount: 10, totalCount: 40, replacing: true }), 'AVAILABLE');
 assert.equal(validateRepositoryCapacity({ category: 'SERVICE', categoryCount: 0, totalCount: 0 }), 'INVALID_CATEGORY');
+const activePhoto = (category) => ({ category, source: 'REPOSITORY', status: 'ACTIVE' });
+assert.equal(validateMerchandisePortfolio({
+  selectedCategories: ['ARTISANS_CRAFTERS'],
+  photos: [activePhoto('ARTISANS_CRAFTERS'), activePhoto('ARTISANS_CRAFTERS'), activePhoto('ARTISANS_CRAFTERS')],
+}), 'VALID', 'three photos may be in one selected category');
+assert.equal(validateMerchandisePortfolio({
+  selectedCategories: ['ARTISANS_CRAFTERS', 'APPAREL_ACCESSORIES'],
+  photos: [activePhoto('ARTISANS_CRAFTERS'), activePhoto('ARTISANS_CRAFTERS'), activePhoto('ARTISANS_CRAFTERS')],
+}), 'VALID', 'a second selected category may contain zero photos');
+assert.equal(validateMerchandisePortfolio({
+  selectedCategories: ['ARTISANS_CRAFTERS', 'APPAREL_ACCESSORIES'],
+  photos: [activePhoto('ARTISANS_CRAFTERS'), activePhoto('APPAREL_ACCESSORIES'), activePhoto('APPAREL_ACCESSORIES')],
+}), 'VALID', 'three photos may be distributed across selected categories');
+assert.equal(validateMerchandisePortfolio({
+  selectedCategories: ['ARTISANS_CRAFTERS'],
+  photos: [activePhoto('ARTISANS_CRAFTERS'), activePhoto('ARTISANS_CRAFTERS')],
+}), 'THREE_PHOTOS_REQUIRED');
+assert.equal(validateMerchandisePortfolio({
+  selectedCategories: ['ARTISANS_CRAFTERS'],
+  photos: [activePhoto('ARTISANS_CRAFTERS'), activePhoto('ARTISANS_CRAFTERS'), activePhoto('APPAREL_ACCESSORIES')],
+}), 'THREE_PHOTOS_REQUIRED', 'unselected-category photos do not count');
+assert.equal(isSelectedMerchandiseCategory(['ARTISANS_CRAFTERS'], 'APPAREL_ACCESSORIES'), false);
+assert.equal(isSelectedMerchandiseCategory(['ARTISANS_CRAFTERS'], 'ARTISANS_CRAFTERS'), true);
 const reservation = buildPhotoSlotReservation('profile-1', 'ARTISANS_CRAFTERS');
 assert.equal(reservation.query.$and[0].$or[0].repository_photo_total.$lt, 40);
 assert.equal(reservation.query.$and[1].$or[0]['repository_photo_counts.ARTISANS_CRAFTERS'].$lt, 10);

@@ -25,6 +25,17 @@ const validateRepositoryCapacity = ({ category, categoryCount, totalCount, repla
   if (totalCount >= 40) return 'REPOSITORY_FULL';
   return 'AVAILABLE';
 };
+const isSelectedMerchandiseCategory = (selectedCategories = [], category) =>
+  MERCHANDISE_CATEGORIES.includes(category) && selectedCategories.includes(category);
+const validateMerchandisePortfolio = ({ selectedCategories = [], photos = [] }) => {
+  if (!selectedCategories.length) return 'CATEGORY_REQUIRED';
+  const eligibleCount = photos.filter((photo) =>
+    photo?.source === 'REPOSITORY' &&
+    photo?.status === 'ACTIVE' &&
+    selectedCategories.includes(photo?.category)
+  ).length;
+  return eligibleCount >= 3 ? 'VALID' : 'THREE_PHOTOS_REQUIRED';
+};
 const buildPhotoSlotReservation = (profileId, category) => {
   if (!MERCHANDISE_CATEGORIES.includes(category)) return null;
   const categoryPath = `repository_photo_counts.${category}`;
@@ -99,6 +110,8 @@ module.exports = {
   MERCHANDISE_CATEGORIES,
   getEventVendorLifecycle,
   validateRepositoryCapacity,
+  isSelectedMerchandiseCategory,
+  validateMerchandisePortfolio,
   buildPhotoSlotReservation,
   isApplicationPhotoSelectionValid,
   buildAdminProfileQuery,

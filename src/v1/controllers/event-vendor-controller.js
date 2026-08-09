@@ -28,6 +28,7 @@ const {
   hasMaterialProfileChange,
   applyMaterialMutation,
   applyProfileUserTransaction,
+  isSelectedMerchandiseCategory,
 } = require('../../helper/event-vendor-profile-lifecycle');
 const { reconcileRepositoryPhotoCounters } = require('../../helper/event-vendor-photo-counter');
 const { enqueueObjectCleanup } = require('../../helper/event-vendor-photo-cleanup');
@@ -66,20 +67,13 @@ const validateProfileForSubmission = async (profile) => {
     if (!profile.merchandise_categories?.length) {
       throw error('Select at least one merchandise category', 409);
     }
-    const categoryCounts = await EventVendorPhotoModel.aggregate([
-      {
-        $match: {
-          vendor_user_id: profile.vendor_user_id,
-          source: 'REPOSITORY',
-          status: 'ACTIVE',
-          category: { $in: profile.merchandise_categories },
-        },
-      },
-      { $group: { _id: '$category', count: { $sum: 1 } } },
-    ]);
-    const populated = new Set(categoryCounts.filter((item) => item.count > 0).map((item) => item._id));
-    const missing = profile.merchandise_categories.filter((category) => !populated.has(category));
-    if (missing.length) throw error('Add at least one portfolio image for each selected merchandise category', 409);
+    const photoCount = await EventVendorPhotoModel.countDocuments({
+      vendor_user_id: profile.vendor_user_id,
+      source: 'REPOSITORY',
+      status: 'ACTIVE',
+      category: { $in: profile.merchandise_categories },
+    });
+    if (photoCount < 3) throw error('Add at least 3 portfolio photos in your selected merchandise categories', 409);
   }
 };
 
@@ -269,7 +263,7 @@ exports.uploadPhoto = async (req, res, next) => {
     assertProfileEditable(profile);
     category = String(req.body.category || '').toUpperCase();
     if (!MERCHANDISE_CATEGORIES.includes(category)) throw error('Select a valid merchandise category');
-    if (!(profile.merchandise_categories || []).includes(category)) {
+    if (!isSelectedMerchandiseCategory(profile.merchandise_categories || [], category)) {
       throw error('Select this merchandise category in your profile before adding photos', 403);
     }
     await reconcileRepositoryPhotoCounters(profile.profile_id);
