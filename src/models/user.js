@@ -135,6 +135,9 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    eventCoordinatorAddressCountry: { type: String, default: null },
+    eventCoordinatorAddressLatitude: { type: Number, min: -90, max: 90, default: null },
+    eventCoordinatorAddressLongitude: { type: Number, min: -180, max: 180, default: null },
     eventCoordinatorFormattedAddress: {
       type: String,
       default: null,

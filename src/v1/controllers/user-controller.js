@@ -15,6 +15,7 @@ const {
   buildTaxIdUpdate,
   sanitizeCoordinatorProfile,
 } = require('../../helper/event-coordinator-profile');
+const { buildCoordinatorAddressUpdate } = require('../../helper/coordinator-address-helper');
 const { applyVendorScheduleTimeZoneCache } = require('../../helper/vendor-schedule-timezone');
 const bcrypt = require('bcrypt');
 const entityName = 'User';
@@ -438,19 +439,22 @@ exports.update = async (req, res, next) => {
             })
           );
         }
-        existRecord.eventCoordinatorAddressLine1 =
-          eventCoordinatorAddressLine1 || eventCoordinatorCompanyAddress || null;
-        existRecord.eventCoordinatorAddressLine2 =
-          eventCoordinatorAddressLine2 || '';
-        existRecord.eventCoordinatorAddressCity =
-          eventCoordinatorAddressCity || null;
-        existRecord.eventCoordinatorAddressState =
-          eventCoordinatorAddressState || null;
-        existRecord.eventCoordinatorAddressZip =
-          eventCoordinatorAddressZip || null;
-        existRecord.eventCoordinatorFormattedAddress =
-          eventCoordinatorFormattedAddress || eventCoordinatorCompanyAddress || null;
-        existRecord.eventCoordinatorPlaceId = eventCoordinatorPlaceId || null;
+        Object.assign(
+          existRecord,
+          buildCoordinatorAddressUpdate(req.body, { partial: true })
+        );
+        if (
+          !Object.prototype.hasOwnProperty.call(req.body, 'eventCoordinatorAddressLine1') &&
+          Object.prototype.hasOwnProperty.call(req.body, 'eventCoordinatorCompanyAddress')
+        ) {
+          existRecord.eventCoordinatorAddressLine1 = eventCoordinatorCompanyAddress || null;
+        }
+        if (
+          !Object.prototype.hasOwnProperty.call(req.body, 'eventCoordinatorFormattedAddress') &&
+          Object.prototype.hasOwnProperty.call(req.body, 'eventCoordinatorCompanyAddress')
+        ) {
+          existRecord.eventCoordinatorFormattedAddress = eventCoordinatorCompanyAddress || null;
+        }
         const paymentPreferenceProvided = Object.prototype.hasOwnProperty.call(
           req.body,
           'eventCoordinatorPaymentPreference'

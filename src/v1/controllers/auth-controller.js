@@ -15,6 +15,7 @@ const {
   maskTaxId,
   sanitizeCoordinatorProfile,
 } = require('../../helper/event-coordinator-profile');
+const { buildCoordinatorAddressUpdate } = require('../../helper/coordinator-address-helper');
 const EncryptionService = require('../../helper/encryption');
 const disposableDomains = require('disposable-email-domains');
 const { addObject } = require('../../helper/aws');
@@ -167,6 +168,7 @@ exports.add = async (req, res, next) => {
       ? {
           eventCoordinatorCompanyName,
           eventCoordinatorCompanyAddress: eventCoordinatorCompanyAddress || null,
+          ...buildCoordinatorAddressUpdate(req.body),
           eventCoordinatorAddressLine1:
             eventCoordinatorAddressLine1 || eventCoordinatorCompanyAddress || null,
           eventCoordinatorAddressLine2: eventCoordinatorAddressLine2 || '',
