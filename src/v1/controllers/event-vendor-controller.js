@@ -10,6 +10,7 @@ const {
   MarketplaceVendorAgreementModel,
   MarketplaceAttachmentModel,
   MarketplaceAgreementAuditModel,
+  MarketplaceEventImageModel,
 } = require('../../models');
 const { addObjectWithKey } = require('../../helper/aws');
 const { docusign } = require('../../config');
@@ -285,7 +286,7 @@ exports.uploadPhoto = async (req, res, next) => {
         }], { session });
         return created;
       },
-      suspend: () => suspendApprovedProfileInSession(profile.profile_id, req.user._id, session),
+      suspend: async () => false,
     }));
     const photo = mutation.value;
     const requiresReapproval = mutation.requiresReapproval;
@@ -324,7 +325,7 @@ exports.replacePhoto = async (req, res, next) => {
         { new: true, session }
       );
       if (!updated) throw error('The photo changed before replacement completed', 409);
-      const suspended = await suspendApprovedProfileInSession(profile.profile_id, req.user._id, session);
+      const suspended = false;
       if (previousKey) await enqueueObjectCleanup({ objectKey: previousKey, reason: 'REPOSITORY_PHOTO_REPLACED', session });
       return { photo: updated, requiresReapproval: suspended };
     });
@@ -382,16 +383,14 @@ exports.uploadApplicationPhoto = async (req, res, next) => {
         source: saveToRepository ? 'REPOSITORY' : 'APPLICATION', event_id: saveToRepository ? null : eventId,
         expires_at: saveToRepository ? null : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       }], session ? { session } : undefined);
-      const suspended = saveToRepository
-        ? await suspendApprovedProfileInSession(profile.profile_id, req.user._id, session)
-        : false;
+      const suspended = false;
       return { photo: created, requiresReapproval: suspended };
     };
     const { photo, requiresReapproval } = saveToRepository
       ? await withTransaction(createPhoto)
       : await createPhoto();
     uploadedKey = null;
-    return res.data({ photo, requires_reapproval: requiresReapproval }, saveToRepository ? 'Photo uploaded and saved to repository; profile review is required' : 'Application photo uploaded');
+    return res.data({ photo, requires_reapproval: requiresReapproval }, saveToRepository ? 'Photo uploaded and saved to repository' : 'Application photo uploaded');
   } catch (e) {
     if (uploadedKey) await queueObjectCleanupNonfatal({ objectKey: uploadedKey, reason: 'FAILED_APPLICATION_PHOTO_CREATE', protectSnapshots: false });
     if (req.file?.path) fs.unlink(req.file.path, () => {});
@@ -464,7 +463,7 @@ exports.removePhoto = async (req, res, next) => {
       );
       if (!archived) throw error('Photo not found', 404);
       await releaseRepositoryPhotoSlot(profile.profile_id, existingPhoto.category, session);
-      const suspended = await suspendApprovedProfileInSession(profile.profile_id, req.user._id, session);
+      const suspended = false;
       if (existingPhoto.file_key) await enqueueObjectCleanup({ objectKey: existingPhoto.file_key, reason: 'REPOSITORY_PHOTO_REMOVED', session });
       return { photo: archived, requiresReapproval: suspended };
     });
@@ -507,7 +506,27 @@ exports.eligibleEvents = async (req, res, next) => {
       event_close_date: { $gt: new Date() },
       event_vendor_needs: { $elemMatch: { vendor_type: { $in: profile.vendor_types }, quantity: { $gt: 0 } } },
     }).sort({ event_date: 1 }).lean();
-    return res.data({ marketplaceEventList: events }, 'Eligible Marketplace Vendor events');
+    const images = await MarketplaceEventImageModel.find({
+      event_id: { $in: events.map((event) => event.event_id) },
+      status: 'ACTIVE',
+    }).select('image_id event_id image_url original_name mime_type').lean();
+    const publicFields = [
+      'event_id', 'event_name', 'event_description', 'event_type', 'status',
+      'event_date', 'event_start_date', 'event_end_date', 'event_start_time',
+      'event_end_time', 'event_time', 'event_close_time', 'event_timezone', 'event_address', 'formatted_address',
+      'event_city', 'event_state', 'expected_ga_guests', 'expected_vip_guests',
+      'expected_guest_count', 'number_of_guests', 'vip_guest_count', 'payment_responsibility', 'who_pays',
+      'last_date_to_accept_payments', 'vendor_payment_deadline',
+      'vendor_fee_payment_deadline', 'event_vendor_needs', 'event_vendor_electricity_fee',
+      'vendor_applications_closed_at', 'event_close_date',
+    ];
+    const marketplaceEventList = events.map((event) => ({
+      ...Object.fromEntries(publicFields
+        .filter((field) => event[field] !== undefined)
+        .map((field) => [field, event[field]])),
+      public_images: images.filter((image) => image.event_id === event.event_id),
+    }));
+    return res.data({ marketplaceEventList }, 'Eligible Marketplace Vendor events');
   } catch (e) { return next(e); }
 };
 
