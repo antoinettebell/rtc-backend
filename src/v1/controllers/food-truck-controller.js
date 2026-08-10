@@ -1087,11 +1087,7 @@ exports.update = async (req, res, next) => {
     if (!item) {
       return res.error(new Error('No food truck found'), 409);
     }
-    const neededPrimaryTruck = !(item.truck_units || []).length;
     ensureDefaultTruckUnits(item);
-    if (neededPrimaryTruck && create_name) {
-      item.truck_units[0].name = create_name.trim();
-    }
 
     if (name) {
       item.name = name;

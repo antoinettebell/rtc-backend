@@ -36,6 +36,7 @@ const schema = mongoose.Schema({
   governance_accepted_at: { type: Date, required: true },
   accepted_ip: { type: String, default: null },
   status: { type: String, enum: ['SUBMITTED', 'UNDER_REVIEW', 'AWARDED', 'NOT_SELECTED', 'PAYMENT_DUE', 'PAID', 'WITHDRAWN'], default: 'SUBMITTED', index: true },
+  withdrawn_at: { type: Date, default: null },
   payment_id: { type: String, default: null, index: true },
 }, { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } });
 

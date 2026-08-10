@@ -19,6 +19,7 @@ const sanitizeMarketplaceContactForCoordinator = (
   const value = { ...record };
   if (!detailsUnlocked && !fullAccess) {
     delete value.phone;
+    delete value.contact_number;
     delete value.email;
     delete value.contact_name;
     if (value.vendor_user_id && typeof value.vendor_user_id === 'object') {

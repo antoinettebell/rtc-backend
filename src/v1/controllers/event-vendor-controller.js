@@ -38,8 +38,34 @@ const { enqueueObjectCleanup } = require('../../helper/event-vendor-photo-cleanu
 const {
   buildSignedAgreementAttachmentLink,
 } = require('../../helper/marketplace-agreement-vendor-context');
+const {
+  sanitizeMarketplaceContactForCoordinator,
+} = require('../../helper/marketplace-vendor-contact-helper');
+const {
+  ACTIVE_EVENT_VENDOR_APPLICATION_STATUSES,
+  isEventVendorApplicationEditable,
+  isEventVendorApplicationWithdrawable,
+  isEventOpenForOrdinaryWithdrawal,
+  resolveSelectedApplicationPhotos,
+} = require('../../helper/marketplace-submission-lifecycle');
 
 const TYPES = ['MERCHANDISE', 'SERVICE', 'OTHER'];
+const EVENT_VENDOR_PUBLIC_EVENT_FIELDS = [
+  'event_id', 'event_name', 'event_description', 'event_type', 'status',
+  'event_date', 'event_start_date', 'event_end_date', 'event_start_time',
+  'event_end_time', 'event_time', 'event_close_time', 'event_timezone',
+  'event_address', 'formatted_address', 'event_city', 'event_state',
+  'expected_ga_guests', 'expected_vip_guests', 'expected_guest_count',
+  'number_of_guests', 'vip_guest_count', 'payment_responsibility', 'who_pays',
+  'last_date_to_accept_payments', 'vendor_payment_deadline',
+  'vendor_fee_payment_deadline', 'event_vendor_needs',
+  'event_vendor_electricity_fee', 'vendor_applications_closed_at', 'event_close_date',
+];
+const sanitizeEventVendorEvent = (event) => Object.fromEntries(
+  EVENT_VENDOR_PUBLIC_EVENT_FIELDS
+    .filter((field) => event?.[field] !== undefined)
+    .map((field) => [field, event[field]])
+);
 const error = (message, code = 400) => Object.assign(new Error(message), { code });
 const cleanTypes = (value) => [...new Set((Array.isArray(value) ? value : []).map((item) => String(item).toUpperCase()))]
   .filter((item) => TYPES.includes(item));
@@ -500,7 +526,13 @@ exports.removeApplicationPhoto = async (req, res, next) => {
 exports.eligibleEvents = async (req, res, next) => {
   try {
     const profile = (await assertApprovedProfile(req.user._id)).toObject();
+    const activeApplications = await EventVendorApplicationModel.find({
+      vendor_user_id: req.user._id,
+      status: { $in: ACTIVE_EVENT_VENDOR_APPLICATION_STATUSES },
+    }).select('event_id').lean();
+    const excludedEventIds = activeApplications.map((item) => item.event_id);
     const events = await MarketplaceEventModel.find({
+      event_id: { $nin: excludedEventIds },
       status: { $in: ['OPEN', 'REOPENED'] },
       vendor_applications_closed_at: null,
       event_close_date: { $gt: new Date() },
@@ -510,20 +542,8 @@ exports.eligibleEvents = async (req, res, next) => {
       event_id: { $in: events.map((event) => event.event_id) },
       status: 'ACTIVE',
     }).select('image_id event_id image_url original_name mime_type').lean();
-    const publicFields = [
-      'event_id', 'event_name', 'event_description', 'event_type', 'status',
-      'event_date', 'event_start_date', 'event_end_date', 'event_start_time',
-      'event_end_time', 'event_time', 'event_close_time', 'event_timezone', 'event_address', 'formatted_address',
-      'event_city', 'event_state', 'expected_ga_guests', 'expected_vip_guests',
-      'expected_guest_count', 'number_of_guests', 'vip_guest_count', 'payment_responsibility', 'who_pays',
-      'last_date_to_accept_payments', 'vendor_payment_deadline',
-      'vendor_fee_payment_deadline', 'event_vendor_needs', 'event_vendor_electricity_fee',
-      'vendor_applications_closed_at', 'event_close_date',
-    ];
     const marketplaceEventList = events.map((event) => ({
-      ...Object.fromEntries(publicFields
-        .filter((field) => event[field] !== undefined)
-        .map((field) => [field, event[field]])),
+      ...sanitizeEventVendorEvent(event),
       public_images: images.filter((image) => image.event_id === event.event_id),
     }));
     return res.data({ marketplaceEventList }, 'Eligible Marketplace Vendor events');
@@ -544,6 +564,8 @@ exports.submitApplication = async (req, res, next) => {
     if (!requestedTypes.length || eligibleNeeds.length !== requestedTypes.length) throw error('This event is not requesting one or more selected vendor types', 403);
     const photoIds = [...new Set(req.body.photo_ids || [])];
     if (photoIds.length > 5) throw error('Up to 5 application photos are allowed');
+    const applicationQuery = { event_id: event.event_id, vendor_user_id: user._id };
+    const existingApplication = await EventVendorApplicationModel.findOne(applicationQuery);
     const photos = await EventVendorPhotoModel.find({
       photo_id: { $in: photoIds },
       vendor_user_id: req.user._id,
@@ -553,7 +575,12 @@ exports.submitApplication = async (req, res, next) => {
         { source: 'APPLICATION', event_id: event.event_id },
       ],
     }).lean();
-    if (photos.length !== photoIds.length) throw error('One or more selected photos are unavailable');
+    const selectedPhotos = resolveSelectedApplicationPhotos({
+      photoIds,
+      activePhotos: photos,
+      priorSnapshots: (existingApplication?.photos || []).map((photo) => photo.toObject?.() || photo),
+    });
+    if (selectedPhotos.length !== photoIds.length) throw error('One or more selected photos are unavailable');
     const bullets = (req.body.offering_bullets || []).map((item) => String(item).trim()).filter(Boolean);
     if (!bullets.length) throw error('Add at least one product or service');
     const electricityRequired = req.body.electricity_required === true;
@@ -571,28 +598,23 @@ exports.submitApplication = async (req, res, next) => {
     if (!agreement) throw error('Sign the Marketplace NDA and Governance Document before submitting', 409);
     const categoryFee = Math.max(...eligibleNeeds.map((need) => Number(need.fee || 0)));
     const electricityFee = electricityRequired ? Number(event.event_vendor_electricity_fee || 0) : 0;
-    const applicationQuery = {
-      event_id: event.event_id,
-      vendor_user_id: user._id,
-    };
-    const { application } = await findOrCreateEventVendorApplication({
-      model: EventVendorApplicationModel,
-      query: applicationQuery,
-      payload: {
+    if (existingApplication && !isEventVendorApplicationEditable(existingApplication.status)) {
+      const message = existingApplication.status === 'WITHDRAWN'
+        ? 'This application was withdrawn. Reapplication requires coordinator support.'
+        : 'This application can no longer be edited.';
+      throw error(message, 409);
+    }
+    const applicationPayload = {
         event_id: event.event_id, profile_id: profile.profile_id, vendor_user_id: user._id,
         vendor_types: requestedTypes, business_name: profile.business_name,
         contact_name: `${user.firstName || ''} ${user.lastName || ''}`.trim(),
         contact_number: `${user.countryCode || ''}${user.mobileNumber || ''}`,
         offering_bullets: bullets, average_price: Number(req.body.average_price),
         additional_notes: String(req.body.additional_notes || '').trim() || null,
-        photos: photos.map((photo) => ({
-          photo_id: photo.photo_id,
-          file_url: photo.file_url,
-          file_key: photo.file_key,
-          category: photo.category,
-          source: photo.source,
-          original_name: photo.original_name,
-          mime_type: photo.mime_type,
+        photos: selectedPhotos.map((photo) => ({
+          photo_id: photo.photo_id, file_url: photo.file_url, file_key: photo.file_key,
+          category: photo.category, source: photo.source,
+          original_name: photo.original_name, mime_type: photo.mime_type,
         })),
         electricity_required: electricityRequired, electricity_fee: electricityFee,
         electricity_fee_acknowledged: electricityRequired,
@@ -600,8 +622,18 @@ exports.submitApplication = async (req, res, next) => {
         nda_version: agreement.nda_version, nda_accepted_at: agreement.signed_at,
         governance_version: agreement.governance_version, governance_accepted_at: agreement.signed_at,
         accepted_ip: req.ip,
-      },
-    });
+    };
+    let application;
+    if (existingApplication) {
+      Object.assign(existingApplication, applicationPayload);
+      application = await existingApplication.save();
+    } else {
+      ({ application } = await findOrCreateEventVendorApplication({
+      model: EventVendorApplicationModel,
+      query: applicationQuery,
+      payload: applicationPayload,
+      }));
+    }
     if (!agreement.application_id && agreement.event_id === event.event_id) {
       await MarketplaceVendorAgreementModel.updateOne(
         { agreement_id: agreement.agreement_id },
@@ -648,7 +680,51 @@ exports.submitApplication = async (req, res, next) => {
 exports.myApplications = async (req, res, next) => {
   try {
     const applications = await EventVendorApplicationModel.find({ vendor_user_id: req.user._id }).sort({ created_at: -1 }).lean();
-    return res.data({ applicationList: applications }, 'Marketplace Vendor applications');
+    const events = await MarketplaceEventModel.find({
+      event_id: { $in: applications.map((item) => item.event_id) },
+    }).lean();
+    const images = await MarketplaceEventImageModel.find({
+      event_id: { $in: applications.map((item) => item.event_id) },
+      status: 'ACTIVE',
+    }).select('image_id event_id image_url original_name mime_type').lean();
+    const eventsById = new Map(events.map((event) => [event.event_id, event]));
+    return res.data({
+      applicationList: applications.map((application) => ({
+        ...application,
+        event: eventsById.has(application.event_id) ? {
+          ...sanitizeEventVendorEvent(eventsById.get(application.event_id)),
+          public_images: images.filter((image) => image.event_id === application.event_id),
+        } : null,
+      })),
+    }, 'Marketplace Vendor applications');
+  } catch (e) { return next(e); }
+};
+
+exports.withdrawApplication = async (req, res, next) => {
+  try {
+    await assertEventVendor(req.user._id);
+    const application = await EventVendorApplicationModel.findOne({
+      application_id: req.params.applicationId,
+      vendor_user_id: req.user._id,
+    });
+    if (!application) throw error('Marketplace Vendor application not found', 404);
+    if (application.status === 'WITHDRAWN') {
+      return res.data({ eventVendorApplication: application }, 'Marketplace Vendor application already withdrawn');
+    }
+    const event = await MarketplaceEventModel.findOne({ event_id: application.event_id })
+      .select('event_id status vendor_applications_closed_at event_close_date')
+      .lean();
+    const eventOpen = isEventOpenForOrdinaryWithdrawal(event);
+    if (!eventOpen) {
+      throw error('This event is closed and the application can no longer be withdrawn.', 409);
+    }
+    if (!isEventVendorApplicationWithdrawable(application.status)) {
+      throw error('This application can no longer be withdrawn.', 409);
+    }
+    application.status = 'WITHDRAWN';
+    application.withdrawn_at = new Date();
+    await application.save();
+    return res.data({ eventVendorApplication: application }, 'Marketplace Vendor application withdrawn');
   } catch (e) { return next(e); }
 };
 
@@ -719,7 +795,12 @@ exports.eventApplications = async (req, res, next) => {
     const applications = await EventVendorApplicationModel.find({ event_id: event.event_id })
       .populate('vendor_user_id', 'firstName lastName email mobileNumber countryCode')
       .sort({ created_at: -1 }).lean();
-    return res.data({ applicationList: applications }, 'Marketplace Vendor applications');
+    return res.data({
+      applicationList: applications.map((application) =>
+        sanitizeMarketplaceContactForCoordinator(application, {
+          detailsUnlocked: application.status === 'PAID',
+        }))
+    }, 'Marketplace Vendor applications');
   } catch (e) { return next(e); }
 };
 

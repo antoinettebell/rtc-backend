@@ -22,6 +22,7 @@ router.delete('/event-vendor/photos/:photoId', allowedTo(['VENDOR']), EventVendo
 router.get('/event-vendor/events', allowedTo(['VENDOR']), EventVendorController.eligibleEvents);
 router.post('/event-vendor/events/:eventId/applications', allowedTo(['VENDOR']), EventVendorController.submitApplication);
 router.get('/event-vendor/applications/my', allowedTo(['VENDOR']), EventVendorController.myApplications);
+router.patch('/event-vendor/applications/:applicationId/withdraw', allowedTo(['VENDOR']), EventVendorController.withdrawApplication);
 router.post('/event-vendor/applications/:applicationId/award', allowedTo(['CUSTOMER']), EventVendorController.awardApplication);
 router.get('/event-vendor/events/:eventId/applications', allowedTo(['CUSTOMER']), EventVendorController.eventApplications);
 router.get('/admin/event-vendors', allowedTo(['SUPER_ADMIN']), EventVendorController.adminListProfiles);

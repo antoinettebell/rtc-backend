@@ -68,6 +68,10 @@ const {
   OperationalNotificationModel,
 } = require('../../models');
 const {
+  ACTIVE_FOOD_BID_STATUSES,
+  ACTIVE_FOOD_APPLICATION_STATUSES,
+} = require('../../helper/marketplace-submission-lifecycle');
+const {
   moderateMarketplaceText,
 } = require('../../helper/marketplace-content-moderation');
 const {
@@ -4203,11 +4207,28 @@ exports.getOpenEvents = async (req, res, next) => {
     await getVendorMarketplaceFoodTruck(req.user._id);
     await closeExpiredMarketplaceEvents();
 
+    const [activeBids, activeApplications] = await Promise.all([
+      MarketplaceBidService.getByData(
+        { vendor_user_id: req.user._id, bid_status: { $in: ACTIVE_FOOD_BID_STATUSES } },
+        { lean: true }
+      ),
+      MarketplaceApplicationService.getByData(
+        { vendor_user_id: req.user._id, application_status: { $in: ACTIVE_FOOD_APPLICATION_STATUSES } },
+        { lean: true }
+      ),
+    ]);
+    const excludedEventIds = [...new Set([
+      ...(activeBids || []).map((item) => item.event_id),
+      ...(activeApplications || []).map((item) => item.event_id),
+    ])];
+    const openEventQuery = {
+      status: { $in: ACTIVE_EVENT_STATUSES },
+      event_close_date: { $gt: new Date() },
+      event_id: { $nin: excludedEventIds },
+    };
+
     const openEvents = await MarketplaceEventService.getByData(
-      {
-        status: { $in: ACTIVE_EVENT_STATUSES },
-        event_close_date: { $gt: new Date() },
-      },
+      openEventQuery,
       {
         paging: {
           limit: Number(req.query.limit || 20),
@@ -4228,10 +4249,7 @@ exports.getOpenEvents = async (req, res, next) => {
       )
     );
 
-    const total = await MarketplaceEventService.getCount({
-      status: { $in: ACTIVE_EVENT_STATUSES },
-      event_close_date: { $gt: new Date() },
-    });
+    const total = await MarketplaceEventService.getCount(openEventQuery);
 
     return res.data(
       {
@@ -4698,6 +4716,19 @@ exports.submitBid = async (req, res, next) => {
       throw buildError('This event uses the application flow, not bids', 400);
     }
 
+    const withdrawnBid = await MarketplaceBidService.getByData(
+      {
+        event_id: req.params.eventId,
+        vendor_user_id: req.user._id,
+        submission_round: currentRound,
+        bid_status: 'WITHDRAWN',
+      },
+      { singleResult: true }
+    );
+    if (withdrawnBid) {
+      throw buildError('This bid was withdrawn. Use the deliberate Reapply workflow if the coordinator permits another submission.', 409);
+    }
+
     const existingApplication = await MarketplaceApplicationService.getByData(
       {
         event_id: req.params.eventId,
@@ -4941,7 +4972,11 @@ exports.withdrawBid = async (req, res, next) => {
       throw buildError('Marketplace bid not found', 404);
     }
 
-    if (['AWARDED', 'NOT_AWARDED', 'WITHDRAWN'].includes(bid.bid_status)) {
+    if (bid.bid_status === 'WITHDRAWN') {
+      return res.data({ marketplaceBid: bid }, 'Marketplace bid already withdrawn');
+    }
+
+    if (['AWARDED', 'NOT_AWARDED'].includes(bid.bid_status)) {
       throw buildError('This bid can no longer be withdrawn.', 400);
     }
 
@@ -5316,6 +5351,19 @@ exports.submitApplication = async (req, res, next) => {
       throw buildError('This event uses the bid flow, not applications', 400);
     }
 
+    const withdrawnApplication = await MarketplaceApplicationService.getByData(
+      {
+        event_id: req.params.eventId,
+        vendor_user_id: req.user._id,
+        submission_round: currentRound,
+        application_status: 'WITHDRAWN',
+      },
+      { singleResult: true }
+    );
+    if (withdrawnApplication) {
+      throw buildError('This application was withdrawn. Use the deliberate Reapply workflow if the coordinator permits another submission.', 409);
+    }
+
     const existingBid = await MarketplaceBidService.getByData(
       {
         event_id: req.params.eventId,
@@ -5553,6 +5601,13 @@ exports.withdrawApplication = async (req, res, next) => {
       throw buildError('Marketplace application not found', 404);
     }
 
+    if (application.application_status === 'WITHDRAWN') {
+      return res.data(
+        { marketplaceApplication: application },
+        'Marketplace application already withdrawn'
+      );
+    }
+
     if (
       [
         'ACCEPTED',
@@ -5560,7 +5615,6 @@ exports.withdrawApplication = async (req, res, next) => {
         'PAID',
         'CONFIRMED',
         'NOT_SELECTED',
-        'WITHDRAWN',
       ].includes(application.application_status)
     ) {
       throw buildError('This application can no longer be withdrawn.', 400);

@@ -29,6 +29,10 @@ assert.strictEqual(locked.phone, undefined);
 assert.strictEqual(locked.email, undefined);
 assert.strictEqual(locked.contact_name, undefined);
 assert.deepStrictEqual(locked.vendor_user_id, { _id: 'vendor-1' });
+assert.strictEqual(
+  sanitizeMarketplaceContactForCoordinator({ contact_number: '5551234567' }).contact_number,
+  undefined
+);
 const paid = sanitizeMarketplaceContactForCoordinator(submission, { detailsUnlocked: true });
 assert.strictEqual(paid.phone, '5551112222');
 assert.strictEqual(paid.email, 'pat@example.com');
