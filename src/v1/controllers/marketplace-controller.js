@@ -45,6 +45,10 @@ const {
   buildFoodVendorAwardDetailsHtml,
 } = require('../../helper/marketplace-award-email-helper');
 const {
+  deriveMarketplaceVendorContact,
+  sanitizeMarketplaceContactForCoordinator,
+} = require('../../helper/marketplace-vendor-contact-helper');
+const {
   buildVendorEventCloseState,
   getMarketplaceEventTiming,
 } = require('../../helper/marketplace-event-close-helper');
@@ -1751,7 +1755,7 @@ const redactLockedMarketplaceRecord = (
   }
 
   const redacted = {
-    ...plainRecord,
+    ...sanitizeMarketplaceContactForCoordinator(plainRecord),
     marketplace_unlock: unlockState,
     private_details_locked: true,
   };
@@ -5367,12 +5371,19 @@ exports.submitApplication = async (req, res, next) => {
       throw buildError('Submit the revised application to update your response.', 400);
     }
 
+    // Contact identity is authoritative from the authenticated account. Mobile
+    // clients may not choose which vendor contact details reach a coordinator.
+    const vendorContact = deriveMarketplaceVendorContact({
+      user: req.user,
+      foodTruck,
+    });
+
     if (requestedStatus !== 'DRAFT') {
       assertRequiredMarketplaceFields({
         'Business name': req.body.business_name,
-        'Contact name': req.body.contact_name,
-        Phone: req.body.phone,
-        Email: req.body.email,
+        'Contact name': vendorContact.contact_name,
+        Phone: vendorContact.phone,
+        Email: vendorContact.email,
         'Food type / cuisine': req.body.food_type_cuisine,
       });
     }
@@ -5395,6 +5406,7 @@ exports.submitApplication = async (req, res, next) => {
     const submittedAt = isFinalApplicationStatus ? new Date() : null;
     const applicationPayload = {
       ...req.body,
+      ...vendorContact,
       event_id: req.params.eventId,
       vendor_user_id: req.user._id,
       food_truck_id: foodTruck._id,
