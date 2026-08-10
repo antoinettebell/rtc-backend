@@ -25,6 +25,17 @@ const {
   );
   assert.match(start, /foodTruck\?\._id \|\| null/);
   assert.match(start, /buildSignedAgreementAttachmentContext/);
+  assert.match(start, /active_identity_key: activeIdentityKey/);
+  assert.match(start, /reserveActiveMarketplaceAgreement/);
+  assert.match(start, /Concurrent signing request reused the active envelope/);
+  assert.match(start, /for \(const candidate of existingAgreements \|\| \[\]\)/,
+    'legacy duplicate agreements are all reconciled so a newer SENT envelope cannot hide a completed one');
+  const agreementModelSource = fs.readFileSync(
+    path.join(__dirname, '../../models/marketplace-vendor-agreement.js'),
+    'utf8'
+  );
+  assert.match(agreementModelSource, /partialFilterExpression: \{ active_identity_key: \{ \$type: 'string' \} \}/,
+    'legacy agreements without an active identity are excluded from the unique partial index');
 
   const firstSigning = {
     vendor_user_id: 'vendor-1',

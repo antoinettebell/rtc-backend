@@ -264,6 +264,7 @@ module.exports = {
     body: Joi.object({
       bid_id: Joi.string().trim().allow(null, ''),
       application_id: Joi.string().trim().allow(null, ''),
+      application_draft_id: Joi.string().trim().max(160).allow(null, ''),
       tip_amount: Joi.number().min(0).default(0),
     }),
   },

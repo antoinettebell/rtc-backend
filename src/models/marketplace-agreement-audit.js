@@ -23,9 +23,18 @@ const mSchema = mongoose.Schema(
       default: null,
       index: true,
     },
+    agreement_id: { type: String, default: null, index: true },
+    vendor_user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'users', default: null, index: true },
+    event_vendor_profile_id: { type: String, default: null, index: true },
+    application_id: { type: String, default: null, index: true },
     action: {
       type: String,
-      enum: ['ENVELOPE_CREATED', 'STATUS_REFRESHED', 'WEBHOOK_RECEIVED', 'ERROR'],
+      enum: [
+        'ENVELOPE_CREATED', 'ENVELOPE_REUSED', 'RETURN_RECEIVED',
+        'RECONCILIATION_ATTEMPT', 'STATUS_REFRESHED', 'RETRY_SCHEDULED',
+        'SIGNED_DOCUMENT_RETRIEVED', 'APPLICATION_FINALIZED',
+        'WEBHOOK_RECEIVED', 'ERROR',
+      ],
       required: true,
     },
     agreement_status: {
@@ -34,7 +43,7 @@ const mSchema = mongoose.Schema(
     },
     source: {
       type: String,
-      enum: ['SYSTEM', 'DOCUSIGN_WEBHOOK', 'USER_REFRESH'],
+      enum: ['SYSTEM', 'DOCUSIGN_WEBHOOK', 'USER_REFRESH', 'APP_RETURN', 'APP_RESUME'],
       default: 'SYSTEM',
     },
     message: {

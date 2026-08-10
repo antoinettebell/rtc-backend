@@ -40,6 +40,21 @@ const mSchema = mongoose.Schema(
       default: null,
       index: true,
     },
+    application_draft_id: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    agreement_type: {
+      type: String,
+      enum: ['FOOD_VENDOR', 'EVENT_VENDOR'],
+      default: 'FOOD_VENDOR',
+      index: true,
+    },
+    active_identity_key: {
+      type: String,
+      default: null,
+    },
     envelope_id: {
       type: String,
       default: null,
@@ -112,6 +127,14 @@ const mSchema = mongoose.Schema(
       createdAt: 'created_at',
       updatedAt: 'updated_at',
     },
+  }
+);
+
+mSchema.index(
+  { active_identity_key: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { active_identity_key: { $type: 'string' } },
   }
 );
 

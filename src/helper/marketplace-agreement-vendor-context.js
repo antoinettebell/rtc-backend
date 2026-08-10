@@ -51,8 +51,30 @@ const buildSignedAgreementAttachmentLink = ({
   update: { application_id: applicationId },
 });
 
+const buildActiveAgreementIdentityKey = ({
+  vendorUserId,
+  eventVendorProfileId = null,
+  eventId,
+  agreementType,
+}) => [vendorUserId, eventVendorProfileId || 'food-vendor', eventId, agreementType]
+  .map((value) => String(value || '').trim())
+  .join(':');
+
+const reserveActiveMarketplaceAgreement = async ({ create, find, identityKey, payload }) => {
+  try {
+    return { agreement: await create({ ...payload, active_identity_key: identityKey }), created: true };
+  } catch (error) {
+    if (error?.code !== 11000) throw error;
+    const agreement = await find(identityKey);
+    if (!agreement) throw error;
+    return { agreement, created: false };
+  }
+};
+
 module.exports = {
   buildSignedAgreementAttachmentContext,
   buildSignedAgreementAttachmentLink,
+  buildActiveAgreementIdentityKey,
+  reserveActiveMarketplaceAgreement,
   resolveMarketplaceAgreementVendorContext,
 };

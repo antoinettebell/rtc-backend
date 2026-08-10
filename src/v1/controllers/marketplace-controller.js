@@ -35,6 +35,8 @@ const {
 } = require('../../helper/marketplace-vendor-agreement-reconciliation');
 const {
   buildSignedAgreementAttachmentContext,
+  buildActiveAgreementIdentityKey,
+  reserveActiveMarketplaceAgreement,
   resolveMarketplaceAgreementVendorContext,
 } = require('../../helper/marketplace-agreement-vendor-context');
 const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
@@ -1441,6 +1443,25 @@ const requireSignedVendorAgreementForSubmission = async (vendorUserId) => {
 
 const getVendorAgreementReturnUrl = (status = 'completed') =>
   `rounddacornervendor://docusign/return?status=${status}`;
+
+const writeVendorAgreementAudit = async (agreement, action, options = {}) => {
+  try {
+    await MarketplaceAgreementAuditService.create({
+      event_id: agreement.event_id,
+      agreement_id: agreement.agreement_id || null,
+      agreement_envelope_id: agreement.envelope_id || null,
+      vendor_user_id: agreement.vendor_user_id || null,
+      event_vendor_profile_id: agreement.event_vendor_profile_id || null,
+      application_id: agreement.application_id || null,
+      action,
+      agreement_status: options.status || agreement.status || null,
+      source: options.source || 'SYSTEM',
+      message: options.message || null,
+    });
+  } catch (auditError) {
+    console.error('Marketplace agreement audit failed', auditError?.message || auditError);
+  }
+};
 
 const normalizeDocuSignReturnStatus = (status) => {
   const value = String(status || '').toLowerCase();
@@ -5640,6 +5661,13 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
     const application = req.body.application_id
       ? await getOwnedApplication(req.body.application_id, req.user._id)
       : null;
+    const agreementType = eventVendorProfile ? 'EVENT_VENDOR' : 'FOOD_VENDOR';
+    const activeIdentityKey = buildActiveAgreementIdentityKey({
+      vendorUserId: req.user._id,
+      eventVendorProfileId: eventVendorProfile?.profile_id || null,
+      eventId: event.event_id,
+      agreementType,
+    });
 
     const forceNewAgreement =
       req.body.force_new === true ||
@@ -5653,6 +5681,10 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
           eventVendorProfile?.profile_id || null
         );
     if (validAgreement && !forceNewAgreement) {
+      await writeVendorAgreementAudit(validAgreement, 'ENVELOPE_REUSED', {
+        source: 'USER_REFRESH',
+        message: 'Existing signed annual agreement reused',
+      });
       await persistSignedAgreementAttachment(
         buildSignedAgreementAttachmentContext({
           agreement: validAgreement,
@@ -5674,8 +5706,8 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
       );
     }
 
-    let existingAgreement = forceNewAgreement
-      ? null
+    const existingAgreements = forceNewAgreement
+      ? []
       : await MarketplaceVendorAgreementService.getByData(
           {
             vendor_user_id: req.user._id,
@@ -5685,64 +5717,68 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
               : {}),
             ...(bid ? { bid_id: bid.bid_id } : {}),
             ...(application ? { application_id: application.application_id } : {}),
-            status: {
-              $in: [
-                'PENDING_SIGNATURE',
-                'SENT',
-                'VIEWED',
-                'CANCELLED',
-                'DECLINED',
-                'VOIDED',
-                'ERROR',
-                'SIGNED',
-              ],
-            },
+            $or: [
+              {
+                status: {
+                  $in: [
+                    'PENDING_SIGNATURE', 'SENT', 'VIEWED',
+                    'CANCELLED', 'DECLINED', 'VOIDED', 'ERROR',
+                  ],
+                },
+              },
+              { status: 'SIGNED', expires_at: { $gt: new Date() } },
+            ],
           },
-          { singleResult: true, sort: { created_at: -1 } }
+          { sort: { created_at: -1 }, lean: false }
         );
-
-    if (existingAgreement?.envelope_id) {
+    let existingAgreement = null;
+    for (const candidate of existingAgreements || []) {
+      if (!candidate.envelope_id) {
+        existingAgreement ||= candidate;
+        continue;
+      }
       const reconciliation = await reconcileVendorAgreementEnvelope({
-        agreement: existingAgreement,
+        agreement: candidate,
         getEnvelopeStatus: DocuSignHelper.getEnvelopeStatus,
         mapEnvelopeStatus: DocuSignHelper.mapEnvelopeStatus,
         setSubmissionSignatureStatus,
         persistSignedAgreementAttachment,
         getAnnualAgreementExpiry,
+        recordAudit: (action, status, message) =>
+          writeVendorAgreementAudit(candidate, action, {
+            status,
+            message,
+            source: req.body.reconcile_only ? 'APP_RESUME' : 'USER_REFRESH',
+          }),
       });
       if (reconciliation.alreadySigned) {
         return res.data(
-          {
-            marketplaceVendorAgreement: existingAgreement,
-            already_signed: true,
-          },
+          { marketplaceVendorAgreement: candidate, already_signed: true },
           'Vendor agreement signature reconciled'
         );
       }
-      if (req.body.reconcile_only === true) {
-        return res.data(
-          {
-            marketplaceVendorAgreement: existingAgreement,
-            already_signed: false,
-            signing_incomplete: true,
-          },
-          'Vendor agreement is not yet signed'
-        );
+      if (!['CANCELLED', 'DECLINED', 'VOIDED', 'ERROR'].includes(reconciliation.status)) {
+        existingAgreement ||= candidate;
       }
-      if (['CANCELLED', 'DECLINED', 'VOIDED', 'ERROR'].includes(
-        reconciliation.status
-      )) {
-        existingAgreement = null;
-      }
-    } else if (req.body.reconcile_only === true) {
+    }
+
+    if (req.body.reconcile_only === true) {
       return res.data(
         {
-          marketplaceVendorAgreement: null,
+          marketplaceVendorAgreement: existingAgreement,
           already_signed: false,
           signing_incomplete: true,
         },
-        'No pending vendor agreement was found'
+        existingAgreement
+          ? 'Vendor agreement is not yet signed'
+          : 'No pending vendor agreement was found'
       );
+    }
+    if (existingAgreement) {
+      await writeVendorAgreementAudit(existingAgreement, 'ENVELOPE_REUSED', {
+        source: 'USER_REFRESH',
+        message: 'Existing nonterminal envelope reused',
+      });
     }
 
     const signer = getVendorSignerInfo(req.user);
@@ -5754,7 +5790,45 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
     let envelopeId = agreement?.envelope_id;
 
     try {
-      if (!agreement || !envelopeId) {
+      let ownsEnvelopeCreation = false;
+      if (!agreement) {
+        const reservation = await reserveActiveMarketplaceAgreement({
+          identityKey: activeIdentityKey,
+          create: (payload) => MarketplaceVendorAgreementService.create(payload),
+          find: (identityKey) => MarketplaceVendorAgreementService.getByData(
+            { active_identity_key: identityKey },
+            { singleResult: true, sort: { created_at: -1 }, lean: false }
+          ),
+          payload: {
+            vendor_user_id: req.user._id,
+            food_truck_id: foodTruck?._id || null,
+            event_vendor_profile_id: eventVendorProfile?.profile_id || null,
+            event_id: event.event_id,
+            bid_id: bid?.bid_id || null,
+            application_id: application?.application_id || null,
+            application_draft_id: req.body.application_draft_id || null,
+            agreement_type: agreementType,
+            envelope_id: null,
+            governance_template_id: docusign.governanceTemplateId,
+            nda_template_id: docusign.ndaTemplateId,
+            governance_version: docusign.governanceVersion,
+            nda_version: docusign.ndaVersion,
+            signer_role: docusign.signerRole,
+            signer_name: signer.signerName,
+            signer_email: signer.signerEmail,
+            status: 'NOT_STARTED',
+          },
+        });
+        agreement = reservation.agreement;
+        ownsEnvelopeCreation = reservation.created;
+        if (!ownsEnvelopeCreation) {
+          await writeVendorAgreementAudit(agreement, 'ENVELOPE_REUSED', {
+            message: 'Concurrent signing request reused the active envelope',
+          });
+        }
+      }
+
+      if (ownsEnvelopeCreation) {
         const envelope = await DocuSignHelper.createVendorMarketplaceSigningEnvelope({
           vendorName: signer.signerName,
           vendorEmail: signer.signerEmail,
@@ -5764,23 +5838,24 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
           application,
         });
         envelopeId = envelope.envelopeId;
-        agreement = await MarketplaceVendorAgreementService.create({
-          vendor_user_id: req.user._id,
-          food_truck_id: foodTruck?._id || null,
-          event_vendor_profile_id: eventVendorProfile?.profile_id || null,
-          event_id: event.event_id,
-          bid_id: bid?.bid_id || null,
-          application_id: application?.application_id || null,
-          envelope_id: envelopeId,
-          governance_template_id: docusign.governanceTemplateId,
-          nda_template_id: docusign.ndaTemplateId,
-          governance_version: docusign.governanceVersion,
-          nda_version: docusign.ndaVersion,
-          signer_role: docusign.signerRole,
-          signer_name: signer.signerName,
-          signer_email: signer.signerEmail,
-          status: 'SENT',
-        });
+        agreement.envelope_id = envelopeId;
+        agreement.status = 'SENT';
+        await agreement.save();
+        await writeVendorAgreementAudit(agreement, 'ENVELOPE_CREATED');
+      } else if (!agreement.envelope_id) {
+        for (let attempt = 0; attempt < 5 && !agreement.envelope_id; attempt += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+          agreement = await MarketplaceVendorAgreementService.getByData(
+            { active_identity_key: activeIdentityKey },
+            { singleResult: true, sort: { created_at: -1 }, lean: false }
+          );
+        }
+        if (!agreement?.envelope_id) {
+          throw buildError('Agreement signing is being prepared. Please try again.', 409);
+        }
+        envelopeId = agreement.envelope_id;
+      } else {
+        envelopeId = agreement.envelope_id;
       }
 
       await setSubmissionSignatureStatus(agreement, 'PENDING_SIGNATURE');
@@ -5810,8 +5885,13 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
       });
       if (agreement) {
         agreement.status = 'ERROR';
+        agreement.active_identity_key = null;
         agreement.error_message = error.message;
         await agreement.save();
+        await writeVendorAgreementAudit(agreement, 'ERROR', {
+          status: 'ERROR',
+          message: 'DocuSign signing request failed',
+        });
       }
       throw error;
     }
@@ -5840,6 +5920,10 @@ exports.vendorAgreementReturn = async (req, res, next) => {
 
     const returnStatus = normalizeDocuSignReturnStatus(req.body.status);
     agreement.return_status = returnStatus;
+    await writeVendorAgreementAudit(agreement, 'RETURN_RECEIVED', {
+      source: 'APP_RETURN',
+      message: `App return status: ${returnStatus}`,
+    });
 
     try {
       if (!agreement.envelope_id) {
@@ -5849,16 +5933,20 @@ exports.vendorAgreementReturn = async (req, res, next) => {
         agreement.envelope_id
       );
       const envelopeStatus = DocuSignHelper.mapEnvelopeStatus(envelope.status);
+      agreement.error_message = null;
       if (envelopeStatus === 'SIGNED') {
         agreement.status = 'SIGNED';
         agreement.signed_at = envelope.completedDateTime
           ? new Date(envelope.completedDateTime)
           : new Date();
         agreement.expires_at = getAnnualAgreementExpiry(agreement.signed_at);
+        agreement.active_identity_key = null;
       } else if (returnStatus === 'cancelled') {
         agreement.status = 'CANCELLED';
+        agreement.active_identity_key = null;
       } else if (returnStatus === 'declined') {
         agreement.status = 'DECLINED';
+        agreement.active_identity_key = null;
       } else {
         agreement.status = envelopeStatus;
         agreement.error_message = returnStatus === 'completed'
@@ -5867,9 +5955,17 @@ exports.vendorAgreementReturn = async (req, res, next) => {
       }
 
       await agreement.save();
+      await writeVendorAgreementAudit(agreement, 'STATUS_REFRESHED', {
+        source: 'APP_RETURN',
+        status: agreement.status,
+        message: `DocuSign status: ${String(envelope.status || 'unknown')}`,
+      });
       await setSubmissionSignatureStatus(agreement, agreement.status);
       if (agreement.status === 'SIGNED') {
         await persistSignedAgreementAttachment(agreement);
+        await writeVendorAgreementAudit(agreement, 'SIGNED_DOCUMENT_RETRIEVED', {
+          source: 'APP_RETURN',
+        });
       }
 
       if (agreement.status === 'ERROR') {
@@ -5884,15 +5980,20 @@ exports.vendorAgreementReturn = async (req, res, next) => {
         'Vendor agreement return recorded'
       );
     } catch (error) {
-      agreement.status = 'ERROR';
       agreement.error_message = error.message;
       await agreement.save();
-      await setSubmissionSignatureStatus(agreement, 'ERROR');
+      await writeVendorAgreementAudit(agreement, 'RETRY_SCHEDULED', {
+        source: 'APP_RETURN',
+        message: 'DocuSign status lookup will be retried',
+      });
       await sendDeveloperAlert('DocuSign vendor return error', error, {
         agreement_id: agreement.agreement_id,
         vendor_user_id: req.user._id,
       });
-      throw error;
+      throw buildError(
+        'DocuSign status is temporarily unavailable. Please try again.',
+        503
+      );
     }
   } catch (e) {
     return next(e);

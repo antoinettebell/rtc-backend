@@ -2,6 +2,8 @@ const assert = require('assert');
 const {
   buildSignedAgreementAttachmentContext,
   buildSignedAgreementAttachmentLink,
+  buildActiveAgreementIdentityKey,
+  reserveActiveMarketplaceAgreement,
   resolveMarketplaceAgreementVendorContext,
 } = require('./marketplace-agreement-vendor-context');
 
@@ -63,5 +65,28 @@ const {
   assert.equal(link.query.application_id, null);
   assert.equal(link.query.docusign_envelope_id, 'envelope-1');
   assert.equal(link.update.application_id, 'application-1');
+  assert.equal(
+    buildActiveAgreementIdentityKey({
+      vendorUserId: 'vendor-1', eventVendorProfileId: 'profile-1',
+      eventId: 'event-1', agreementType: 'EVENT_VENDOR',
+    }),
+    'vendor-1:profile-1:event-1:EVENT_VENDOR'
+  );
+  const reserved = { agreement_id: 'agreement-1' };
+  let creates = 0;
+  const create = async () => {
+    creates += 1;
+    if (creates > 1) throw Object.assign(new Error('duplicate'), { code: 11000 });
+    return reserved;
+  };
+  const firstReservation = await reserveActiveMarketplaceAgreement({
+    create, find: async () => reserved, identityKey: 'active-key', payload: {},
+  });
+  const racedReservation = await reserveActiveMarketplaceAgreement({
+    create, find: async () => reserved, identityKey: 'active-key', payload: {},
+  });
+  assert.equal(firstReservation.created, true);
+  assert.equal(racedReservation.created, false);
+  assert.equal(racedReservation.agreement, reserved);
   console.log('marketplace agreement vendor context tests passed');
 })();

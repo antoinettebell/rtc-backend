@@ -9,6 +9,7 @@ const {
   MarketplacePaymentModel,
   MarketplaceVendorAgreementModel,
   MarketplaceAttachmentModel,
+  MarketplaceAgreementAuditModel,
 } = require('../../models');
 const { addObjectWithKey } = require('../../helper/aws');
 const { docusign } = require('../../config');
@@ -597,6 +598,20 @@ exports.submitApplication = async (req, res, next) => {
         attachmentLink.query,
         attachmentLink.update
       );
+      await MarketplaceAgreementAuditModel.create({
+        event_id: event.event_id,
+        agreement_id: agreement.agreement_id,
+        agreement_envelope_id: agreement.envelope_id,
+        vendor_user_id: req.user._id,
+        event_vendor_profile_id: profile.profile_id,
+        application_id: application.application_id,
+        action: 'APPLICATION_FINALIZED',
+        agreement_status: agreement.status,
+        source: 'SYSTEM',
+        message: 'Marketplace Vendor application finalized idempotently',
+      }).catch((auditError) => {
+        console.error('Marketplace application finalization audit failed', auditError?.message || auditError);
+      });
     }
     await EventVendorPhotoModel.updateMany(
       {
