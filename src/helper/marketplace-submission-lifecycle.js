@@ -29,6 +29,41 @@ const resolveSelectedApplicationPhotos = ({ photoIds = [], activePhotos = [], pr
   return photoIds.map((photoId) => active.get(photoId) || prior.get(photoId)).filter(Boolean);
 };
 
+const EVENT_VENDOR_FILLED_STATUSES = ['AWARDED', 'PAYMENT_DUE', 'PAID'];
+const buildEventVendorRequirementSummary = ({ needs = [], applications = [] }) =>
+  ['MERCHANDISE', 'SERVICE', 'OTHER'].map((vendorType) => {
+    const requested = needs
+      .filter((item) => item?.vendor_type === vendorType)
+      .reduce((total, item) => total + Math.max(0, Number(item.quantity || 0)), 0);
+    const filledApplications = applications.filter(
+      (application) =>
+        EVENT_VENDOR_FILLED_STATUSES.includes(String(application?.status || '').toUpperCase()) &&
+        (application.vendor_types || []).includes(vendorType)
+    );
+    const filled = new Set(
+      filledApplications.map((application, index) =>
+        String(application.application_id || application._id || `${vendorType}-${index}`)
+      )
+    ).size;
+    return {
+      vendor_type: vendorType,
+      requested,
+      filled,
+      remaining: Math.max(0, requested - filled),
+    };
+  });
+
+const getCoordinatorNotSelectTransition = (kind, status) => {
+  const normalizedKind = String(kind || '').toUpperCase();
+  const normalizedStatus = String(status || '').toUpperCase();
+  const targetStatus = normalizedKind === 'BID' ? 'DECLINED' : 'NOT_SELECTED';
+  if (normalizedStatus === targetStatus) return { idempotent: true, targetStatus };
+  const eligible = normalizedKind === 'BID'
+    ? ['SUBMITTED', 'UNDER_REVIEW'].includes(normalizedStatus)
+    : ['SUBMITTED', 'UNDER_REVIEW'].includes(normalizedStatus);
+  return { idempotent: false, targetStatus, eligible };
+};
+
 module.exports = {
   ACTIVE_FOOD_BID_STATUSES,
   ACTIVE_FOOD_APPLICATION_STATUSES,
@@ -39,4 +74,6 @@ module.exports = {
   isEventVendorApplicationWithdrawable,
   isEventOpenForOrdinaryWithdrawal,
   resolveSelectedApplicationPhotos,
+  buildEventVendorRequirementSummary,
+  getCoordinatorNotSelectTransition,
 };

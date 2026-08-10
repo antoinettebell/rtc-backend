@@ -22,7 +22,12 @@ const mSchema = mongoose.Schema(
     food_truck_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'food-trucks',
-      required: true,
+      default: null,
+      index: true,
+    },
+    event_vendor_profile_id: {
+      type: String,
+      default: null,
       index: true,
     },
     vendor_display_id: {
@@ -138,5 +143,15 @@ const mSchema = mongoose.Schema(
 );
 
 mSchema.index({ event_id: 1, status: 1, created_at: -1 });
+
+mSchema.pre('validate', function validateParticipantContext(next) {
+  if (!!this.food_truck_id === !!this.event_vendor_profile_id) {
+    return next(new Error('Marketplace message requires one valid vendor participant context.'));
+  }
+  if (this.bid_id && this.application_id) {
+    return next(new Error('Marketplace message cannot reference both a bid and an application.'));
+  }
+  return next();
+});
 
 module.exports = new mongoose.model('marketplace-event-questions', mSchema);

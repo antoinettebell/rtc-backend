@@ -22,6 +22,7 @@ const sanitizeMarketplaceContactForCoordinator = (
     delete value.contact_number;
     delete value.email;
     delete value.contact_name;
+    delete value.business_name;
     if (value.vendor_user_id && typeof value.vendor_user_id === 'object') {
       value.vendor_user_id = { _id: value.vendor_user_id._id };
     }

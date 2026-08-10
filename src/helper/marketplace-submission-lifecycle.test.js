@@ -30,6 +30,34 @@ assert.deepStrictEqual(lifecycle.resolveSelectedApplicationPhotos({
   activePhotos: [],
   priorSnapshots: [priorArchivedSnapshot],
 }), []);
+assert.deepStrictEqual(lifecycle.buildEventVendorRequirementSummary({
+  needs: [
+    { vendor_type: 'MERCHANDISE', quantity: 3 },
+    { vendor_type: 'MERCHANDISE', quantity: 2 },
+    { vendor_type: 'SERVICE', quantity: 2 },
+    { vendor_type: 'OTHER', quantity: 1 },
+  ],
+  applications: [
+    { application_id: 'combined', status: 'AWARDED', vendor_types: ['MERCHANDISE', 'SERVICE'] },
+    { application_id: 'merch', status: 'PAYMENT_DUE', vendor_types: ['MERCHANDISE'] },
+    { application_id: 'merch', status: 'PAYMENT_DUE', vendor_types: ['MERCHANDISE'] },
+    { status: 'SUBMITTED', vendor_types: ['OTHER'] },
+  ],
+}), [
+  { vendor_type: 'MERCHANDISE', requested: 5, filled: 2, remaining: 3 },
+  { vendor_type: 'SERVICE', requested: 2, filled: 1, remaining: 1 },
+  { vendor_type: 'OTHER', requested: 1, filled: 0, remaining: 1 },
+]);
+assert.deepStrictEqual(lifecycle.getCoordinatorNotSelectTransition('BID', 'SUBMITTED'), {
+  idempotent: false,
+  targetStatus: 'DECLINED',
+  eligible: true,
+});
+assert.deepStrictEqual(lifecycle.getCoordinatorNotSelectTransition('APPLICATION', 'NOT_SELECTED'), {
+  idempotent: true,
+  targetStatus: 'NOT_SELECTED',
+});
+assert.strictEqual(lifecycle.getCoordinatorNotSelectTransition('APPLICATION', 'AWARDED').eligible, false);
 const marketplaceSource = fs.readFileSync(path.join(__dirname, '../v1/controllers/marketplace-controller.js'), 'utf8');
 const eventVendorSource = fs.readFileSync(path.join(__dirname, '../v1/controllers/event-vendor-controller.js'), 'utf8');
 assert.match(marketplaceSource, /event_id: \{ \$nin: excludedEventIds \}/);
@@ -41,4 +69,7 @@ assert.match(eventVendorSource, /Object\.assign\(existingApplication, applicatio
 assert.match(eventVendorSource, /isEventOpenForOrdinaryWithdrawal\(event\)/);
 assert.match(eventVendorSource, /status: 'ACTIVE',[\s\S]*source: 'REPOSITORY'/);
 assert.match(eventVendorSource, /resolveSelectedApplicationPhotos/);
+assert.match(marketplaceSource, /assertMarketplaceTextAllowed\(questionText, 'Message'\)[\s\S]*MarketplaceEventQuestionService\.create/);
+assert.match(marketplaceSource, /vendor_user_id: req\.user\._id[\s\S]*application_id: req\.body\.application_id/);
+assert.match(eventVendorSource, /Marketplace Vendor application not selected/);
 console.log('marketplace submission lifecycle tests passed');

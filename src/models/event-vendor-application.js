@@ -17,6 +17,7 @@ const schema = mongoose.Schema({
   profile_id: { type: String, required: true, index: true },
   vendor_user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'users', required: true, index: true },
   vendor_types: [{ type: String, enum: ['MERCHANDISE', 'SERVICE', 'OTHER'] }],
+  participation_path: { type: String, enum: ['BID', 'APPLICATION'], default: null, index: true },
   business_name: { type: String, required: true },
   contact_name: { type: String, required: true },
   contact_number: { type: String, required: true },

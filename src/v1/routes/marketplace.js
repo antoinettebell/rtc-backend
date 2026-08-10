@@ -24,6 +24,7 @@ router.post('/event-vendor/events/:eventId/applications', allowedTo(['VENDOR']),
 router.get('/event-vendor/applications/my', allowedTo(['VENDOR']), EventVendorController.myApplications);
 router.patch('/event-vendor/applications/:applicationId/withdraw', allowedTo(['VENDOR']), EventVendorController.withdrawApplication);
 router.post('/event-vendor/applications/:applicationId/award', allowedTo(['CUSTOMER']), EventVendorController.awardApplication);
+router.patch('/event-vendor/applications/:applicationId/not-select', allowedTo(['CUSTOMER']), EventVendorController.declineApplication);
 router.get('/event-vendor/events/:eventId/applications', allowedTo(['CUSTOMER']), EventVendorController.eventApplications);
 router.get('/admin/event-vendors', allowedTo(['SUPER_ADMIN']), EventVendorController.adminListProfiles);
 router.get('/admin/event-vendors/:profileId', allowedTo(['SUPER_ADMIN']), EventVendorController.adminGetProfile);
@@ -421,6 +422,7 @@ router.patch(
   allowedTo(['VENDOR']),
   Controller.withdrawBid
 );
+router.patch('/bids/:bidId/not-select', allowedTo(['CUSTOMER']), Controller.declineBid);
 
 router.delete(
   '/applications/:applicationId/attachments/:attachmentId',
@@ -439,6 +441,7 @@ router.patch(
   allowedTo(['VENDOR']),
   Controller.withdrawApplication
 );
+router.patch('/applications/:applicationId/not-select', allowedTo(['CUSTOMER']), Controller.declineApplication);
 
 router.get(
   '/bids/my',

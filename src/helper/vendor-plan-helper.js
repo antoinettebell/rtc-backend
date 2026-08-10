@@ -145,7 +145,21 @@ const getVendorPlanTier = (plan) => {
 };
 
 const getVendorPlanCapabilities = (plan) => {
+  const source = typeof plan?.toObject === 'function' ? plan.toObject() : plan;
   const tier = getVendorPlanTier(plan);
+  const configured = source?.capabilities;
+  if (configured && typeof configured === 'object') {
+    return {
+      ...(tier?.capabilities || {}),
+      ...configured,
+      employeeWalkUpPos:
+        configured.walkUpPos !== undefined
+          ? configured.walkUpPos === true
+          : configured.employeeWalkUpPos !== undefined
+            ? configured.employeeWalkUpPos === true
+            : tier?.capabilities?.employeeWalkUpPos === true,
+    };
+  }
   return tier?.capabilities || {};
 };
 
@@ -239,7 +253,7 @@ const assertWalkUpPosPaymentMethodAllowed = (plan, paymentMethod) => {
   const capabilities = assertVendorPlanCapability(
     plan,
     'employeeWalkUpPos',
-    'Your current vendor plan does not include walk-up POS.'
+    'Walk-up ordering is not included in your current plan. Upgrade your plan to use this feature.'
   );
 
   const allowedMethods = capabilities.walkUpPosPaymentMethods || [];

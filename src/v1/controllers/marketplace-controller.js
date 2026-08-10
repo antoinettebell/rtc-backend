@@ -70,10 +70,20 @@ const {
 const {
   ACTIVE_FOOD_BID_STATUSES,
   ACTIVE_FOOD_APPLICATION_STATUSES,
+  buildEventVendorRequirementSummary,
+  getCoordinatorNotSelectTransition,
 } = require('../../helper/marketplace-submission-lifecycle');
 const {
   moderateMarketplaceText,
 } = require('../../helper/marketplace-content-moderation');
+const {
+  buildMarketplaceMessageScope,
+  assertMarketplaceMessageParticipantContext,
+  resolveMarketplaceSubmissionParticipant,
+} = require('../../helper/marketplace-message-context-helper');
+const {
+  getMarketplaceMessageUnreadState,
+} = require('../../helper/marketplace-message-thread-helper');
 const {
   assertMarketplaceEventImageHasNoContactInfo,
 } = require('../../helper/marketplace-image-contact-moderation');
@@ -2193,7 +2203,14 @@ const getEventForUser = async (eventId, user) => {
   }
 
   if (user.userType === 'VENDOR') {
-    await getVendorMarketplaceFoodTruck(user._id);
+    const eventVendorProfile = await EventVendorProfileModel.findOne({
+      vendor_user_id: user._id,
+      status: 'ACTIVE',
+      review_status: 'APPROVED',
+    }).lean();
+    if (!eventVendorProfile) {
+      await getVendorMarketplaceFoodTruck(user._id);
+    }
     const event = await MarketplaceEventService.getByData(
       { event_id: eventId },
       { singleResult: true }
@@ -2203,11 +2220,16 @@ const getEventForUser = async (eventId, user) => {
       throw buildError('Marketplace event not found', 404);
     }
 
-    if (ACTIVE_EVENT_STATUSES.includes(event.status)) {
+    const eventVendorEligible = eventVendorProfile && (event.event_vendor_needs || []).some(
+      (need) =>
+        Number(need.quantity || 0) > 0 &&
+        (eventVendorProfile.vendor_types || []).includes(need.vendor_type)
+    );
+    if (ACTIVE_EVENT_STATUSES.includes(event.status) && (!eventVendorProfile || eventVendorEligible)) {
       return event;
     }
 
-    const [vendorBid, vendorApplication] = await Promise.all([
+    const [vendorBid, vendorApplication, eventVendorApplication] = await Promise.all([
       MarketplaceBidService.getByData(
         {
           event_id: eventId,
@@ -2224,9 +2246,13 @@ const getEventForUser = async (eventId, user) => {
         },
         { singleResult: true }
       ),
+      EventVendorApplicationModel.findOne({
+        event_id: eventId,
+        vendor_user_id: user._id,
+      }).lean(),
     ]);
 
-    if (!vendorBid && !vendorApplication) {
+    if (!vendorBid && !vendorApplication && !eventVendorApplication) {
       throw buildError('Marketplace event not found', 404);
     }
 
@@ -2271,28 +2297,7 @@ const getQuestionForEvent = async (eventId, questionId) => {
 };
 
 const getQuestionUnreadState = (plainQuestion, viewer) => {
-  if (!viewer) {
-    return false;
-  }
-
-  if (viewer.userType === 'CUSTOMER' || viewer.userType === 'SUPER_ADMIN') {
-    return !plainQuestion.coordinator_read_at;
-  }
-
-  if (viewer.userType === 'VENDOR') {
-    if (String(plainQuestion.vendor_user_id) !== String(viewer._id)) {
-      return false;
-    }
-    if (!plainQuestion.answered_at) {
-      return false;
-    }
-    return (
-      !plainQuestion.vendor_read_at ||
-      new Date(plainQuestion.vendor_read_at) < new Date(plainQuestion.answered_at)
-    );
-  }
-
-  return false;
+  return getMarketplaceMessageUnreadState(plainQuestion, viewer);
 };
 
 const toNotificationEventLabel = (event) =>
@@ -2392,7 +2397,7 @@ const sanitizeMarketplaceQuestion = (
   };
 };
 
-const markMarketplaceQuestionsRead = async (eventId, user) => {
+const markMarketplaceQuestionsRead = async (eventId, user, submissionScope = {}) => {
   if (!eventId || !user) {
     return;
   }
@@ -2401,6 +2406,7 @@ const markMarketplaceQuestionsRead = async (eventId, user) => {
     await MarketplaceEventQuestionService.updateMany(
       {
         event_id: eventId,
+        ...submissionScope,
         status: { $in: ['PENDING', 'PUBLISHED'] },
         coordinator_read_at: null,
       },
@@ -2413,9 +2419,13 @@ const markMarketplaceQuestionsRead = async (eventId, user) => {
     await MarketplaceEventQuestionService.updateMany(
       {
         event_id: eventId,
+        ...submissionScope,
         vendor_user_id: user._id,
         status: { $in: ['PUBLISHED'] },
-        answer_text_public: { $nin: [null, ''] },
+        $or: [
+          { initiated_by_role: 'CUSTOMER' },
+          { answer_text_public: { $nin: [null, ''] } },
+        ],
       },
       { vendor_read_at: new Date() }
     );
@@ -4184,6 +4194,16 @@ exports.getEvent = async (req, res, next) => {
       ...marketplaceEvent,
       final_payment_timing: buildVendorEventCloseState(marketplaceEvent),
     };
+    if (fullAccess) {
+      const eventVendorApplications = await EventVendorApplicationModel.find({
+        event_id: event.event_id,
+      }).select('vendor_types status').lean();
+      marketplaceEventWithTiming.event_vendor_requirement_summary =
+        buildEventVendorRequirementSummary({
+          needs: marketplaceEvent.event_vendor_needs || [],
+          applications: eventVendorApplications,
+        });
+    }
 
     return res.data(
       {
@@ -4331,29 +4351,25 @@ exports.getEventQuestions = async (req, res, next) => {
       event_id: req.params.eventId,
       status: { $in: coordinatorVisibleStatuses },
     };
+    const submissionScope = buildMarketplaceMessageScope({
+      bidId: req.query.bid_id || null,
+      applicationId: req.query.application_id || null,
+    });
+    query = { ...query, ...submissionScope };
 
     if (req.user.userType === 'VENDOR') {
       query = qaArchived
         ? {
             event_id: req.params.eventId,
-            $or: [
-              { status: 'PUBLISHED', initiated_by_role: { $ne: 'CUSTOMER' } },
-              { status: 'PUBLISHED', vendor_user_id: req.user._id },
-              { status: 'ARCHIVED', vendor_user_id: req.user._id },
-              {
-                status: 'ARCHIVED',
-                initiated_by_role: { $ne: 'CUSTOMER' },
-                answer_text_public: { $ne: null },
-              },
-            ],
+            ...submissionScope,
+            vendor_user_id: req.user._id,
+            status: { $in: ['PENDING', 'PUBLISHED', 'ARCHIVED'] },
           }
         : {
             event_id: req.params.eventId,
-            status: 'PUBLISHED',
-            $or: [
-              { initiated_by_role: { $ne: 'CUSTOMER' } },
-              { vendor_user_id: req.user._id },
-            ],
+            ...submissionScope,
+            vendor_user_id: req.user._id,
+            status: { $in: ['PENDING', 'PUBLISHED'] },
           };
     } else if (req.user.userType === 'SUPER_ADMIN') {
       query = {
@@ -4363,7 +4379,7 @@ exports.getEventQuestions = async (req, res, next) => {
     }
 
     if (req.query.markRead === 'true') {
-      await markMarketplaceQuestionsRead(req.params.eventId, req.user);
+      await markMarketplaceQuestionsRead(req.params.eventId, req.user, submissionScope);
     }
 
     const questions = await MarketplaceEventQuestionService.getByData(query, {
@@ -4392,6 +4408,8 @@ exports.getEventQuestions = async (req, res, next) => {
 
 exports.askEventQuestion = async (req, res, next) => {
   try {
+    // Reject an ambiguous scope before any event, submission, or profile lookup.
+    buildMarketplaceMessageScope({ bidId: req.body.bid_id, applicationId: req.body.application_id });
     const event = await getEventForUser(req.params.eventId, req.user);
 
     if (isQuestionBoardArchived(event)) {
@@ -4401,15 +4419,60 @@ exports.askEventQuestion = async (req, res, next) => {
     const questionText = String(req.body.question_text || '').trim();
     const moderation = moderateMarketplaceText(questionText);
     const isBlocked = moderation.status === 'BLOCKED';
+    if (isBlocked) {
+      assertMarketplaceTextAllowed(questionText, 'Message');
+    }
     let vendorUserId = req.user._id;
     let foodTruckId = null;
+    let eventVendorProfileId = null;
     let bidId = null;
     let applicationId = null;
+    let displayIdentity = null;
     let initiatedByRole = 'VENDOR';
 
     if (req.user.userType === 'VENDOR') {
-      const foodTruck = await getVendorMarketplaceFoodTruck(req.user._id);
-      foodTruckId = foodTruck._id;
+      if (req.body.bid_id) {
+        const ownedBid = await MarketplaceBidService.getByData(
+          { event_id: event.event_id, bid_id: req.body.bid_id, vendor_user_id: req.user._id },
+          { singleResult: true }
+        );
+        if (!ownedBid) throw buildError('Marketplace bid not found', 404);
+        bidId = ownedBid.bid_id;
+        ({ foodTruckId, eventVendorProfileId, displayIdentity } = resolveMarketplaceSubmissionParticipant({
+          foodBid: ownedBid,
+        }));
+      } else if (req.body.application_id) {
+        const [ownedFoodApplication, ownedEventVendorApplication] = await Promise.all([
+          MarketplaceApplicationService.getByData(
+            { event_id: event.event_id, application_id: req.body.application_id, vendor_user_id: req.user._id },
+            { singleResult: true }
+          ),
+          EventVendorApplicationModel.findOne({
+            event_id: event.event_id,
+            application_id: req.body.application_id,
+            vendor_user_id: req.user._id,
+          }).lean(),
+        ]);
+        if (!ownedFoodApplication && !ownedEventVendorApplication) throw buildError('Marketplace application not found', 404);
+        applicationId = (ownedFoodApplication || ownedEventVendorApplication).application_id;
+        ({ foodTruckId, eventVendorProfileId, displayIdentity } = resolveMarketplaceSubmissionParticipant({
+          foodApplication: ownedFoodApplication,
+          eventVendorApplication: ownedEventVendorApplication,
+        }));
+      } else {
+        const eventVendorProfile = await EventVendorProfileModel.findOne({
+          vendor_user_id: req.user._id,
+          status: 'ACTIVE',
+          review_status: 'APPROVED',
+        }).lean();
+        const fallbackFoodTruckId = eventVendorProfile
+          ? null
+          : (await getVendorMarketplaceFoodTruck(req.user._id))._id;
+        ({ foodTruckId, eventVendorProfileId, displayIdentity } = resolveMarketplaceSubmissionParticipant({
+          fallbackEventVendorProfileId: eventVendorProfile?.profile_id || null,
+          fallbackFoodTruckId,
+        }));
+      }
     } else if (req.user.userType === 'CUSTOMER') {
       const targetBid = req.body.bid_id
         ? await MarketplaceBidService.getByData(
@@ -4421,16 +4484,30 @@ exports.askEventQuestion = async (req, res, next) => {
             { singleResult: true }
           )
         : null;
-      const targetApplication = req.body.application_id
-        ? await MarketplaceApplicationService.getByData(
-            {
+      const [targetFoodApplication, targetEventVendorApplication] = req.body.application_id
+        ? await Promise.all([
+            MarketplaceApplicationService.getByData(
+              {
+                event_id: event.event_id,
+                application_id: req.body.application_id,
+                application_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+              },
+              { singleResult: true }
+            ),
+            EventVendorApplicationModel.findOne({
               event_id: event.event_id,
               application_id: req.body.application_id,
-              application_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
-            },
-            { singleResult: true }
-          )
+              status: { $nin: ['WITHDRAWN'] },
+            }).lean(),
+          ])
+        : [null, null];
+      const targetApplicationParticipant = targetFoodApplication || targetEventVendorApplication
+        ? resolveMarketplaceSubmissionParticipant({
+            foodApplication: targetFoodApplication,
+            eventVendorApplication: targetEventVendorApplication,
+          })
         : null;
+      const targetApplication = targetFoodApplication || targetEventVendorApplication;
       const targetVendorUserId =
         targetBid?.vendor_user_id ||
         targetApplication?.vendor_user_id ||
@@ -4477,46 +4554,52 @@ exports.askEventQuestion = async (req, res, next) => {
       }
 
       vendorUserId = targetSubmission.vendor_user_id;
-      foodTruckId = targetSubmission.food_truck_id;
+      foodTruckId = targetApplicationParticipant?.foodTruckId ?? targetSubmission.food_truck_id;
       bidId = targetSubmission.bid_id || null;
       applicationId = targetSubmission.application_id || null;
+      eventVendorProfileId = targetApplicationParticipant?.eventVendorProfileId ?? targetSubmission.profile_id ?? null;
+      displayIdentity = targetApplicationParticipant?.displayIdentity || foodTruckId || eventVendorProfileId || vendorUserId;
       initiatedByRole = 'CUSTOMER';
     } else {
       throw buildError('Only vendors and coordinators can send marketplace messages', 403);
     }
 
+    assertMarketplaceMessageParticipantContext({
+      foodTruckId,
+      eventVendorProfileId,
+      bidId,
+      applicationId,
+    });
+
     const marketplaceQuestion = await MarketplaceEventQuestionService.create({
       event_id: event.event_id,
       vendor_user_id: vendorUserId,
       food_truck_id: foodTruckId,
-      vendor_display_id: getVendorDisplayId(foodTruckId),
+      event_vendor_profile_id: eventVendorProfileId,
+      vendor_display_id: getVendorDisplayId(displayIdentity || foodTruckId || eventVendorProfileId || vendorUserId),
       initiated_by_role: initiatedByRole,
       bid_id: bidId,
       application_id: applicationId,
       question_text_raw: questionText,
-      question_text_public: isBlocked ? null : questionText,
-      status: isBlocked ? 'BLOCKED' : initiatedByRole === 'CUSTOMER' ? 'PUBLISHED' : 'PENDING',
+      question_text_public: questionText,
+      status: initiatedByRole === 'CUSTOMER' ? 'PUBLISHED' : 'PENDING',
       question_moderation_status: moderation.status,
       question_moderation_reasons: moderation.reasons,
       coordinator_read_at: initiatedByRole === 'CUSTOMER' ? new Date() : null,
     });
 
-    if (!isBlocked) {
-      if (initiatedByRole === 'CUSTOMER') {
-        await notifyVendorOfCoordinatorMarketplaceMessage(event, marketplaceQuestion);
-      } else {
-        await notifyCoordinatorOfMarketplaceQuestion(event);
-      }
+    if (initiatedByRole === 'CUSTOMER') {
+      await notifyVendorOfCoordinatorMarketplaceMessage(event, marketplaceQuestion);
+    } else {
+      await notifyCoordinatorOfMarketplaceQuestion(event);
     }
 
     return res.data(
       {
         marketplaceQuestion: sanitizeMarketplaceQuestion(marketplaceQuestion),
-        blocked: isBlocked,
+        blocked: false,
       },
-      isBlocked
-        ? 'Question blocked by marketplace moderation'
-        : initiatedByRole === 'CUSTOMER'
+      initiatedByRole === 'CUSTOMER'
           ? 'Marketplace message sent'
           : 'Marketplace question submitted'
     );
@@ -4548,9 +4631,12 @@ exports.answerEventQuestion = async (req, res, next) => {
     const answerText = String(req.body.answer_text || '').trim();
     const moderation = moderateMarketplaceText(answerText);
     const isBlocked = moderation.status === 'BLOCKED';
+    if (isBlocked) {
+      assertMarketplaceTextAllowed(answerText, 'Message');
+    }
 
     question.answer_text_raw = answerText;
-    question.answer_text_public = isBlocked ? null : answerText;
+    question.answer_text_public = answerText;
     question.answer_moderation_status = moderation.status;
     question.answer_moderation_reasons = moderation.reasons;
     question.answered_by_user_id = req.user._id;
@@ -4562,23 +4648,19 @@ exports.answerEventQuestion = async (req, res, next) => {
     question.acted_on_behalf_of_user_id =
       req.user.userType === 'SUPER_ADMIN' ? event.customer_user_id : null;
     question.proxy_action_reason = req.body.proxy_action_reason || null;
-    question.status = isBlocked ? 'PENDING' : 'PUBLISHED';
+    question.status = 'PUBLISHED';
     await question.save();
 
-    if (!isBlocked) {
-      await notifyVendorsOfMarketplaceAnswer(event, question);
-    }
+    await notifyVendorsOfMarketplaceAnswer(event, question);
 
     return res.data(
       {
         marketplaceQuestion: sanitizeMarketplaceQuestion(question, {
           includeBlocked: req.user.userType === 'SUPER_ADMIN',
         }),
-        blocked: isBlocked,
+        blocked: false,
       },
-      isBlocked
-        ? 'Answer blocked by marketplace moderation'
-        : 'Marketplace answer published'
+      'Marketplace answer published'
     );
   } catch (e) {
     return next(e);
@@ -4686,6 +4768,99 @@ exports.getEventBids = async (req, res, next) => {
       },
       'Marketplace event submissions'
     );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+const notifyVendorNotSelected = async ({ event, vendorUserId, submissionType, submissionId }) => {
+  try {
+    await MarketplaceCommunications.sendMarketplaceCommunication({
+      userId: vendorUserId,
+      title: 'Marketplace submission not selected',
+      body: `${event.event_name || 'Your event'} did not select your ${submissionType}.`,
+      data: {
+        notificationType: 'MARKETPLACE_SUBMISSION_NOT_SELECTED',
+        eventId: event.event_id,
+        submissionType,
+        submissionId,
+      },
+      metadata: { eventId: event.event_id, submissionType, submissionId },
+    });
+  } catch (error) {
+    console.error('Marketplace not-selected notification failed', {
+      eventId: event.event_id,
+      submissionId,
+      message: error.message,
+    });
+  }
+};
+
+exports.declineBid = async (req, res, next) => {
+  try {
+    const bid = await MarketplaceBidService.getByData(
+      { bid_id: req.params.bidId },
+      { singleResult: true }
+    );
+    if (!bid) throw buildError('Marketplace bid not found', 404);
+    const event = await getOwnedEvent(bid.event_id, req.user._id);
+    const transition = getCoordinatorNotSelectTransition('BID', bid.bid_status);
+    if (transition.idempotent) {
+      return res.data({ marketplaceBid: bid }, 'Marketplace bid already declined');
+    }
+    if (!ACTIVE_EVENT_STATUSES.includes(event.status) || !transition.eligible) {
+      throw buildError('This bid can no longer be declined.', 409);
+    }
+    const marketplaceBid = await MarketplaceBidService.update(
+      { bid_id: bid.bid_id, bid_status: bid.bid_status },
+      { bid_status: transition.targetStatus },
+      { getNew: true }
+    );
+    await notifyVendorNotSelected({
+      event,
+      vendorUserId: bid.vendor_user_id,
+      submissionType: 'bid',
+      submissionId: bid.bid_id,
+    });
+    return res.data({ marketplaceBid }, 'Marketplace bid declined');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.declineApplication = async (req, res, next) => {
+  try {
+    const application = await MarketplaceApplicationService.getByData(
+      { application_id: req.params.applicationId },
+      { singleResult: true }
+    );
+    if (!application) throw buildError('Marketplace application not found', 404);
+    const event = await getOwnedEvent(application.event_id, req.user._id);
+    const transition = getCoordinatorNotSelectTransition(
+      'APPLICATION',
+      application.application_status
+    );
+    if (transition.idempotent) {
+      return res.data(
+        { marketplaceApplication: application },
+        'Marketplace application already not selected'
+      );
+    }
+    if (!ACTIVE_EVENT_STATUSES.includes(event.status) || !transition.eligible) {
+      throw buildError('This application can no longer be marked not selected.', 409);
+    }
+    const marketplaceApplication = await MarketplaceApplicationService.update(
+      { application_id: application.application_id, application_status: application.application_status },
+      { application_status: transition.targetStatus },
+      { getNew: true }
+    );
+    await notifyVendorNotSelected({
+      event,
+      vendorUserId: application.vendor_user_id,
+      submissionType: 'application',
+      submissionId: application.application_id,
+    });
+    return res.data({ marketplaceApplication }, 'Marketplace application not selected');
   } catch (e) {
     return next(e);
   }
@@ -5047,19 +5222,28 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       throw buildError('Only vendors can view marketplace notifications', 403);
     }
 
-    const vendorFoodTruck = await getVendorMarketplaceFoodTruck(req.user._id, {
-      enforceCompliance: false,
-    });
-    await OperationalComplianceFormService.retryPendingNotificationsForVendor(
-      req.user._id
-    );
+    const eventVendorProfile = await EventVendorProfileModel.findOne({
+      vendor_user_id: req.user._id,
+      status: 'ACTIVE',
+    }).lean();
+    const vendorFoodTruck = eventVendorProfile
+      ? null
+      : await getVendorMarketplaceFoodTruck(req.user._id, { enforceCompliance: false });
+    if (vendorFoodTruck) {
+      await OperationalComplianceFormService.retryPendingNotificationsForVendor(
+        req.user._id
+      );
+    }
 
     const [questions, bids, applications, closedCandidateBids, closedCandidateApplications, operationalNotifications] = await Promise.all([
       MarketplaceEventQuestionService.getByData(
         {
           vendor_user_id: req.user._id,
           status: { $in: ['PUBLISHED'] },
-          answer_text_public: { $nin: [null, ''] },
+          $or: [
+            { initiated_by_role: 'CUSTOMER' },
+            { answer_text_public: { $nin: [null, ''] } },
+          ],
         },
         { sort: { answered_at: -1, created_at: -1 }, lean: true }
       ),
@@ -5251,10 +5435,10 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       .filter(Boolean);
 
     const operationalNotificationList = operationalNotifications.map((item) => {
-      const truckUnit = (vendorFoodTruck.truck_units || []).find(
+      const truckUnit = (vendorFoodTruck?.truck_units || []).find(
         (unit) => String(unit._id) === String(item.truck_unit_id)
       );
-      const location = (vendorFoodTruck.locations || []).find(
+      const location = (vendorFoodTruck?.locations || []).find(
         (entry) => String(entry._id) === String(item.location_id)
       );
       const formLabel = String(item.form_type || '')
@@ -5548,11 +5732,22 @@ exports.myApplications = async (req, res, next) => {
               event_id: { $in: eventIds },
               vendor_user_id: req.user._id,
               status: 'PUBLISHED',
-              answer_text_public: { $nin: [null, ''] },
-              answered_at: { $ne: null },
               $or: [
-                { vendor_read_at: null },
-                { $expr: { $lt: ['$vendor_read_at', '$answered_at'] } },
+                {
+                  initiated_by_role: 'CUSTOMER',
+                  $or: [
+                    { vendor_read_at: null },
+                    { $expr: { $lt: ['$vendor_read_at', '$created_at'] } },
+                  ],
+                },
+                {
+                  answer_text_public: { $nin: [null, ''] },
+                  answered_at: { $ne: null },
+                  $or: [
+                    { vendor_read_at: null },
+                    { $expr: { $lt: ['$vendor_read_at', '$answered_at'] } },
+                  ],
+                },
               ],
             },
           },

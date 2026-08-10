@@ -1,0 +1,48 @@
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const {
+  resolveMarketplaceSubmissionParticipant,
+} = require('../../helper/marketplace-message-context-helper');
+
+let persistenceCount = 0;
+let notificationCount = 0;
+const simulateCoordinatorApplicationMessage = ({ foodApplication, eventVendorApplication }) => {
+  const participant = resolveMarketplaceSubmissionParticipant({
+    foodApplication,
+    eventVendorApplication,
+  });
+  persistenceCount += 1;
+  notificationCount += 1;
+  return participant;
+};
+
+assert.deepStrictEqual(
+  simulateCoordinatorApplicationMessage({ foodApplication: { food_truck_id: 'truck-1' } }),
+  { foodTruckId: 'truck-1', eventVendorProfileId: null, displayIdentity: 'truck-1' }
+);
+assert.deepStrictEqual(
+  simulateCoordinatorApplicationMessage({ eventVendorApplication: { profile_id: 'profile-1' } }),
+  { foodTruckId: null, eventVendorProfileId: 'profile-1', displayIdentity: 'profile-1' }
+);
+const beforeAmbiguous = { persistenceCount, notificationCount };
+assert.throws(
+  () => simulateCoordinatorApplicationMessage({
+    foodApplication: { food_truck_id: 'truck-duplicate' },
+    eventVendorApplication: { profile_id: 'profile-duplicate' },
+  }),
+  /ambiguous/
+);
+assert.deepStrictEqual(
+  { persistenceCount, notificationCount },
+  beforeAmbiguous,
+  'ambiguous coordinator messages do not persist or notify'
+);
+
+const source = fs.readFileSync(path.join(__dirname, 'marketplace-controller.js'), 'utf8');
+const askSource = source.slice(source.indexOf('exports.askEventQuestion'));
+assert.match(askSource, /const \[targetFoodApplication, targetEventVendorApplication\]/);
+assert.match(askSource, /resolveMarketplaceSubmissionParticipant\(\{[\s\S]*foodApplication: targetFoodApplication,[\s\S]*eventVendorApplication: targetEventVendorApplication/);
+assert.doesNotMatch(askSource, /\)\) \|\| \(await EventVendorApplicationModel\.findOne/);
+
+console.log('marketplace coordinator message controller tests passed');
