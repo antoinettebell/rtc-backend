@@ -195,6 +195,15 @@ const COORDINATOR_AWARD_FEE_RATE = 0.015;
 const VENDOR_EVENT_PROCESSING_RATE = 0.02;
 const roundMoney = (value) => Number((Number(value || 0)).toFixed(2));
 const ACTIVE_EVENT_STATUSES = ['OPEN', 'REOPENED'];
+const assertEventOpenForSubmissionDecision = (event) => {
+  if (
+    !ACTIVE_EVENT_STATUSES.includes(String(event?.status || '').toUpperCase()) ||
+    event?.vendor_applications_closed_at ||
+    (event?.event_close_date && new Date(event.event_close_date) <= new Date())
+  ) {
+    throw buildError('This event is no longer open for vendor submission decisions.', 409);
+  }
+};
 const DRAFT_TTL_DAYS = 7;
 const REQUIREMENT_ATTACHMENT_TYPE = 'REQUIREMENT_DOCUMENT';
 const MARKETPLACE_ATTACHMENT_REQUIREMENT_LABELS = {
@@ -4808,6 +4817,7 @@ exports.declineBid = async (req, res, next) => {
     if (transition.idempotent) {
       return res.data({ marketplaceBid: bid }, 'Marketplace bid already declined');
     }
+    assertEventOpenForSubmissionDecision(event);
     if (!ACTIVE_EVENT_STATUSES.includes(event.status) || !transition.eligible) {
       throw buildError('This bid can no longer be declined.', 409);
     }
@@ -4846,6 +4856,7 @@ exports.declineApplication = async (req, res, next) => {
         'Marketplace application already not selected'
       );
     }
+    assertEventOpenForSubmissionDecision(event);
     if (!ACTIVE_EVENT_STATUSES.includes(event.status) || !transition.eligible) {
       throw buildError('This application can no longer be marked not selected.', 409);
     }
@@ -6317,6 +6328,7 @@ exports.awardedBids = async (req, res, next) => {
 exports.awardBids = async (req, res, next) => {
   try {
     const event = await getOwnedEvent(req.params.eventId, req.user._id);
+    assertEventOpenForSubmissionDecision(event);
     const selectedBidIds = req.body.bid_ids || [];
 
     if (!selectedBidIds.length) {
@@ -6457,6 +6469,7 @@ exports.awardBids = async (req, res, next) => {
 exports.acceptApplication = async (req, res, next) => {
   try {
     const event = await getOwnedEvent(req.params.eventId, req.user._id);
+    assertEventOpenForSubmissionDecision(event);
     const application = await MarketplaceApplicationService.getByData(
       {
         event_id: event.event_id,
