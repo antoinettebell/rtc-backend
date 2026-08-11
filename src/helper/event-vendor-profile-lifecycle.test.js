@@ -84,6 +84,22 @@ const approvedProfile = {
   social_links: ['https://example.com'],
 };
 assert.equal(hasMaterialProfileChange(approvedProfile, { ...approvedProfile }), false);
+assert.equal(
+  hasMaterialProfileChange(approvedProfile, {
+    ...approvedProfile,
+    social_links: ['example.com'],
+  }),
+  false,
+  'a historical protocol-less link is equivalent to its normalized HTTPS form',
+);
+assert.equal(
+  hasMaterialProfileChange(approvedProfile, {
+    ...approvedProfile,
+    social_links: ['instagram.com/maker-shop'],
+  }),
+  true,
+  'changing to a different social account remains a material approved-profile change',
+);
 assert.equal(hasMaterialProfileChange(approvedProfile, { ...approvedProfile, business_description: 'Changed' }), true);
 assert.equal(hasMaterialProfileChange(approvedProfile, { ...approvedProfile, merchandise_categories: ['APPAREL_ACCESSORIES'] }), true);
 const approvedMerchandiseProfile = {

@@ -52,6 +52,7 @@ const {
   getCoordinatorNotSelectTransition,
 } = require('../../helper/marketplace-submission-lifecycle');
 const { resolveEventVendorParticipationPath } = require('../../helper/event-vendor-participation-helper');
+const { normalizeExternalWebLink, normalizeExternalWebLinks } = require('../../helper/external-web-link');
 
 const TYPES = ['MERCHANDISE', 'SERVICE', 'OTHER'];
 const EVENT_VENDOR_PUBLIC_EVENT_FIELDS = [
@@ -200,7 +201,14 @@ exports.saveProfile = async (req, res, next) => {
     const description = String(req.body.business_description || '').trim();
     if (!businessName) throw error('Business name is required');
     if (!description || description.length > 300) throw error('Business description must be 1–300 characters');
-    const socialLinks = (req.body.social_links || []).map((item) => String(item).trim()).filter(Boolean);
+    const submittedSocialLinks = (req.body.social_links || [])
+      .map((item) => String(item).trim())
+      .filter(Boolean);
+    const invalidSocialLink = submittedSocialLinks.some((link) => !normalizeExternalWebLink(link));
+    if (invalidSocialLink) {
+      throw error('Website/social links must be valid web addresses');
+    }
+    const socialLinks = normalizeExternalWebLinks(submittedSocialLinks);
     if (socialLinks.length > 2) throw error('Up to 2 website/social links are allowed');
     const merchandiseCategories = cleanCategories(req.body.merchandise_categories);
     if (vendorTypes.includes('MERCHANDISE') && !merchandiseCategories.length) {

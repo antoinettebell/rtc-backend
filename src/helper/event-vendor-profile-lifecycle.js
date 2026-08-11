@@ -1,4 +1,5 @@
 const REVIEW_STATUSES = ['DRAFT', 'PENDING_REVIEW', 'APPROVED', 'REJECTED'];
+const { normalizeExternalWebLinks } = require('./external-web-link');
 const MERCHANDISE_CATEGORIES = [
   'ARTISANS_CRAFTERS',
   'APPAREL_ACCESSORIES',
@@ -73,7 +74,10 @@ const hasMaterialProfileChange = (current, next) =>
     current.business_description !== next.business_description ||
     !sameValues(current.vendor_types, next.vendor_types) ||
     !sameValues(current.merchandise_categories, next.merchandise_categories) ||
-    !sameValues(current.social_links, next.social_links)
+    !sameValues(
+      normalizeExternalWebLinks(current.social_links),
+      normalizeExternalWebLinks(next.social_links)
+    )
   );
 const validateApplicationPhotoUpload = ({ profile, event, category, now = new Date() }) => {
   if (!profile || profile.review_status !== 'APPROVED') return 'PROFILE_NOT_APPROVED';
