@@ -43,10 +43,6 @@ const VENDOR_PLAN_TIERS = {
       'Sales Tax Reporting',
       '1 media/social link',
       '3-day payouts',
-      'No Employee Login/Cashier Mode',
-      'No Walk Up Payment Acceptance (Cash/Tap to Pay)',
-      'No Multiple food trucks',
-      'No Event marketplace',
     ],
     capabilities: {
       payoutTiming: 'THREE_DAY',
@@ -76,9 +72,7 @@ const VENDOR_PLAN_TIERS = {
       '2 media/social links',
       '2-day payouts',
       'Employee Login/Cashier Mode',
-      'Walk Up Payment Acceptance (Cash/Tap to Pay)',
-      'No Multiple food trucks',
-      'No Event marketplace',
+      'Walk-Up Payment Acceptance (Cash Only)',
     ],
     capabilities: {
       payoutTiming: 'TWO_DAY',
@@ -108,7 +102,7 @@ const VENDOR_PLAN_TIERS = {
       '4 media/social links',
       'Daily payouts',
       'Employee Login/Cashier Mode',
-      'Walk Up Payment Acceptance (Cash/Tap to Pay)',
+      'Walk-Up Payment Acceptance (Cash/Tap to Pay)',
       'Multiple food trucks',
       'Event marketplace',
     ],
@@ -148,19 +142,24 @@ const getVendorPlanCapabilities = (plan) => {
   const source = typeof plan?.toObject === 'function' ? plan.toObject() : plan;
   const tier = getVendorPlanTier(plan);
   const configured = source?.capabilities;
+  // Known tiers have a version-controlled capability contract. Do not let
+  // legacy persisted plan text/capabilities silently widen a tier (for
+  // example, Platinum Cash Only into Tap to Pay).
+  if (tier) {
+    return tier.capabilities;
+  }
   if (configured && typeof configured === 'object') {
     return {
-      ...(tier?.capabilities || {}),
       ...configured,
       employeeWalkUpPos:
         configured.walkUpPos !== undefined
           ? configured.walkUpPos === true
           : configured.employeeWalkUpPos !== undefined
             ? configured.employeeWalkUpPos === true
-            : tier?.capabilities?.employeeWalkUpPos === true,
+            : false,
     };
   }
-  return tier?.capabilities || {};
+  return {};
 };
 
 const canUseEmployeeLogin = (foodTruckOrPlan) =>

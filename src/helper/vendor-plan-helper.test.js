@@ -27,20 +27,25 @@ for (const plan of plans) {
 }
 
 assert(!basic.details.includes('1099 Reporting'));
+assert(!basic.details.some((detail) => /walk.?up/i.test(detail)));
 assert(platinum.details.includes('1099 Reporting'));
+assert(platinum.details.includes('Walk-Up Payment Acceptance (Cash Only)'));
+assert(!platinum.details.some((detail) => /tap.?to.?pay/i.test(detail)));
 assert(elite.details.includes('1099 Reporting'));
+assert(elite.details.includes('Walk-Up Payment Acceptance (Cash/Tap to Pay)'));
 
 assert.strictEqual(basic.capabilities.employeeLogin, false);
 assert.strictEqual(canUseWalkupPOS({ slug: 'SUB_BASIC' }), false);
 assert.strictEqual(canUseWalkupPOS({ slug: 'SUB_PLATINUM' }), true);
 assert.strictEqual(canUseWalkupPOS({ slug: 'SUB_ELITE' }), true);
+assert.strictEqual(canUseTapToPay({ slug: 'SUB_PLATINUM' }), false);
 assert.strictEqual(
   canUseWalkupPOS({ slug: 'SUB_ELITE', capabilities: { employeeWalkUpPos: false, walkUpPosPaymentMethods: [] } }),
-  false
+  true
 );
 assert.strictEqual(
   canUseWalkupPOS({ slug: 'SUB_BASIC', capabilities: { walkUpPos: true, walkUpPosPaymentMethods: ['CASH'] } }),
-  true
+  false
 );
 assert.throws(() => {
   try {
