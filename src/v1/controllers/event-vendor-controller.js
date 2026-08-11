@@ -18,9 +18,6 @@ const { docusign } = require('../../config');
 const MailHelper = require('../../helper/mail-helper');
 const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
 const {
-  buildEventVendorAwardDetailsHtml,
-} = require('../../helper/marketplace-award-email-helper');
-const {
   findOrCreateEventVendorApplication,
 } = require('../../helper/event-vendor-application-idempotency');
 const {
@@ -775,6 +772,9 @@ exports.awardApplication = async (req, res, next) => {
     if (!application) throw error('Marketplace Vendor application not found', 404);
     const event = await MarketplaceEventModel.findOne({ event_id: application.event_id, customer_user_id: req.user._id });
     if (!event) throw error('Event not found', 404);
+    if (!['OPEN', 'REOPENED'].includes(event.status) || event.vendor_applications_closed_at || (event.event_close_date && new Date(event.event_close_date) <= new Date())) {
+      throw error('This event is no longer open for vendor submission decisions.', 409);
+    }
     if (!['SUBMITTED', 'UNDER_REVIEW'].includes(application.status)) throw error('Application cannot be awarded in its current status', 409);
     for (const type of application.vendor_types) {
       const need = (event.event_vendor_needs || []).find((item) => item.vendor_type === type);
@@ -799,9 +799,8 @@ exports.awardApplication = async (req, res, next) => {
       coordinator_payout_amount: subtotal, payment_status: 'PENDING',
     });
     application.status = 'PAYMENT_DUE'; application.payment_id = payment.payment_id; await application.save();
-    const [coordinator, vendor] = await Promise.all([
+    const [coordinator] = await Promise.all([
       UserModel.findById(event.customer_user_id).lean(),
-      UserModel.findById(application.vendor_user_id).lean(),
     ]);
     if (coordinator?.email) {
       try {
@@ -812,8 +811,6 @@ exports.awardApplication = async (req, res, next) => {
             <p>Your Marketplace Vendor selection has been recorded.</p>
             <p><strong>Event:</strong> ${event.event_name || event.event_id}</p>
             <p><strong>Event date:</strong> ${event.event_date || 'Not provided'}</p>
-            <h3>Award details</h3>
-            ${buildEventVendorAwardDetailsHtml({ application, vendor })}
             <p>The vendor must complete the attendance-fee checkout before the award is confirmed.</p>
           `
         );
@@ -844,7 +841,7 @@ exports.declineApplication = async (req, res, next) => {
     if (transition.idempotent) {
       return res.data({ eventVendorApplication: application }, 'Marketplace Vendor application already not selected');
     }
-    if (!['OPEN', 'REOPENED'].includes(event.status) || !transition.eligible) {
+    if (!['OPEN', 'REOPENED'].includes(event.status) || event.vendor_applications_closed_at || (event.event_close_date && new Date(event.event_close_date) <= new Date()) || !transition.eligible) {
       throw error('This application can no longer be marked not selected.', 409);
     }
     application.status = transition.targetStatus;

@@ -43,7 +43,11 @@ const MarketplaceCommunications = require('../../helper/marketplace-communicatio
 const MailHelper = require('../../helper/mail-helper');
 const {
   buildFoodVendorAwardDetailsHtml,
+  buildEventVendorAwardDetailsHtml,
 } = require('../../helper/marketplace-award-email-helper');
+const {
+  deliverCoordinatorDetailsEmail,
+} = require('../../helper/marketplace-coordinator-details-email');
 const {
   deriveMarketplaceVendorContact,
   sanitizeMarketplaceContactForCoordinator,
@@ -3405,6 +3409,16 @@ const finalizePaidVendorPayment = async (payment) => {
       eventVendorApplication.status = 'PAID';
       eventVendorApplication.payment_id = payment.payment_id;
       await eventVendorApplication.save();
+      await deliverCoordinatorDetailsEmail({
+        applicationModel: EventVendorApplicationModel,
+        applicationId: eventVendorApplication.application_id,
+        eventId: payment.event_id,
+        loadEvent: (eventId) => MarketplaceEventService.getByData({ event_id: eventId }, { singleResult: true }),
+        loadVendor: (vendorUserId) => UserService.getByData({ _id: vendorUserId }, { singleResult: true }),
+        loadCoordinator: (coordinatorUserId) => UserService.getByData({ _id: coordinatorUserId }, { singleResult: true }),
+        sendMail: MailHelper.sendMail,
+        buildHtml: buildEventVendorAwardDetailsHtml,
+      });
       return { eventVendorApplication };
     }
     const existingApplication = await MarketplaceApplicationService.getByData(
@@ -3771,6 +3785,19 @@ const finalizePaidMarketplacePayment = async (payment) => {
   }
 
   return null;
+};
+
+const safelyFinalizePaidMarketplacePayment = async (payment) => {
+  try {
+    return await finalizePaidMarketplacePayment(payment);
+  } catch (finalizationError) {
+    // Payment confirmation is authoritative. Coordinator-detail delivery can retry later.
+    console.error('Marketplace paid-payment finalization failed', {
+      paymentId: payment?.payment_id,
+      message: finalizationError.message,
+    });
+    return { retryable_finalization_error: true };
+  }
 };
 
 const getPaymentForUser = async (paymentId, user) => {
@@ -7343,8 +7370,9 @@ exports.checkoutPayment = async (req, res, next) => {
       throw buildError('The payment amount changed. Refresh before completing payment.', 409);
     }
     if (authorizedPayment.payment_status === 'PAID') {
+      const routingResult = await safelyFinalizePaidMarketplacePayment(authorizedPayment);
       return res.data(
-        { marketplacePayment: authorizedPayment },
+        { marketplacePayment: authorizedPayment, routingResult },
         'Marketplace payment already confirmed'
       );
     }
@@ -7373,8 +7401,9 @@ exports.checkoutPayment = async (req, res, next) => {
         { singleResult: true }
       );
       if (currentPayment?.payment_status === 'PAID') {
+        const routingResult = await safelyFinalizePaidMarketplacePayment(currentPayment);
         return res.data(
-          { marketplacePayment: currentPayment },
+          { marketplacePayment: currentPayment, routingResult },
           'Marketplace payment already confirmed'
         );
       }

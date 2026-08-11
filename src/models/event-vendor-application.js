@@ -39,6 +39,11 @@ const schema = mongoose.Schema({
   status: { type: String, enum: ['SUBMITTED', 'UNDER_REVIEW', 'AWARDED', 'NOT_SELECTED', 'PAYMENT_DUE', 'PAID', 'WITHDRAWN'], default: 'SUBMITTED', index: true },
   withdrawn_at: { type: Date, default: null },
   payment_id: { type: String, default: null, index: true },
+  coordinator_details_email_status: { type: String, enum: ['PENDING', 'SENDING', 'SENT', 'RETRYABLE'], default: 'PENDING', index: true },
+  coordinator_details_email_sent_at: { type: Date, default: null },
+  coordinator_details_email_claimed_at: { type: Date, default: null },
+  coordinator_details_email_claim_token: { type: String, default: null, index: true },
+  coordinator_details_email_last_error: { type: String, default: null, maxlength: 500 },
 }, { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } });
 
 schema.index({ event_id: 1, vendor_user_id: 1 }, { unique: true });
