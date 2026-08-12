@@ -1,5 +1,9 @@
 const jwt = require('jsonwebtoken');
 const { docusign } = require('../config');
+const {
+  buildVendorMarketplaceEnvelopeDefinition,
+  inspectMarketplaceAgreementDocuments,
+} = require('./docusign-vendor-envelope');
 
 const DS_SCOPE = 'signature impersonation';
 const TOKEN_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
@@ -174,78 +178,37 @@ exports.createVendorMarketplaceSigningEnvelope = async ({
   assertTemplateSigningConfigured();
   const accessToken = await exports.getAccessToken();
   const url = `${docusign.basePath}/v2.1/accounts/${docusign.accountId}/envelopes`;
-  const clientUserId = String(vendorUserId);
-  const templateRoles = [
-    {
-      email: vendorEmail,
-      name: vendorName,
-      roleName: docusign.signerRole,
-      recipientId: VENDOR_SIGNER_RECIPIENT_ID,
-      routingOrder: '1',
-      clientUserId,
-      tabs: {
-        textTabs: [
-          {
-            tabLabel: 'EventName',
-            value: event?.event_name || '',
-          },
-          {
-            tabLabel: 'EventId',
-            value: event?.event_id || '',
-          },
-          {
-            tabLabel: 'SubmissionId',
-            value: bid?.bid_id || application?.application_id || '',
-          },
-        ],
-      },
-    },
-  ];
-
   return docusignFetch(url, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      emailSubject: `RTC Event Marketplace Agreements - ${event?.event_name || event?.event_id}`,
-      compositeTemplates: [
-        {
-          compositeTemplateId: 'governance',
-          serverTemplates: [
-            {
-              sequence: '1',
-              templateId: docusign.governanceTemplateId,
-            },
-          ],
-          inlineTemplates: [
-            {
-              sequence: '2',
-              recipients: { signers: templateRoles },
-            },
-          ],
-        },
-        {
-          compositeTemplateId: 'nda',
-          serverTemplates: [
-            {
-              sequence: '3',
-              templateId: docusign.ndaTemplateId,
-            },
-          ],
-          inlineTemplates: [
-            {
-              sequence: '4',
-              recipients: { signers: templateRoles },
-            },
-          ],
-        },
-      ],
-      status: 'sent',
-    }),
+    body: JSON.stringify(buildVendorMarketplaceEnvelopeDefinition({
+      docusign,
+      vendorName,
+      vendorEmail,
+      vendorUserId,
+      event,
+      bid,
+      application,
+    })),
   });
 };
+
+exports.getEnvelopeDocuments = async (envelopeId) => {
+  const accessToken = await exports.getAccessToken();
+  const url = `${docusign.basePath}/v2.1/accounts/${docusign.accountId}/envelopes/${envelopeId}/documents`;
+  return docusignFetch(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+  });
+};
+
+exports.inspectMarketplaceAgreementDocuments = inspectMarketplaceAgreementDocuments;
 
 exports.createRecipientView = async ({
   envelopeId,

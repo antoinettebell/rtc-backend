@@ -34,6 +34,9 @@ const {
   reconcileVendorAgreementEnvelope,
 } = require('../../helper/marketplace-vendor-agreement-reconciliation');
 const {
+  verifyMarketplaceAgreementDocuments,
+} = require('../../helper/marketplace-agreement-document-verification');
+const {
   buildSignedAgreementAttachmentContext,
   buildActiveAgreementIdentityKey,
   reserveActiveMarketplaceAgreement,
@@ -1453,6 +1456,8 @@ const getValidVendorAgreement = async (vendorUserId, eventVendorProfileId = null
       nda_template_id: docusign.ndaTemplateId,
       governance_version: docusign.governanceVersion,
       nda_version: docusign.ndaVersion,
+      required_document_count: { $gte: 2 },
+      required_templates_verified_at: { $ne: null },
     },
     { singleResult: true, sort: { signed_at: -1 } }
   );
@@ -1516,6 +1521,15 @@ const writeVendorAgreementAudit = async (agreement, action, options = {}) => {
     console.error('Marketplace agreement audit failed', auditError?.message || auditError);
   }
 };
+
+const verifyVendorAgreementEnvelopeDocuments = async (agreement) =>
+  verifyMarketplaceAgreementDocuments({
+    agreement,
+    getEnvelopeDocuments: DocuSignHelper.getEnvelopeDocuments,
+    wait: (attempt) => new Promise((resolve) => setTimeout(resolve, attempt * 250)),
+    recordAudit: (action, status, message) =>
+      writeVendorAgreementAudit(agreement, action, { status, message }),
+  });
 
 const normalizeDocuSignReturnStatus = (status) => {
   const value = String(status || '').toLowerCase();
@@ -6082,6 +6096,10 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
         existingAgreement ||= candidate;
         continue;
       }
+      const documentVerification = await verifyVendorAgreementEnvelopeDocuments(candidate);
+      if (!documentVerification.valid) {
+        continue;
+      }
       const reconciliation = await reconcileVendorAgreementEnvelope({
         agreement: candidate,
         getEnvelopeStatus: DocuSignHelper.getEnvelopeStatus,
@@ -6186,6 +6204,13 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
         agreement.envelope_id = envelopeId;
         agreement.status = 'SENT';
         await agreement.save();
+        const documentVerification = await verifyVendorAgreementEnvelopeDocuments(agreement);
+        if (!documentVerification.valid) {
+          throw buildError(
+            'DocuSign did not create both required agreement documents. Please try again.',
+            502
+          );
+        }
         await writeVendorAgreementAudit(agreement, 'ENVELOPE_CREATED');
       } else if (!agreement.envelope_id) {
         for (let attempt = 0; attempt < 5 && !agreement.envelope_id; attempt += 1) {

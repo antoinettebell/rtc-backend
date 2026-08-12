@@ -631,6 +631,8 @@ exports.submitApplication = async (req, res, next) => {
       nda_template_id: docusign.ndaTemplateId,
       governance_version: docusign.governanceVersion,
       nda_version: docusign.ndaVersion,
+      required_document_count: { $gte: 2 },
+      required_templates_verified_at: { $ne: null },
     }).sort({ signed_at: -1 }).lean();
     if (!agreement) throw error('Sign the Marketplace NDA and Governance Document before submitting', 409);
     const categoryFee = Math.max(...eligibleNeeds.map((need) => Number(need.fee || 0)));

@@ -30,12 +30,24 @@ const {
   assert.match(start, /Concurrent signing request reused the active envelope/);
   assert.match(start, /for \(const candidate of existingAgreements \|\| \[\]\)/,
     'legacy duplicate agreements are all reconciled so a newer SENT envelope cannot hide a completed one');
+  assert.match(
+    start,
+    /verifyVendorAgreementEnvelopeDocuments\(candidate\)[\s\S]*reconcileVendorAgreementEnvelope/,
+    'existing envelopes must contain both required documents before reconciliation or reuse'
+  );
+  assert.match(
+    start,
+    /createVendorMarketplaceSigningEnvelope[\s\S]*verifyVendorAgreementEnvelopeDocuments\(agreement\)[\s\S]*createRecipientView/,
+    'new envelopes must contain both required documents before the signing view opens'
+  );
   const agreementModelSource = fs.readFileSync(
     path.join(__dirname, '../../models/marketplace-vendor-agreement.js'),
     'utf8'
   );
   assert.match(agreementModelSource, /partialFilterExpression: \{ active_identity_key: \{ \$type: 'string' \} \}/,
     'legacy agreements without an active identity are excluded from the unique partial index');
+  assert.match(agreementModelSource, /required_document_count/);
+  assert.match(agreementModelSource, /required_templates_verified_at/);
 
   const firstSigning = {
     vendor_user_id: 'vendor-1',

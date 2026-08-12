@@ -76,6 +76,15 @@ const mSchema = mongoose.Schema(
       type: String,
       default: '1.0',
     },
+    required_document_count: {
+      type: Number,
+      default: 0,
+    },
+    required_templates_verified_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
     signer_role: {
       type: String,
       default: 'VendorSigner',
