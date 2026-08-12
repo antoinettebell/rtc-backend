@@ -121,6 +121,22 @@ const mSchema = mongoose.Schema(
       type: Date,
       default: null,
     },
+    refund_status: {
+      type: String,
+      enum: ['NOT_REQUESTED', 'PROCESSING', 'REFUNDED', 'FAILED'],
+      default: 'NOT_REQUESTED',
+      index: true,
+    },
+    refund_transaction_id: { type: String, default: null },
+    refund_mode: { type: String, enum: ['void', 'refund'], default: null },
+    refund_started_at: { type: Date, default: null },
+    refunded_at: { type: Date, default: null },
+    refund_failure_reason: { type: String, default: null },
+    refund_processed_by_user_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'users',
+      default: null,
+    },
     manually_marked_paid: {
       type: Boolean,
       default: false,

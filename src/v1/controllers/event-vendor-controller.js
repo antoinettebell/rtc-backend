@@ -16,6 +16,7 @@ const {
 const { addObjectWithKey } = require('../../helper/aws');
 const { docusign } = require('../../config');
 const MailHelper = require('../../helper/mail-helper');
+const PaymentHelper = require('../../helper/payment-helper');
 const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
 const {
   findOrCreateEventVendorApplication,
@@ -41,6 +42,9 @@ const {
   sanitizeMarketplaceContactForCoordinator,
 } = require('../../helper/marketplace-vendor-contact-helper');
 const {
+  hideMarketplaceAgreementFromCoordinator,
+} = require('../../helper/marketplace-coordinator-agreement-privacy');
+const {
   ACTIVE_EVENT_VENDOR_APPLICATION_STATUSES,
   isEventVendorApplicationEditable,
   isEventVendorApplicationWithdrawable,
@@ -58,6 +62,9 @@ const {
   getMarketplaceAwardRevocationDecision,
   getMarketplaceAwardRevocationError,
 } = require('../../helper/marketplace-award-revocation');
+const {
+  refundPaidMarketplaceVendorFee,
+} = require('../../helper/marketplace-vendor-fee-refund');
 
 const TYPES = ['MERCHANDISE', 'SERVICE', 'OTHER'];
 const EVENT_VENDOR_PUBLIC_EVENT_FIELDS = [
@@ -906,6 +913,69 @@ exports.declineApplication = async (req, res, next) => {
   }
 };
 
+const refundPaidEventVendorFeeForRevocation = async ({ payment, actorUserId }) =>
+  refundPaidMarketplaceVendorFee({
+    payment,
+    actorUserId,
+    processRefund: PaymentHelper.processRefund.bind(PaymentHelper),
+    claimRefund: ({ paymentId, actorUserId: actorId }) => MarketplacePaymentModel.findOneAndUpdate(
+      {
+        payment_id: paymentId,
+        payment_status: 'PAID',
+        $or: [
+          { refund_status: { $in: ['NOT_REQUESTED', 'FAILED'] } },
+          { refund_status: { $exists: false } },
+        ],
+      },
+      {
+        $set: {
+          refund_status: 'PROCESSING', refund_started_at: new Date(),
+          refund_failure_reason: null, refund_processed_by_user_id: actorId,
+        },
+      },
+      { new: true, runValidators: true }
+    ),
+    completeRefund: ({ paymentId, actorUserId: actorId, refundTransactionId, refundMode }) =>
+      MarketplacePaymentModel.findOneAndUpdate(
+        { payment_id: paymentId, payment_status: 'PAID', refund_status: 'PROCESSING', refund_processed_by_user_id: actorId },
+        {
+          $set: {
+            payment_status: 'REFUNDED', refund_status: 'REFUNDED',
+            refund_transaction_id: refundTransactionId, refund_mode: refundMode,
+            refunded_at: new Date(), refund_failure_reason: null,
+          },
+        },
+        { new: true, runValidators: true }
+      ),
+    failRefund: ({ paymentId, actorUserId: actorId, message }) =>
+      MarketplacePaymentModel.findOneAndUpdate(
+        { payment_id: paymentId, payment_status: 'PAID', refund_status: 'PROCESSING', refund_processed_by_user_id: actorId },
+        { $set: { refund_status: 'FAILED', refund_failure_reason: message } },
+        { new: true, runValidators: true }
+      ),
+  });
+
+const resolveEventVendorFeePaymentForRevocation = async ({ payment, actorUserId }) => {
+  if (payment?.payment_status === 'PAID') {
+    return (await refundPaidEventVendorFeeForRevocation({ payment, actorUserId })).payment;
+  }
+  if (payment?.payment_status !== 'PENDING') return payment;
+  const cancelledPayment = await MarketplacePaymentModel.findOneAndUpdate(
+    { payment_id: payment.payment_id, payment_status: 'PENDING' },
+    { $set: { payment_status: 'CANCELLED', superseded_at: new Date() } },
+    { new: true }
+  );
+  if (cancelledPayment) return cancelledPayment;
+  const currentPayment = await MarketplacePaymentModel.findOne({ payment_id: payment.payment_id });
+  if (currentPayment?.payment_status === 'PAID') {
+    return (await refundPaidEventVendorFeeForRevocation({
+      payment: currentPayment,
+      actorUserId,
+    })).payment;
+  }
+  return currentPayment;
+};
+
 exports.revokeApplicationAward = async (req, res, next) => {
   try {
     const application = await EventVendorApplicationModel.findOne({
@@ -925,10 +995,23 @@ exports.revokeApplicationAward = async (req, res, next) => {
           payment_type: 'VENDOR_EVENT_FEE',
           payment_status: { $in: ['PENDING', 'PROCESSING', 'PAID'] },
         });
+    const initialRevocationDecision = getMarketplaceAwardRevocationDecision({
+      event,
+      vendorPaymentStatus: payment?.payment_status === 'PROCESSING'
+        ? 'PROCESSING'
+        : null,
+    });
+    if (!initialRevocationDecision.canRevoke) {
+      throw error(getMarketplaceAwardRevocationError(initialRevocationDecision), 409);
+    }
+    const resolvedPayment = await resolveEventVendorFeePaymentForRevocation({
+      payment,
+      actorUserId: req.user._id,
+    });
     const revocationDecision = getMarketplaceAwardRevocationDecision({
       event,
       vendorPaymentStatus:
-        payment?.payment_status ||
+        resolvedPayment?.payment_status ||
         application.payment_status ||
         (application.status === 'PAID' ? 'PAID' : null),
     });
@@ -936,23 +1019,6 @@ exports.revokeApplicationAward = async (req, res, next) => {
       throw error(getMarketplaceAwardRevocationError(revocationDecision), 409);
     }
 
-    if (payment?.payment_status === 'PENDING') {
-      const cancelledPayment = await MarketplacePaymentModel.findOneAndUpdate(
-        { payment_id: payment.payment_id, payment_status: 'PENDING' },
-        { $set: { payment_status: 'CANCELLED', superseded_at: new Date() } },
-        { new: true }
-      );
-      if (!cancelledPayment) {
-        const currentPayment = await MarketplacePaymentModel.findOne({
-          payment_id: payment.payment_id,
-        });
-        const currentDecision = getMarketplaceAwardRevocationDecision({
-          event,
-          vendorPaymentStatus: currentPayment?.payment_status || 'PROCESSING',
-        });
-        throw error(getMarketplaceAwardRevocationError(currentDecision), 409);
-      }
-    }
     application.status = 'NOT_SELECTED';
     await application.save();
     await MarketplaceCommunications.sendMarketplaceCommunication({
@@ -983,21 +1049,12 @@ exports.eventApplications = async (req, res, next) => {
     const applications = await EventVendorApplicationModel.find({ event_id: event.event_id })
       .populate('vendor_user_id', 'firstName lastName email mobileNumber countryCode')
       .sort({ created_at: -1 }).lean();
-    const agreementAttachments = await MarketplaceAttachmentModel.find({
-      event_id: event.event_id,
-      application_id: { $in: applications.map((application) => application.application_id) },
-      attachment_type: 'AGREEMENT_DOCUMENT',
-      status: 'ACTIVE',
-    }).select('attachment_id application_id attachment_type file_url original_name mime_type').lean();
     return res.data({
       applicationList: applications.map((application) =>
-        sanitizeMarketplaceContactForCoordinator({
+        sanitizeMarketplaceContactForCoordinator(hideMarketplaceAgreementFromCoordinator({
           ...application,
           vendor_display_id: getEventVendorDisplayId(application.profile_id),
-          attachments: agreementAttachments.filter(
-            (attachment) => attachment.application_id === application.application_id
-          ),
-        }, {
+        }), {
           detailsUnlocked: application.status === 'PAID',
         }))
     }, 'Marketplace Vendor applications');

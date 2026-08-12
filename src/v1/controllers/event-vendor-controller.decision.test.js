@@ -25,9 +25,13 @@ const loadController = (state) => {
 			findOneAndUpdate: async (query, update) => {
 				if (state.paymentRaceToPaid) {
 					state.payment.payment_status = 'PAID';
+					state.paymentRaceToPaid = false;
 					return null;
 				}
 				if (!state.payment || state.payment.payment_status !== query.payment_status) return null;
+				if (query.refund_status && state.payment.refund_status !== query.refund_status) return null;
+				if (query.refund_processed_by_user_id && String(state.payment.refund_processed_by_user_id) !== String(query.refund_processed_by_user_id)) return null;
+				if (query.$or && !['NOT_REQUESTED', 'FAILED', undefined].includes(state.payment.refund_status)) return null;
 				Object.assign(state.payment, update.$set || {});
 				counters.paymentSaves += 1;
 				return state.payment;
@@ -46,6 +50,14 @@ const loadController = (state) => {
 			if (request === '../../config') return { docusign: {} };
 			if (request === '../../helper/mail-helper') return {
 				sendMail: async (...args) => { counters.emails += 1; counters.emailArgs.push(args); },
+			};
+			if (request === '../../helper/payment-helper') return {
+				processRefund: async () => {
+					counters.refunds += 1;
+					return state.refundSuccess
+						? { success: true, refundTransactionId: 'refund-1', mode: 'refund' }
+						: { success: false, message: 'Gateway declined refund' };
+				},
 			};
 			if (request === '../../helper/marketplace-communications-helper') return {
 				sendMarketplaceCommunication: async ({ userId }) => {
@@ -83,7 +95,7 @@ const run = async (handler, { params = { applicationId: 'application-1' } } = {}
 };
 
 const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, applicationStatus = 'SUBMITTED' } = {}) => {
-	const counters = { saves: 0, paymentCreates: 0, paymentSaves: 0, emails: 0, emailArgs: [], notifications: 0, notificationUserIds: [] };
+	const counters = { saves: 0, paymentCreates: 0, paymentSaves: 0, refunds: 0, emails: 0, emailArgs: [], notifications: 0, notificationUserIds: [] };
 	const application = {
 		application_id: 'application-1', event_id: 'event-1', vendor_user_id: 'vendor-1', vendor_types: ['MERCHANDISE'],
 		checkout_subtotal: 100, status: applicationStatus,
@@ -96,7 +108,7 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 		event_duration_hours: 4, event_timezone: 'America/New_York',
 		event_vendor_needs: [{ vendor_type: 'MERCHANDISE', quantity: 1 }],
 	};
-	return { counters, application, event, coordinator: null, payment: null, paymentRaceToPaid: false };
+	return { counters, application, event, coordinator: null, payment: null, paymentRaceToPaid: false, refundSuccess: true };
 };
 
 (async () => {
@@ -170,6 +182,8 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 		state.application.payment_id = 'payment-1';
 		state.payment = {
 			payment_id: 'payment-1', payment_status: 'PENDING',
+			processor_transaction_id: 'transaction-1', total_amount: 25,
+			refund_status: 'NOT_REQUESTED',
 			save: async () => { state.counters.paymentSaves += 1; },
 		};
 		const controller = loadController(state);
@@ -194,32 +208,54 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 		state.application.payment_id = 'payment-paid';
 		state.payment = {
 			payment_id: 'payment-paid', payment_status: 'PAID',
+			processor_transaction_id: 'transaction-paid', total_amount: 25,
+			refund_status: 'NOT_REQUESTED',
 			save: async () => { state.counters.paymentSaves += 1; },
 		};
 		const controller = loadController(state);
 		const result = await run(controller.revokeApplicationAward);
-		assert.equal(result.error?.code, 409);
-		assert.match(result.error.message, /verified processor refund/);
+		assert.equal(result.error, undefined);
+		assert.equal(state.counters.refunds, 1);
+		assert.equal(state.application.status, 'NOT_SELECTED');
+		assert.equal(state.payment.payment_status, 'REFUNDED');
+		assert.equal(state.counters.notifications, 1);
+	}
+
+	{
+		const state = createState({ applicationStatus: 'PAID' });
+		state.application.payment_id = 'payment-failed';
+		state.payment = {
+			payment_id: 'payment-failed', payment_status: 'PAID',
+			processor_transaction_id: 'transaction-failed', total_amount: 25,
+			refund_status: 'NOT_REQUESTED',
+		};
+		state.refundSuccess = false;
+		const controller = loadController(state);
+		const result = await run(controller.revokeApplicationAward);
+		assert.equal(result.error?.code, 502);
 		assert.equal(state.application.status, 'PAID');
 		assert.equal(state.payment.payment_status, 'PAID');
+		assert.equal(state.payment.refund_status, 'FAILED');
 		assert.equal(state.counters.saves, 0);
-		assert.equal(state.counters.paymentSaves, 0);
 		assert.equal(state.counters.notifications, 0);
 	}
 
 	{
 		const state = createState({ applicationStatus: 'PAYMENT_DUE' });
 		state.application.payment_id = 'payment-race';
-		state.payment = { payment_id: 'payment-race', payment_status: 'PENDING' };
+		state.payment = {
+			payment_id: 'payment-race', payment_status: 'PENDING',
+			processor_transaction_id: 'transaction-race', total_amount: 25,
+			refund_status: 'NOT_REQUESTED',
+		};
 		state.paymentRaceToPaid = true;
 		const controller = loadController(state);
 		const result = await run(controller.revokeApplicationAward);
-		assert.equal(result.error?.code, 409);
-		assert.match(result.error.message, /verified processor refund/);
-		assert.equal(state.application.status, 'PAYMENT_DUE');
-		assert.equal(state.payment.payment_status, 'PAID');
-		assert.equal(state.counters.saves, 0);
-		assert.equal(state.counters.notifications, 0);
+		assert.equal(result.error, undefined);
+		assert.equal(state.counters.refunds, 1);
+		assert.equal(state.application.status, 'NOT_SELECTED');
+		assert.equal(state.payment.payment_status, 'REFUNDED');
+		assert.equal(state.counters.notifications, 1);
 	}
 
 	console.log('event vendor award and not-selected controller execution tests passed');

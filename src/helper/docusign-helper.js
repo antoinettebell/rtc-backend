@@ -311,6 +311,25 @@ exports.downloadEnvelopeDocuments = async (envelopeId) => {
   return Buffer.from(await response.arrayBuffer());
 };
 
+exports.downloadEnvelopeDocument = async (envelopeId, documentId) => {
+  const accessToken = await exports.getAccessToken();
+  const url = `${docusign.basePath}/v2.1/accounts/${docusign.accountId}/envelopes/${envelopeId}/documents/${documentId}`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/pdf',
+    },
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `DocuSign document download failed with status ${response.status}`);
+  }
+
+  return Buffer.from(await response.arrayBuffer());
+};
+
 exports.mapEnvelopeStatus = (status) => {
   const normalized = String(status || '').toLowerCase();
   if (normalized === 'completed') return 'SIGNED';

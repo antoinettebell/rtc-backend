@@ -31,6 +31,10 @@ const PaymentHelper = require('../../helper/payment-helper');
 const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
 const DocuSignHelper = require('../../helper/docusign-helper');
 const {
+  buildAgreementEmailAttachments,
+  excludeAgreementDocuments,
+} = require('../../helper/marketplace-agreement-email-attachments');
+const {
   reconcileVendorAgreementEnvelope,
 } = require('../../helper/marketplace-vendor-agreement-reconciliation');
 const {
@@ -63,6 +67,9 @@ const {
   getMarketplaceAwardRevocationDecision,
   getMarketplaceAwardRevocationError,
 } = require('../../helper/marketplace-award-revocation');
+const {
+  refundPaidMarketplaceVendorFee,
+} = require('../../helper/marketplace-vendor-fee-refund');
 const {
   getPublicMarketplaceEventQuery,
   isPublicMarketplaceEventEligible,
@@ -2935,9 +2942,11 @@ const collectVendorEmailAttachments = async ({ bid = null, application = null })
     ...(bid ? { bid_id: bid.bid_id } : {}),
     ...(application ? { application_id: application.application_id } : {}),
   };
-  const collectedAttachments = await MarketplaceAttachmentService.getByData(
+  const collectedAttachments = excludeAgreementDocuments(
+    await MarketplaceAttachmentService.getByData(
     attachmentQuery,
     { sort: { created_at: 1 }, lean: true }
+    )
   );
   const emailAttachments = [];
 
@@ -2956,26 +2965,20 @@ const collectVendorEmailAttachments = async ({ bid = null, application = null })
     }
   }
 
-  const agreement = await MarketplaceVendorAgreementService.getByData(
-    {
-      vendor_user_id: bid?.vendor_user_id || application?.vendor_user_id,
-      status: 'SIGNED',
-      envelope_id: { $ne: null },
-    },
-    { singleResult: true, sort: { signed_at: -1 } }
+  const agreement = await getValidVendorAgreement(
+    bid?.vendor_user_id || application?.vendor_user_id
   );
 
   if (agreement?.envelope_id) {
     try {
-      const signedDocuments = await DocuSignHelper.downloadEnvelopeDocuments(
+      const envelopeDocuments = await DocuSignHelper.getEnvelopeDocuments(
         agreement.envelope_id
       );
-      emailAttachments.push({
-        content: signedDocuments.toString('base64'),
-        filename: 'RTC Vendor Agreements.pdf',
-        type: 'application/pdf',
-        disposition: 'attachment',
-      });
+      emailAttachments.push(...await buildAgreementEmailAttachments({
+        envelopeId: agreement.envelope_id,
+        envelopeDocuments,
+        downloadEnvelopeDocument: DocuSignHelper.downloadEnvelopeDocument,
+      }));
     } catch (error) {
       await sendDeveloperAlert('DocuSign signed document email fetch error', error, {
         agreement_id: agreement.agreement_id,
@@ -4838,12 +4841,36 @@ exports.getEventBids = async (req, res, next) => {
         }
       ),
     ]);
+    const linkedApplicationIds = bids
+      .map((bid) => bid.linked_application_id)
+      .filter(Boolean);
+    const linkedVendorPayments = linkedApplicationIds.length
+      ? await MarketplacePaymentService.getByData(
+          {
+            application_id: { $in: linkedApplicationIds },
+            payment_type: 'VENDOR_EVENT_FEE',
+            payment_status: { $in: ['PENDING', 'PROCESSING', 'PAID'] },
+          },
+          { sort: { created_at: -1 }, lean: true }
+        )
+      : [];
+    const linkedVendorPaymentByApplicationId = linkedVendorPayments.reduce(
+      (result, payment) => {
+        if (!result[payment.application_id]) result[payment.application_id] = payment;
+        return result;
+      },
+      {}
+    );
     const bidsWithUnlock = bids.map((bid) => {
       const unlockState = getMarketplaceUnlockState({ event, bid });
+      const linkedVendorPayment = bid.linked_application_id
+        ? linkedVendorPaymentByApplicationId[bid.linked_application_id]
+        : null;
       return {
         ...redactLockedMarketplaceRecord(bid, unlockState, {
           fullAccess: false,
         }),
+        linked_vendor_payment_status: linkedVendorPayment?.payment_status || null,
         marketplace_unlock: unlockState,
       };
     });
@@ -6662,19 +6689,76 @@ exports.acceptApplication = async (req, res, next) => {
   }
 };
 
-const cancelPendingVendorFeePaymentForRevocation = async ({ payment, event }) => {
-  if (payment?.payment_status !== 'PENDING') return;
+const refundPaidVendorFeePaymentForRevocation = async ({ payment, actorUserId }) =>
+  refundPaidMarketplaceVendorFee({
+    payment,
+    actorUserId,
+    processRefund: PaymentHelper.processRefund.bind(PaymentHelper),
+    claimRefund: ({ paymentId, actorUserId: actorId }) =>
+      MarketplacePaymentService.getModel().findOneAndUpdate(
+        {
+          payment_id: paymentId,
+          payment_status: 'PAID',
+          $or: [
+            { refund_status: { $in: ['NOT_REQUESTED', 'FAILED'] } },
+            { refund_status: { $exists: false } },
+          ],
+        },
+        {
+          $set: {
+            refund_status: 'PROCESSING',
+            refund_started_at: new Date(),
+            refund_failure_reason: null,
+            refund_processed_by_user_id: actorId,
+          },
+        },
+        { new: true, runValidators: true }
+      ),
+    completeRefund: ({ paymentId, actorUserId: actorId, refundTransactionId, refundMode }) =>
+      MarketplacePaymentService.getModel().findOneAndUpdate(
+        { payment_id: paymentId, payment_status: 'PAID', refund_status: 'PROCESSING', refund_processed_by_user_id: actorId },
+        {
+          $set: {
+            payment_status: 'REFUNDED',
+            refund_status: 'REFUNDED',
+            refund_transaction_id: refundTransactionId,
+            refund_mode: refundMode,
+            refunded_at: new Date(),
+            refund_failure_reason: null,
+          },
+        },
+        { new: true, runValidators: true }
+      ),
+    failRefund: ({ paymentId, actorUserId: actorId, message }) =>
+      MarketplacePaymentService.getModel().findOneAndUpdate(
+        { payment_id: paymentId, payment_status: 'PAID', refund_status: 'PROCESSING', refund_processed_by_user_id: actorId },
+        { $set: { refund_status: 'FAILED', refund_failure_reason: message } },
+        { new: true, runValidators: true }
+      ),
+  });
+
+const cancelPendingVendorFeePaymentForRevocation = async ({ payment, event, actorUserId }) => {
+  if (payment?.payment_status === 'PAID') {
+    return (await refundPaidVendorFeePaymentForRevocation({ payment, actorUserId })).payment;
+  }
+  if (payment?.payment_status !== 'PENDING') return payment;
   const cancelledPayment = await MarketplacePaymentService.update(
     { payment_id: payment.payment_id, payment_status: 'PENDING' },
     { payment_status: 'CANCELLED', superseded_at: new Date() },
     { getNew: true }
   );
-  if (cancelledPayment) return;
+  if (cancelledPayment) return cancelledPayment;
 
   const currentPayment = await MarketplacePaymentService.getByData(
     { payment_id: payment.payment_id },
     { singleResult: true }
   );
+  if (currentPayment?.payment_status === 'PAID') {
+    return (await refundPaidVendorFeePaymentForRevocation({
+      payment: currentPayment,
+      actorUserId,
+    })).payment;
+  }
   const decision = getMarketplaceAwardRevocationDecision({
     event,
     vendorPaymentStatus: currentPayment?.payment_status || 'PROCESSING',
@@ -6712,10 +6796,24 @@ exports.revokeAward = async (req, res, next) => {
           { singleResult: true }
         )
       : null;
+    const initialRevocationDecision = getMarketplaceAwardRevocationDecision({
+      event,
+      vendorPaymentStatus: linkedVendorPayment?.payment_status === 'PROCESSING'
+        ? 'PROCESSING'
+        : null,
+    });
+    if (!initialRevocationDecision.canRevoke) {
+      throw buildError(getMarketplaceAwardRevocationError(initialRevocationDecision), 409);
+    }
+    const resolvedVendorPayment = await cancelPendingVendorFeePaymentForRevocation({
+      payment: linkedVendorPayment,
+      event,
+      actorUserId: req.user._id,
+    });
     const revocationDecision = getMarketplaceAwardRevocationDecision({
       event,
       vendorPaymentStatus:
-        linkedVendorPayment?.payment_status ||
+        resolvedVendorPayment?.payment_status ||
         linkedApplication?.payment_status ||
         (linkedApplication?.application_status === 'PAID' ? 'PAID' : null),
     });
@@ -6723,10 +6821,6 @@ exports.revokeAward = async (req, res, next) => {
       throw buildError(getMarketplaceAwardRevocationError(revocationDecision), 409);
     }
 
-    await cancelPendingVendorFeePaymentForRevocation({
-      payment: linkedVendorPayment,
-      event,
-    });
     if (linkedApplication) {
       linkedApplication.application_status = 'NOT_SELECTED';
       linkedApplication.payment_status = 'CANCELLED';
@@ -6806,10 +6900,24 @@ exports.revokeApplicationAward = async (req, res, next) => {
       },
       { singleResult: true }
     );
+    const initialRevocationDecision = getMarketplaceAwardRevocationDecision({
+      event,
+      vendorPaymentStatus: vendorPayment?.payment_status === 'PROCESSING'
+        ? 'PROCESSING'
+        : null,
+    });
+    if (!initialRevocationDecision.canRevoke) {
+      throw buildError(getMarketplaceAwardRevocationError(initialRevocationDecision), 409);
+    }
+    const resolvedVendorPayment = await cancelPendingVendorFeePaymentForRevocation({
+      payment: vendorPayment,
+      event,
+      actorUserId: req.user._id,
+    });
     const revocationDecision = getMarketplaceAwardRevocationDecision({
       event,
       vendorPaymentStatus:
-        vendorPayment?.payment_status ||
+        resolvedVendorPayment?.payment_status ||
         application.payment_status ||
         (application.application_status === 'PAID' ? 'PAID' : null),
     });
@@ -6817,10 +6925,6 @@ exports.revokeApplicationAward = async (req, res, next) => {
       throw buildError(getMarketplaceAwardRevocationError(revocationDecision), 409);
     }
 
-    await cancelPendingVendorFeePaymentForRevocation({
-      payment: vendorPayment,
-      event,
-    });
     application.application_status = 'NOT_SELECTED';
     application.payment_status = 'CANCELLED';
     application.payment_due_at = null;

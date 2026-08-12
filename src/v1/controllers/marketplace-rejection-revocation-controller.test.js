@@ -79,7 +79,18 @@ const loadController = (state) => {
         return state.payment;
       },
       create: async () => { counters.paymentCreates += 1; return {}; },
-      getModel: () => ({}),
+      getModel: () => ({
+        findOneAndUpdate: async (query, update) => {
+          if (!state.payment || query.payment_id !== state.payment.payment_id) return null;
+          if (query.payment_status && state.payment.payment_status !== query.payment_status) return null;
+          if (query.refund_status && state.payment.refund_status !== query.refund_status) return null;
+          if (query.refund_processed_by_user_id && String(state.payment.refund_processed_by_user_id) !== String(query.refund_processed_by_user_id)) return null;
+          if (query.$or && !['NOT_REQUESTED', 'FAILED', undefined].includes(state.payment.refund_status)) return null;
+          Object.assign(state.payment, update.$set || {});
+          counters.paymentUpdates += 1;
+          return state.payment;
+        },
+      }),
     },
     MarketplaceAttachmentService: {}, MarketplaceAgreementAuditService: {},
     MarketplaceEventImageService: {}, MarketplaceEventQuestionService: {},
@@ -90,7 +101,14 @@ const loadController = (state) => {
     '../services': services,
     '../services/vendor-compliance-service': {},
     '../services/operational-compliance-form-service': {},
-    '../../helper/aws': {}, '../../helper/payment-helper': {},
+    '../../helper/aws': {}, '../../helper/payment-helper': {
+      processRefund: async () => {
+        counters.refunds += 1;
+        return state.refundSuccess
+          ? { success: true, refundTransactionId: 'refund-1', mode: 'refund' }
+          : { success: false, message: 'Gateway declined refund' };
+      },
+    },
     '../../helper/cybersource-payment-helper': {}, '../../helper/docusign-helper': {},
     '../../helper/marketplace-vendor-agreement-reconciliation': {},
     '../../helper/marketplace-agreement-vendor-context': {},
@@ -140,7 +158,7 @@ const createState = ({ bidStatus = null, applicationStatus = null, paymentStatus
   const counters = {
     bidSaves: 0, bidUpdates: 0, otherBidUpdates: 0, applicationSaves: 0,
     applicationUpdates: 0, paymentUpdates: 0, paymentCreates: 0,
-    eventSaves: 0, notifications: 0,
+    eventSaves: 0, notifications: 0, refunds: 0,
     notificationUserIds: [],
   };
   const event = futureEvent();
@@ -159,8 +177,10 @@ const createState = ({ bidStatus = null, applicationStatus = null, paymentStatus
   const payment = paymentStatus && paymentStatus !== 'NOT_REQUIRED' ? {
     payment_id: 'payment-1', application_id: 'application-1',
     payment_type: 'VENDOR_EVENT_FEE', payment_status: paymentStatus,
+    processor_transaction_id: 'transaction-1', total_amount: 25,
+    refund_status: 'NOT_REQUESTED',
   } : null;
-  return { counters, event, bid, application, payment, paymentRaceToPaid: false };
+  return { counters, event, bid, application, payment, paymentRaceToPaid: false, refundSuccess: true };
 };
 
 (async () => {
@@ -255,18 +275,51 @@ const createState = ({ bidStatus = null, applicationStatus = null, paymentStatus
     const state = createState({
       bidStatus: 'AWARDED', applicationStatus: 'PAID', paymentStatus: 'PAID',
     });
+    const startAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+    state.event.event_date = startAt.toISOString();
+    state.event.event_time = `${String(startAt.getUTCHours()).padStart(2, '0')}:${String(startAt.getUTCMinutes()).padStart(2, '0')}`;
+    state.event.event_timezone = 'UTC';
     const controller = loadController(state);
     const result = await run(controller.revokeAward, {
       params: { eventId: 'event-1', bidId: 'bid-1' }, body: {},
     });
     assert.equal(result.error?.code, 409);
-    assert.match(result.error.message, /verified processor refund/);
+    assert.equal(state.counters.refunds, 0);
+    assert.equal(state.payment.payment_status, 'PAID');
+    assert.equal(state.bid.bid_status, 'AWARDED');
+  }
+
+  {
+    const state = createState({
+      bidStatus: 'AWARDED', applicationStatus: 'PAID', paymentStatus: 'PAID',
+    });
+    const controller = loadController(state);
+    const result = await run(controller.revokeAward, {
+      params: { eventId: 'event-1', bidId: 'bid-1' }, body: {},
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(state.counters.refunds, 1);
+    assert.equal(state.payment.payment_status, 'REFUNDED');
+    assert.equal(state.bid.bid_status, 'NOT_AWARDED');
+    assert.equal(state.application.application_status, 'NOT_SELECTED');
+    assert.equal(state.counters.notifications, 1);
+  }
+
+  {
+    const state = createState({
+      bidStatus: 'AWARDED', applicationStatus: 'PAID', paymentStatus: 'PAID',
+    });
+    state.refundSuccess = false;
+    const controller = loadController(state);
+    const result = await run(controller.revokeAward, {
+      params: { eventId: 'event-1', bidId: 'bid-1' }, body: {},
+    });
+    assert.equal(result.error?.code, 502);
+    assert.match(result.error.message, /Gateway declined refund/);
     assert.equal(state.bid.bid_status, 'AWARDED');
     assert.equal(state.application.application_status, 'PAID');
     assert.equal(state.payment.payment_status, 'PAID');
-    assert.equal(state.counters.bidSaves, 0);
-    assert.equal(state.counters.applicationSaves, 0);
-    assert.equal(state.counters.paymentUpdates, 0);
+    assert.equal(state.payment.refund_status, 'FAILED');
     assert.equal(state.counters.notifications, 0);
   }
 
@@ -279,16 +332,12 @@ const createState = ({ bidStatus = null, applicationStatus = null, paymentStatus
     const result = await run(controller.revokeAward, {
       params: { eventId: 'event-1', bidId: 'bid-1' }, body: {},
     });
-    assert.equal(result.error?.code, 409);
-    assert.match(result.error.message, /verified processor refund/);
-    assert.equal(state.bid.bid_status, 'AWARDED');
-    assert.equal(state.bid.linked_application_id, 'application-1');
-    assert.equal(state.application.application_status, 'PAYMENT_DUE');
-    assert.equal(state.application.payment_status, 'PENDING');
-    assert.equal(state.payment.payment_status, 'PAID');
-    assert.equal(state.counters.bidSaves, 0);
-    assert.equal(state.counters.applicationSaves, 0);
-    assert.equal(state.counters.notifications, 0);
+    assert.equal(result.error, undefined);
+    assert.equal(state.counters.refunds, 1);
+    assert.equal(state.payment.payment_status, 'REFUNDED');
+    assert.equal(state.bid.bid_status, 'NOT_AWARDED');
+    assert.equal(state.application.application_status, 'NOT_SELECTED');
+    assert.equal(state.counters.notifications, 1);
   }
 
   {
@@ -326,18 +375,44 @@ const createState = ({ bidStatus = null, applicationStatus = null, paymentStatus
   }
 
   {
+    const state = createState({ applicationStatus: 'PAID', paymentStatus: 'PAID' });
+    const controller = loadController(state);
+    const result = await run(controller.revokeApplicationAward, {
+      params: { eventId: 'event-1', applicationId: 'application-1' }, body: {},
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(state.counters.refunds, 1);
+    assert.equal(state.payment.payment_status, 'REFUNDED');
+    assert.equal(state.application.application_status, 'NOT_SELECTED');
+    assert.equal(state.counters.notifications, 1);
+  }
+
+  {
+    const state = createState({ applicationStatus: 'PAID', paymentStatus: 'PAID' });
+    state.refundSuccess = false;
+    const controller = loadController(state);
+    const result = await run(controller.revokeApplicationAward, {
+      params: { eventId: 'event-1', applicationId: 'application-1' }, body: {},
+    });
+    assert.equal(result.error?.code, 502);
+    assert.equal(state.application.application_status, 'PAID');
+    assert.equal(state.payment.payment_status, 'PAID');
+    assert.equal(state.payment.refund_status, 'FAILED');
+    assert.equal(state.counters.notifications, 0);
+  }
+
+  {
     const state = createState({ applicationStatus: 'PAYMENT_DUE', paymentStatus: 'PENDING' });
     state.paymentRaceToPaid = true;
     const controller = loadController(state);
     const result = await run(controller.revokeApplicationAward, {
       params: { eventId: 'event-1', applicationId: 'application-1' }, body: {},
     });
-    assert.equal(result.error?.code, 409);
-    assert.match(result.error.message, /verified processor refund/);
-    assert.equal(state.application.application_status, 'PAYMENT_DUE');
-    assert.equal(state.payment.payment_status, 'PAID');
-    assert.equal(state.counters.applicationSaves, 0);
-    assert.equal(state.counters.notifications, 0);
+    assert.equal(result.error, undefined);
+    assert.equal(state.counters.refunds, 1);
+    assert.equal(state.application.application_status, 'NOT_SELECTED');
+    assert.equal(state.payment.payment_status, 'REFUNDED');
+    assert.equal(state.counters.notifications, 1);
   }
 
   console.log('marketplace rejection and revocation controller tests passed');
