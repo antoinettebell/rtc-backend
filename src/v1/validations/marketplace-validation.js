@@ -290,7 +290,7 @@ module.exports = {
 
   answerEventQuestion: {
     body: Joi.object({
-      answer_text: Joi.string().trim().min(1).max(1500).required(),
+      answer_text: Joi.string().trim().min(3).max(1500).required(),
       proxy_action_reason: Joi.string().trim().max(500).allow(null, ''),
     }),
   },

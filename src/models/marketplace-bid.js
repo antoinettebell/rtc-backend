@@ -196,6 +196,7 @@ const mSchema = mongoose.Schema(
         'UNDER_REVIEW',
         'AWARDED',
         'NOT_AWARDED',
+        'DECLINED',
         'WITHDRAWN',
       ],
       default: 'DRAFT',

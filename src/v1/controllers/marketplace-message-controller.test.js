@@ -45,4 +45,18 @@ assert.match(askSource, /const \[targetFoodApplication, targetEventVendorApplica
 assert.match(askSource, /resolveMarketplaceSubmissionParticipant\(\{[\s\S]*foodApplication: targetFoodApplication,[\s\S]*eventVendorApplication: targetEventVendorApplication/);
 assert.doesNotMatch(askSource, /\)\) \|\| \(await EventVendorApplicationModel\.findOne/);
 
+const getQuestionsSource = source.slice(
+  source.indexOf('exports.getEventQuestions'),
+  source.indexOf('exports.askEventQuestion')
+);
+assert(
+  getQuestionsSource.indexOf('MarketplaceEventQuestionService.getByData') <
+    getQuestionsSource.indexOf('markMarketplaceQuestionsRead'),
+  'the response captures unread state before the read acknowledgement is persisted'
+);
+const notificationSource = source.slice(source.indexOf('exports.vendorNotificationSummary'));
+assert.match(notificationSource, /\.\.\.questions\.map\(\(question\) => question\.event_id\)/);
+assert.match(notificationSource, /buildMarketplaceMessageNotification\(question, event, req\.user\)/);
+assert.match(notificationSource, /messageNotifications\.filter\(\(item\) => item\.unread\)\.length/);
+
 console.log('marketplace coordinator message controller tests passed');

@@ -54,6 +54,10 @@ const {
   hasMarketplaceVendorAwardCapacity,
   hasMarketplaceVendorCapacityForRequestedTypes,
 } = require('../../helper/marketplace-event-visibility-helper');
+const {
+  getMarketplaceAwardRevocationDecision,
+  getMarketplaceAwardRevocationError,
+} = require('../../helper/marketplace-award-revocation');
 
 const TYPES = ['MERCHANDISE', 'SERVICE', 'OTHER'];
 const EVENT_VENDOR_PUBLIC_EVENT_FIELDS = [
@@ -584,6 +588,12 @@ exports.submitApplication = async (req, res, next) => {
     ]);
     if (!profile) throw error('Complete the Marketplace Vendor profile first', 409);
     if (!event || (event.event_close_date && new Date(event.event_close_date) <= new Date())) throw error('Applications are closed', 410);
+    if (
+      req.body.participation_path != null &&
+      String(req.body.participation_path).toUpperCase() !== 'APPLICATION'
+    ) {
+      throw error('Marketplace Vendors may submit applications only.', 400);
+    }
     const requestedTypes = cleanTypes(req.body.vendor_types);
     const eligibleNeeds = (event.event_vendor_needs || []).filter((need) => requestedTypes.includes(need.vendor_type) && profile.vendor_types.includes(need.vendor_type));
     if (!requestedTypes.length) throw error('Select at least one Marketplace Vendor type', 400);
@@ -642,9 +652,6 @@ exports.submitApplication = async (req, res, next) => {
       requestedPath: req.body.participation_path,
       existingApplication,
     });
-    if (existingApplication?.participation_path && existingApplication.participation_path !== participationPath) {
-      throw error('The selected participation path cannot be changed after submission.', 409);
-    }
     const electricityFee = electricityRequired ? Number(event.event_vendor_electricity_fee || 0) : 0;
     if (existingApplication && !isEventVendorApplicationEditable(existingApplication.status)) {
       const message = existingApplication.status === 'WITHDRAWN'
@@ -894,6 +901,76 @@ exports.declineApplication = async (req, res, next) => {
       });
     }
     return res.data({ eventVendorApplication: application }, 'Marketplace Vendor application not selected');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.revokeApplicationAward = async (req, res, next) => {
+  try {
+    const application = await EventVendorApplicationModel.findOne({
+      application_id: req.params.applicationId,
+      status: { $in: ['AWARDED', 'PAYMENT_DUE', 'PAID'] },
+    });
+    if (!application) throw error('Awarded Marketplace Vendor application not found', 404);
+    const event = await MarketplaceEventModel.findOne({
+      event_id: application.event_id,
+      customer_user_id: req.user._id,
+    });
+    if (!event) throw error('Event not found', 404);
+    const payment = application.payment_id
+      ? await MarketplacePaymentModel.findOne({ payment_id: application.payment_id })
+      : await MarketplacePaymentModel.findOne({
+          application_id: application.application_id,
+          payment_type: 'VENDOR_EVENT_FEE',
+          payment_status: { $in: ['PENDING', 'PROCESSING', 'PAID'] },
+        });
+    const revocationDecision = getMarketplaceAwardRevocationDecision({
+      event,
+      vendorPaymentStatus:
+        payment?.payment_status ||
+        application.payment_status ||
+        (application.status === 'PAID' ? 'PAID' : null),
+    });
+    if (!revocationDecision.canRevoke) {
+      throw error(getMarketplaceAwardRevocationError(revocationDecision), 409);
+    }
+
+    if (payment?.payment_status === 'PENDING') {
+      const cancelledPayment = await MarketplacePaymentModel.findOneAndUpdate(
+        { payment_id: payment.payment_id, payment_status: 'PENDING' },
+        { $set: { payment_status: 'CANCELLED', superseded_at: new Date() } },
+        { new: true }
+      );
+      if (!cancelledPayment) {
+        const currentPayment = await MarketplacePaymentModel.findOne({
+          payment_id: payment.payment_id,
+        });
+        const currentDecision = getMarketplaceAwardRevocationDecision({
+          event,
+          vendorPaymentStatus: currentPayment?.payment_status || 'PROCESSING',
+        });
+        throw error(getMarketplaceAwardRevocationError(currentDecision), 409);
+      }
+    }
+    application.status = 'NOT_SELECTED';
+    await application.save();
+    await MarketplaceCommunications.sendMarketplaceCommunication({
+      userId: application.vendor_user_id,
+      title: 'Marketplace award revoked',
+      body: `${event.event_name || 'Your event'} award was revoked by the coordinator.${req.body?.reason ? ` Reason: ${req.body.reason}` : ''}`,
+      data: {
+        notificationType: 'MARKETPLACE_AWARD_REVOKED',
+        eventId: event.event_id,
+        applicationId: application.application_id,
+      },
+      channels: ['push', 'email'],
+      metadata: { eventId: event.event_id, applicationId: application.application_id },
+    });
+    return res.data(
+      { eventVendorApplication: application },
+      'Marketplace Vendor award revoked; the vendor slot is available'
+    );
   } catch (e) {
     return next(e);
   }

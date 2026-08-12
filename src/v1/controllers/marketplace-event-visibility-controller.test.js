@@ -645,6 +645,74 @@ const addEventVendor = (state, vendorId, vendorTypes) => {
 };
 
 const runMarketplaceVendorTests = async () => {
+	{
+		const state = createEventVendorState();
+		addEventVendor(state, 'application-only-vendor', ['MERCHANDISE']);
+		state.events.push(makeEventVendorEvent('application-only-event', {
+			payment_responsibility: 'BOTH',
+		}));
+		const controller = loadEventVendorController(state);
+		const result = await runController(controller.submitApplication, eventVendorRequest(
+			'application-only-vendor',
+			'application-only-event',
+			{ body: { ...validEventVendorBody(['MERCHANDISE']), participation_path: 'BID' } }
+		));
+		assert.equal(result.error && result.error.code, 400);
+		assert.match(result.error.message, /applications only/);
+		assertEventVendorSubmissionUntouched(state);
+	}
+
+	for (const paymentResponsibility of ['COORDINATOR', 'BOTH', 'VENDOR']) {
+		const state = createEventVendorState();
+		addEventVendor(state, `application-${paymentResponsibility}`, ['MERCHANDISE']);
+		state.events.push(makeEventVendorEvent(`application-${paymentResponsibility}-event`, {
+			payment_responsibility: paymentResponsibility,
+		}));
+		const controller = loadEventVendorController(state);
+		const result = await runController(controller.submitApplication, eventVendorRequest(
+			`application-${paymentResponsibility}`,
+			`application-${paymentResponsibility}-event`,
+			{ body: validEventVendorBody(['MERCHANDISE']) }
+		));
+		assert.equal(result.error, undefined);
+		assert.equal(result.response.payload.eventVendorApplication.participation_path, 'APPLICATION');
+		assert.equal(state.counters.eventVendorCreates, 1);
+		assert.equal(state.counters.paymentCreates, 0);
+	}
+
+	{
+		const state = createEventVendorState();
+		addEventVendor(state, 'nationwide-merchandise', ['MERCHANDISE']);
+		state.events.push(
+			makeEventVendorEvent('new-york-merchandise', {
+				event_city: 'New York', event_state: 'NY',
+			}),
+			makeEventVendorEvent('virginia-merchandise', {
+				event_city: 'Stuart', event_state: 'VA',
+			}),
+			makeEventVendorEvent('california-merchandise', {
+				event_city: 'Los Angeles', event_state: 'CA',
+			}),
+			makeEventVendorEvent('service-only', {
+				event_city: 'New York', event_state: 'NY',
+				event_vendor_needs: [{ vendor_type: 'SERVICE', quantity: 1, fee: 25 }],
+			})
+		);
+		const controller = loadEventVendorController(state);
+		const result = await runController(
+			controller.eligibleEvents,
+			eventVendorRequest('nationwide-merchandise', null, {
+				query: { city: 'Nowhere', state: 'ZZ', radius: 1 },
+			})
+		);
+		assert.equal(result.error, undefined);
+		assert.deepStrictEqual(
+			result.response.payload.marketplaceEventList.map((event) => event.event_id).sort(),
+			['california-merchandise', 'new-york-merchandise', 'virginia-merchandise'],
+			'Marketplace Vendor authorization ignores location and returns every open event requesting an approved type'
+		);
+	}
+
 	for (const status of ['SUBMITTED', 'UNDER_REVIEW', 'AWARDED', 'NOT_SELECTED', 'PAYMENT_DUE', 'PAID', 'WITHDRAWN']) {
 		const state = createEventVendorState();
 		addEventVendor(state, 'persisted-owner', ['MERCHANDISE']);

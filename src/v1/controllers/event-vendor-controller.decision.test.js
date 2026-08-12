@@ -5,6 +5,7 @@ const path = require('path');
 const controllerPath = path.join(__dirname, 'event-vendor-controller.js');
 const originalLoad = Module._load;
 const actualLifecycle = require('../../helper/marketplace-submission-lifecycle');
+const { hasMarketplaceVendorAwardCapacity } = require('../../helper/marketplace-event-visibility-helper');
 
 const loadController = (state) => {
 	const counters = state.counters;
@@ -20,7 +21,17 @@ const loadController = (state) => {
 			}),
 		},
 		MarketplacePaymentModel: {
-			findOne: async () => null,
+			findOne: async () => state.payment || null,
+			findOneAndUpdate: async (query, update) => {
+				if (state.paymentRaceToPaid) {
+					state.payment.payment_status = 'PAID';
+					return null;
+				}
+				if (!state.payment || state.payment.payment_status !== query.payment_status) return null;
+				Object.assign(state.payment, update.$set || {});
+				counters.paymentSaves += 1;
+				return state.payment;
+			},
 			create: async () => { counters.paymentCreates += 1; return { payment_id: 'payment-1' }; },
 		},
 		UserModel: { findById: () => ({ lean: async () => state.coordinator || null }) },
@@ -37,7 +48,10 @@ const loadController = (state) => {
 				sendMail: async (...args) => { counters.emails += 1; counters.emailArgs.push(args); },
 			};
 			if (request === '../../helper/marketplace-communications-helper') return {
-				sendMarketplaceCommunication: async () => { counters.notifications += 1; },
+				sendMarketplaceCommunication: async ({ userId }) => {
+					counters.notifications += 1;
+					counters.notificationUserIds.push(String(userId));
+				},
 			};
 			if (request === '../../helper/event-vendor-application-idempotency') return {};
 			if (request === '../../helper/event-vendor-profile-lifecycle') return { MERCHANDISE_CATEGORIES: [] };
@@ -69,7 +83,7 @@ const run = async (handler, { params = { applicationId: 'application-1' } } = {}
 };
 
 const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, applicationStatus = 'SUBMITTED' } = {}) => {
-	const counters = { saves: 0, paymentCreates: 0, emails: 0, emailArgs: [], notifications: 0 };
+	const counters = { saves: 0, paymentCreates: 0, paymentSaves: 0, emails: 0, emailArgs: [], notifications: 0, notificationUserIds: [] };
 	const application = {
 		application_id: 'application-1', event_id: 'event-1', vendor_user_id: 'vendor-1', vendor_types: ['MERCHANDISE'],
 		checkout_subtotal: 100, status: applicationStatus,
@@ -78,9 +92,11 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 	const event = {
 		event_id: 'event-1', customer_user_id: 'coordinator-1', status: eventStatus,
 		vendor_applications_closed_at: closedAt, event_close_date: closeDate,
+		event_date: '2030-09-10T00:00:00.000Z', event_time: '4:00 PM',
+		event_duration_hours: 4, event_timezone: 'America/New_York',
 		event_vendor_needs: [{ vendor_type: 'MERCHANDISE', quantity: 1 }],
 	};
-	return { counters, application, event, coordinator: null };
+	return { counters, application, event, coordinator: null, payment: null, paymentRaceToPaid: false };
 };
 
 (async () => {
@@ -136,6 +152,7 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 		assert.equal(state.application.status, 'NOT_SELECTED');
 		assert.equal(state.counters.saves, 1);
 		assert.equal(state.counters.notifications, 1);
+		assert.deepEqual(state.counters.notificationUserIds, ['vendor-1']);
 	}
 
 	{
@@ -144,6 +161,63 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 		const result = await run(controller.declineApplication);
 		assert.equal(result.error, undefined);
 		assert.match(result.response.message, /already not selected/);
+		assert.equal(state.counters.saves, 0);
+		assert.equal(state.counters.notifications, 0);
+	}
+
+	{
+		const state = createState({ applicationStatus: 'PAYMENT_DUE' });
+		state.application.payment_id = 'payment-1';
+		state.payment = {
+			payment_id: 'payment-1', payment_status: 'PENDING',
+			save: async () => { state.counters.paymentSaves += 1; },
+		};
+		const controller = loadController(state);
+		const result = await run(controller.revokeApplicationAward);
+		assert.equal(result.error, undefined);
+		assert.equal(state.application.status, 'NOT_SELECTED');
+		assert.equal(state.payment.payment_status, 'CANCELLED');
+		assert.equal(state.counters.saves, 1);
+		assert.equal(state.counters.paymentSaves, 1);
+		assert.equal(state.counters.notifications, 1);
+		assert.deepEqual(state.counters.notificationUserIds, ['vendor-1']);
+		assert.equal(state.counters.paymentCreates, 0);
+		assert.equal(hasMarketplaceVendorAwardCapacity({
+			event: state.event,
+			profileTypes: ['MERCHANDISE'],
+			applications: [state.application],
+		}), true, 'revocation releases the Marketplace Vendor capacity slot');
+	}
+
+	{
+		const state = createState({ applicationStatus: 'PAID' });
+		state.application.payment_id = 'payment-paid';
+		state.payment = {
+			payment_id: 'payment-paid', payment_status: 'PAID',
+			save: async () => { state.counters.paymentSaves += 1; },
+		};
+		const controller = loadController(state);
+		const result = await run(controller.revokeApplicationAward);
+		assert.equal(result.error?.code, 409);
+		assert.match(result.error.message, /verified processor refund/);
+		assert.equal(state.application.status, 'PAID');
+		assert.equal(state.payment.payment_status, 'PAID');
+		assert.equal(state.counters.saves, 0);
+		assert.equal(state.counters.paymentSaves, 0);
+		assert.equal(state.counters.notifications, 0);
+	}
+
+	{
+		const state = createState({ applicationStatus: 'PAYMENT_DUE' });
+		state.application.payment_id = 'payment-race';
+		state.payment = { payment_id: 'payment-race', payment_status: 'PENDING' };
+		state.paymentRaceToPaid = true;
+		const controller = loadController(state);
+		const result = await run(controller.revokeApplicationAward);
+		assert.equal(result.error?.code, 409);
+		assert.match(result.error.message, /verified processor refund/);
+		assert.equal(state.application.status, 'PAYMENT_DUE');
+		assert.equal(state.payment.payment_status, 'PAID');
 		assert.equal(state.counters.saves, 0);
 		assert.equal(state.counters.notifications, 0);
 	}

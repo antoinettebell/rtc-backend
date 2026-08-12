@@ -60,6 +60,10 @@ const {
   getMarketplaceEventTiming,
 } = require('../../helper/marketplace-event-close-helper');
 const {
+  getMarketplaceAwardRevocationDecision,
+  getMarketplaceAwardRevocationError,
+} = require('../../helper/marketplace-award-revocation');
+const {
   getPublicMarketplaceEventQuery,
   isPublicMarketplaceEventEligible,
   sanitizePublicMarketplaceEvent,
@@ -93,6 +97,7 @@ const {
 } = require('../../helper/marketplace-message-context-helper');
 const {
   getMarketplaceMessageUnreadState,
+  buildMarketplaceMessageNotification,
 } = require('../../helper/marketplace-message-thread-helper');
 const {
   assertMarketplaceEventImageHasNoContactInfo,
@@ -4470,10 +4475,6 @@ exports.getEventQuestions = async (req, res, next) => {
       };
     }
 
-    if (req.query.markRead === 'true') {
-      await markMarketplaceQuestionsRead(req.params.eventId, req.user, submissionScope);
-    }
-
     const questions = await MarketplaceEventQuestionService.getByData(query, {
       sort: { created_at: 1 },
       lean: true,
@@ -4485,6 +4486,12 @@ exports.getEventQuestions = async (req, res, next) => {
         viewer: req.user,
       })
     );
+
+    // Return the unread state that existed when the thread was opened, then
+    // acknowledge it so the next notification refresh reflects the read state.
+    if (req.query.markRead === 'true') {
+      await markMarketplaceQuestionsRead(req.params.eventId, req.user, submissionScope);
+    }
 
     return res.data(
       {
@@ -5248,7 +5255,7 @@ exports.withdrawBid = async (req, res, next) => {
       return res.data({ marketplaceBid: bid }, 'Marketplace bid already withdrawn');
     }
 
-    if (['AWARDED', 'NOT_AWARDED'].includes(bid.bid_status)) {
+    if (['AWARDED', 'NOT_AWARDED', 'DECLINED'].includes(bid.bid_status)) {
       throw buildError('This bid can no longer be withdrawn.', 400);
     }
 
@@ -5420,13 +5427,10 @@ exports.vendorNotificationSummary = async (req, res, next) => {
         .lean(),
     ]);
 
-    const unreadQuestions = questions.filter((question) =>
-      getQuestionUnreadState(question, req.user)
-    );
     const eventIds = [
       ...new Set(
         [
-          ...unreadQuestions.map((question) => question.event_id),
+          ...questions.map((question) => question.event_id),
           ...bids.map((bid) => bid.event_id),
           ...applications.map((application) => application.event_id),
           ...closedCandidateBids.map((bid) => bid.event_id),
@@ -5447,20 +5451,12 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       return acc;
     }, {});
 
-    const messageNotifications = unreadQuestions.map((question) => {
+    const messageNotifications = questions.map((question) => {
       const event = eventById[String(question.event_id)] || {};
       return {
-        id: `marketplace-message-${question.question_id}`,
-        type: 'MARKETPLACE_MESSAGE',
-        event_id: question.event_id,
+        ...buildMarketplaceMessageNotification(question, event, req.user),
         event_name: toNotificationEventLabel(event),
         event_date: toNotificationEventDate(event),
-        title:
-          question.initiated_by_role === 'CUSTOMER'
-            ? 'New coordinator message'
-            : 'Marketplace question answered',
-        subtitle: 'Open event messages to review and reply.',
-        question_id: question.question_id,
       };
     });
 
@@ -5571,7 +5567,7 @@ exports.vendorNotificationSummary = async (req, res, next) => {
     return res.data(
       {
         marketplaceNotificationList,
-        unread_message_count: messageNotifications.length,
+        unread_message_count: messageNotifications.filter((item) => item.unread).length,
         action_required_count:
           bidNotifications.length +
           applicationNotifications.length +
@@ -6639,6 +6635,26 @@ exports.acceptApplication = async (req, res, next) => {
   }
 };
 
+const cancelPendingVendorFeePaymentForRevocation = async ({ payment, event }) => {
+  if (payment?.payment_status !== 'PENDING') return;
+  const cancelledPayment = await MarketplacePaymentService.update(
+    { payment_id: payment.payment_id, payment_status: 'PENDING' },
+    { payment_status: 'CANCELLED', superseded_at: new Date() },
+    { getNew: true }
+  );
+  if (cancelledPayment) return;
+
+  const currentPayment = await MarketplacePaymentService.getByData(
+    { payment_id: payment.payment_id },
+    { singleResult: true }
+  );
+  const decision = getMarketplaceAwardRevocationDecision({
+    event,
+    vendorPaymentStatus: currentPayment?.payment_status || 'PROCESSING',
+  });
+  throw buildError(getMarketplaceAwardRevocationError(decision), 409);
+};
+
 exports.revokeAward = async (req, res, next) => {
   try {
     const event = await getOwnedEvent(req.params.eventId, req.user._id);
@@ -6659,18 +6675,36 @@ exports.revokeAward = async (req, res, next) => {
           { singleResult: true }
         )
       : null;
-    if (linkedApplication?.payment_status === 'PAID') {
-      throw buildError(
-        `This vendor has already paid a non-refundable vendor fee. Contact support at ${MARKETPLACE_PHONE_NUMBER} before changing this award.`,
-        409
-      );
+    const linkedVendorPayment = linkedApplication
+      ? await MarketplacePaymentService.getByData(
+          {
+            application_id: linkedApplication.application_id,
+            payment_type: 'VENDOR_EVENT_FEE',
+            payment_status: { $in: ['PENDING', 'PROCESSING', 'PAID'] },
+          },
+          { singleResult: true }
+        )
+      : null;
+    const revocationDecision = getMarketplaceAwardRevocationDecision({
+      event,
+      vendorPaymentStatus:
+        linkedVendorPayment?.payment_status ||
+        linkedApplication?.payment_status ||
+        (linkedApplication?.application_status === 'PAID' ? 'PAID' : null),
+    });
+    if (!revocationDecision.canRevoke) {
+      throw buildError(getMarketplaceAwardRevocationError(revocationDecision), 409);
     }
 
+    await cancelPendingVendorFeePaymentForRevocation({
+      payment: linkedVendorPayment,
+      event,
+    });
     if (linkedApplication) {
       linkedApplication.application_status = 'NOT_SELECTED';
       linkedApplication.payment_status = 'CANCELLED';
       linkedApplication.archived_at = new Date();
-      linkedApplication.archived_reason = req.body.reason || 'Award revoked by coordinator';
+      linkedApplication.archived_reason = req.body?.reason || 'Award revoked by coordinator';
       await linkedApplication.save();
     }
     bid.bid_status = 'NOT_AWARDED';
@@ -6704,7 +6738,7 @@ exports.revokeAward = async (req, res, next) => {
     await MarketplaceCommunications.sendMarketplaceCommunication({
       userId: bid.vendor_user_id,
       title: 'Marketplace award revoked',
-      body: `${event.event_name || 'Your event'} award was revoked by the coordinator.${req.body.reason ? ` Reason: ${req.body.reason}` : ''}`,
+      body: `${event.event_name || 'Your event'} award was revoked by the coordinator.${req.body?.reason ? ` Reason: ${req.body.reason}` : ''}`,
       data: {
         notificationType: 'MARKETPLACE_AWARD_REVOKED',
         eventId: event.event_id,
@@ -6717,6 +6751,72 @@ exports.revokeAward = async (req, res, next) => {
     return res.data(
       { marketplaceEvent: event, marketplaceBid: bid },
       'Award revoked; remaining proposals are available for selection'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.revokeApplicationAward = async (req, res, next) => {
+  try {
+    const event = await getOwnedEvent(req.params.eventId, req.user._id);
+    const application = await MarketplaceApplicationService.getByData(
+      {
+        event_id: event.event_id,
+        application_id: req.params.applicationId,
+        application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
+        archived_at: null,
+      },
+      { singleResult: true }
+    );
+    if (!application) throw buildError('Awarded vendor application not found.', 404);
+
+    const vendorPayment = await MarketplacePaymentService.getByData(
+      {
+        application_id: application.application_id,
+        payment_type: 'VENDOR_EVENT_FEE',
+        payment_status: { $in: ['PENDING', 'PROCESSING', 'PAID'] },
+      },
+      { singleResult: true }
+    );
+    const revocationDecision = getMarketplaceAwardRevocationDecision({
+      event,
+      vendorPaymentStatus:
+        vendorPayment?.payment_status ||
+        application.payment_status ||
+        (application.application_status === 'PAID' ? 'PAID' : null),
+    });
+    if (!revocationDecision.canRevoke) {
+      throw buildError(getMarketplaceAwardRevocationError(revocationDecision), 409);
+    }
+
+    await cancelPendingVendorFeePaymentForRevocation({
+      payment: vendorPayment,
+      event,
+    });
+    application.application_status = 'NOT_SELECTED';
+    application.payment_status = 'CANCELLED';
+    application.payment_due_at = null;
+    application.archived_at = new Date();
+    application.archived_reason = req.body?.reason || 'Award revoked by coordinator';
+    await application.save();
+
+    await MarketplaceCommunications.sendMarketplaceCommunication({
+      userId: application.vendor_user_id,
+      title: 'Marketplace award revoked',
+      body: `${event.event_name || 'Your event'} award was revoked by the coordinator.${req.body?.reason ? ` Reason: ${req.body.reason}` : ''}`,
+      data: {
+        notificationType: 'MARKETPLACE_AWARD_REVOKED',
+        eventId: event.event_id,
+        applicationId: application.application_id,
+      },
+      channels: ['push', 'email'],
+      metadata: { eventId: event.event_id, applicationId: application.application_id },
+    });
+
+    return res.data(
+      { marketplaceEvent: event, marketplaceApplication: application },
+      'Application award revoked; the vendor slot is available'
     );
   } catch (e) {
     return next(e);
