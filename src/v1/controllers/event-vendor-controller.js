@@ -50,6 +50,10 @@ const {
 } = require('../../helper/marketplace-submission-lifecycle');
 const { resolveEventVendorParticipationPath } = require('../../helper/event-vendor-participation-helper');
 const { normalizeExternalWebLink, normalizeExternalWebLinks } = require('../../helper/external-web-link');
+const {
+  hasMarketplaceVendorAwardCapacity,
+  hasMarketplaceVendorCapacityForRequestedTypes,
+} = require('../../helper/marketplace-event-visibility-helper');
 
 const TYPES = ['MERCHANDISE', 'SERVICE', 'OTHER'];
 const EVENT_VENDOR_PUBLIC_EVENT_FIELDS = [
@@ -73,7 +77,7 @@ const getEventVendorDisplayId = (profileId) => {
   const suffix = String(profileId || '').replace(/[^a-zA-Z0-9]/g, '').slice(-6).toUpperCase();
   return `Vendor RTC - ${suffix || 'MASKED'}`;
 };
-const cleanTypes = (value) => [...new Set((Array.isArray(value) ? value : []).map((item) => String(item).toUpperCase()))]
+const cleanTypes = (value) => [...new Set((Array.isArray(value) ? value : []).map((item) => String(item).trim().toUpperCase()))]
   .filter((item) => TYPES.includes(item));
 const cleanCategories = (value) => [...new Set((Array.isArray(value) ? value : []).map((item) => String(item).toUpperCase()))]
   .filter((item) => MERCHANDISE_CATEGORIES.includes(item));
@@ -550,11 +554,20 @@ exports.eligibleEvents = async (req, res, next) => {
       event_close_date: { $gt: new Date() },
       event_vendor_needs: { $elemMatch: { vendor_type: { $in: profile.vendor_types }, quantity: { $gt: 0 } } },
     }).sort({ event_date: 1 }).lean();
-    const images = await MarketplaceEventImageModel.find({
+    const eventVendorApplications = await EventVendorApplicationModel.find({
       event_id: { $in: events.map((event) => event.event_id) },
+      status: { $in: ['AWARDED', 'PAYMENT_DUE', 'PAID'] },
+    }).lean();
+    const eventsWithCapacity = events.filter((event) => hasMarketplaceVendorAwardCapacity({
+      event,
+      profileTypes: profile.vendor_types,
+      applications: eventVendorApplications.filter((application) => application.event_id === event.event_id),
+    }));
+    const images = await MarketplaceEventImageModel.find({
+      event_id: { $in: eventsWithCapacity.map((event) => event.event_id) },
       status: 'ACTIVE',
     }).select('image_id event_id image_url original_name mime_type').lean();
-    const marketplaceEventList = events.map((event) => ({
+    const marketplaceEventList = eventsWithCapacity.map((event) => ({
       ...sanitizeEventVendorEvent(event),
       public_images: images.filter((image) => image.event_id === event.event_id),
     }));
@@ -573,7 +586,19 @@ exports.submitApplication = async (req, res, next) => {
     if (!event || (event.event_close_date && new Date(event.event_close_date) <= new Date())) throw error('Applications are closed', 410);
     const requestedTypes = cleanTypes(req.body.vendor_types);
     const eligibleNeeds = (event.event_vendor_needs || []).filter((need) => requestedTypes.includes(need.vendor_type) && profile.vendor_types.includes(need.vendor_type));
-    if (!requestedTypes.length || eligibleNeeds.length !== requestedTypes.length) throw error('This event is not requesting one or more selected vendor types', 403);
+    if (!requestedTypes.length) throw error('Select at least one Marketplace Vendor type', 400);
+    const capacityApplications = await EventVendorApplicationModel.find({
+      event_id: event.event_id,
+      status: { $in: ['AWARDED', 'PAYMENT_DUE', 'PAID'] },
+    }).lean();
+    if (!hasMarketplaceVendorCapacityForRequestedTypes({
+      event,
+      requestedTypes,
+      approvedTypes: profile.vendor_types,
+      applications: capacityApplications,
+    })) {
+      throw error('All requested Marketplace Vendor capacity has already been filled.', 409);
+    }
     const photoIds = [...new Set(req.body.photo_ids || [])];
     if (photoIds.length > 5) throw error('Up to 5 application photos are allowed');
     const applicationQuery = { event_id: event.event_id, vendor_user_id: user._id };

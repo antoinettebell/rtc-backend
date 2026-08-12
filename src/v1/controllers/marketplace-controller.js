@@ -72,11 +72,14 @@ const {
   OperationalNotificationModel,
 } = require('../../models');
 const {
-  ACTIVE_FOOD_BID_STATUSES,
-  ACTIVE_FOOD_APPLICATION_STATUSES,
   buildEventVendorRequirementSummary,
   getCoordinatorNotSelectTransition,
 } = require('../../helper/marketplace-submission-lifecycle');
+const {
+  FOOD_APPLICATION_FILLED_STATUSES,
+  hasFoodVendorAwardCapacity,
+  isFoodVendorMarketplaceEvent,
+} = require('../../helper/marketplace-event-visibility-helper');
 const {
   moderateMarketplaceText,
 } = require('../../helper/marketplace-content-moderation');
@@ -851,9 +854,29 @@ const assertEventOpenForSubmission = async (event) => {
   if (!event || !ACTIVE_EVENT_STATUSES.includes(event.status)) {
     throw buildError('This event is closed to new submissions.', 410);
   }
-  if (event.event_close_date && new Date(event.event_close_date) <= new Date()) {
+  if (event.vendor_applications_closed_at || (event.event_close_date && new Date(event.event_close_date) <= new Date())) {
     await closeExpiredMarketplaceEvents();
     throw buildError('This event is closed to new submissions.', 410);
+  }
+};
+
+const assertFoodVendorEventHasCapacity = async (event) => {
+  const [awardedBids, awardedApplications] = await Promise.all([
+    MarketplaceBidService.getByData(
+      { event_id: event.event_id, bid_status: 'AWARDED', archived_at: null },
+      { lean: true }
+    ),
+    MarketplaceApplicationService.getByData(
+      {
+        event_id: event.event_id,
+        application_status: { $in: FOOD_APPLICATION_FILLED_STATUSES },
+        archived_at: null,
+      },
+      { lean: true }
+    ),
+  ]);
+  if (!hasFoodVendorAwardCapacity({ event, bids: awardedBids, applications: awardedApplications })) {
+    throw buildError('All food vendor award capacity has already been filled.', 409);
   }
 };
 
@@ -4263,40 +4286,60 @@ exports.getOpenEvents = async (req, res, next) => {
     await getVendorMarketplaceFoodTruck(req.user._id);
     await closeExpiredMarketplaceEvents();
 
-    const [activeBids, activeApplications] = await Promise.all([
+    const [vendorBids, vendorApplications] = await Promise.all([
       MarketplaceBidService.getByData(
-        { vendor_user_id: req.user._id, bid_status: { $in: ACTIVE_FOOD_BID_STATUSES } },
+        { vendor_user_id: req.user._id },
         { lean: true }
       ),
       MarketplaceApplicationService.getByData(
-        { vendor_user_id: req.user._id, application_status: { $in: ACTIVE_FOOD_APPLICATION_STATUSES } },
+        { vendor_user_id: req.user._id },
         { lean: true }
       ),
     ]);
     const excludedEventIds = [...new Set([
-      ...(activeBids || []).map((item) => item.event_id),
-      ...(activeApplications || []).map((item) => item.event_id),
+      ...(vendorBids || []).map((item) => item.event_id),
+      ...(vendorApplications || []).map((item) => item.event_id),
     ])];
     const openEventQuery = {
       status: { $in: ACTIVE_EVENT_STATUSES },
       event_close_date: { $gt: new Date() },
+      vendor_applications_closed_at: null,
       event_id: { $nin: excludedEventIds },
     };
 
     const openEvents = await MarketplaceEventService.getByData(
       openEventQuery,
       {
-        paging: {
-          limit: Number(req.query.limit || 20),
-          page: Number(req.query.page || 1),
-        },
         sort: { event_close_date: 1, created_at: -1 },
         lean: true,
       }
     );
-    const marketplaceEventList = await MarketplaceEventService.attachImages(
-      openEvents
+    const eventIds = openEvents.map((event) => event.event_id);
+    const [awardedBids, awardedApplications] = await Promise.all([
+      MarketplaceBidService.getByData(
+        { event_id: { $in: eventIds }, bid_status: 'AWARDED', archived_at: null },
+        { lean: true }
+      ),
+      MarketplaceApplicationService.getByData(
+        {
+          event_id: { $in: eventIds },
+          application_status: { $in: FOOD_APPLICATION_FILLED_STATUSES },
+          archived_at: null,
+        },
+        { lean: true }
+      ),
+    ]);
+    const eligibleEvents = openEvents.filter((event) =>
+      isFoodVendorMarketplaceEvent(event) && hasFoodVendorAwardCapacity({
+        event,
+        bids: awardedBids.filter((bid) => bid.event_id === event.event_id),
+        applications: awardedApplications.filter((application) => application.event_id === event.event_id),
+      })
     );
+    const limit = Math.max(1, Number(req.query.limit || 20));
+    const page = Math.max(1, Number(req.query.page || 1));
+    const pageEvents = eligibleEvents.slice((page - 1) * limit, page * limit);
+    const marketplaceEventList = await MarketplaceEventService.attachImages(pageEvents);
     const visibleMarketplaceEventList = marketplaceEventList.map((event) =>
       redactLockedMarketplaceEvent(
         event,
@@ -4305,17 +4348,14 @@ exports.getOpenEvents = async (req, res, next) => {
       )
     );
 
-    const total = await MarketplaceEventService.getCount(openEventQuery);
+    const total = eligibleEvents.length;
 
     return res.data(
       {
         marketplaceEventList: visibleMarketplaceEventList,
         total,
-        page: Number(req.query.page || 1),
-        totalPages:
-          total < Number(req.query.limit || 20)
-            ? 1
-            : Math.ceil(total / Number(req.query.limit || 20)),
+        page,
+        totalPages: Math.max(1, Math.ceil(total / limit)),
       },
       'Open marketplace events'
     );
@@ -4927,6 +4967,9 @@ exports.submitBid = async (req, res, next) => {
 
     if (roundMoney(event.budgeted_amount || 0) <= 0) {
       throw buildError('This event uses the application flow, not bids', 400);
+    }
+    if (requestedStatus !== 'DRAFT') {
+      await assertFoodVendorEventHasCapacity(event);
     }
 
     const withdrawnBid = await MarketplaceBidService.getByData(
@@ -5571,6 +5614,9 @@ exports.submitApplication = async (req, res, next) => {
 
     if (roundMoney(event.vendor_fee || 0) <= 0) {
       throw buildError('This event uses the bid flow, not applications', 400);
+    }
+    if (requestedStatus !== 'DRAFT') {
+      await assertFoodVendorEventHasCapacity(event);
     }
 
     const withdrawnApplication = await MarketplaceApplicationService.getByData(
