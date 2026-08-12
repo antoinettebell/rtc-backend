@@ -64,12 +64,12 @@ const buildVendorMarketplaceEnvelopeDefinition = ({
     emailSubject: `RTC Event Marketplace Agreements - ${event?.event_name || event?.event_id}`,
     compositeTemplates: [
       compositeTemplate(
-        'governance',
+        '1',
         docusign.governanceTemplateId,
         governanceSignerRole || docusign.signerRole
       ),
       compositeTemplate(
-        'nda',
+        '2',
         docusign.ndaTemplateId,
         ndaSignerRole || docusign.signerRole
       ),
@@ -96,6 +96,19 @@ const getSignerTabDocumentIds = (response = {}, clientUserId = null) => {
   }
   return [...documentIds];
 };
+
+const getPendingEmbeddedVendorSigner = (response = {}, clientUserId = null) =>
+  (response.signers || [])
+    .filter((signer) =>
+      signer?.recipientId &&
+      String(signer?.status || '').toLowerCase() !== 'completed' &&
+      (clientUserId === null ||
+        String(signer?.clientUserId || '') === String(clientUserId))
+    )
+    .sort((left, right) =>
+      Number(left.routingOrder || 0) - Number(right.routingOrder || 0) ||
+      Number(left.recipientId || 0) - Number(right.recipientId || 0)
+    )[0] || null;
 
 const resolveTemplateSignerRole = (response = {}, preferredRole = null) => {
   const signers = response.signers || [];
@@ -143,6 +156,7 @@ module.exports = {
   buildVendorMarketplaceEnvelopeDefinition,
   getEnvelopeAgreementDocuments,
   getSignerTabDocumentIds,
+  getPendingEmbeddedVendorSigner,
   inspectMarketplaceAgreementDocuments,
   inspectMarketplaceAgreementSignatures,
   resolveTemplateSignerRole,

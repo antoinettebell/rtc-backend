@@ -37,7 +37,7 @@ const {
   );
   assert.match(
     start,
-    /createVendorMarketplaceSigningEnvelope[\s\S]*verifyVendorAgreementEnvelopeDocuments\(agreement\)[\s\S]*createRecipientView/,
+    /createVendorMarketplaceSigningEnvelope[\s\S]*verifyVendorAgreementEnvelopeDocuments\(agreement\)[\s\S]*createPendingVendorAgreementRecipientView/,
     'new envelopes must contain both required documents before the signing view opens'
   );
   const agreementModelSource = fs.readFileSync(

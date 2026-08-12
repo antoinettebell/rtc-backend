@@ -4,6 +4,7 @@ const {
   buildVendorMarketplaceEnvelopeDefinition,
   inspectMarketplaceAgreementDocuments,
   inspectMarketplaceAgreementSignatures,
+  getPendingEmbeddedVendorSigner,
   resolveTemplateSignerRole,
 } = require('./docusign-vendor-envelope');
 
@@ -246,12 +247,15 @@ exports.getEnvelopeRecipients = async (envelopeId) => {
 
 exports.inspectMarketplaceAgreementDocuments = inspectMarketplaceAgreementDocuments;
 exports.inspectMarketplaceAgreementSignatures = inspectMarketplaceAgreementSignatures;
+exports.getPendingEmbeddedVendorSigner = getPendingEmbeddedVendorSigner;
 
 exports.createRecipientView = async ({
   envelopeId,
   signerName,
   signerEmail,
   vendorUserId,
+  recipientId = VENDOR_SIGNER_RECIPIENT_ID,
+  clientUserId = vendorUserId,
   returnUrl,
 }) => {
   assertTemplateSigningConfigured();
@@ -266,9 +270,9 @@ exports.createRecipientView = async ({
     },
     body: JSON.stringify({
       authenticationMethod: 'none',
-      clientUserId: String(vendorUserId),
+      clientUserId: String(clientUserId),
       email: signerEmail,
-      recipientId: VENDOR_SIGNER_RECIPIENT_ID,
+      recipientId: String(recipientId),
       userName: signerName,
       returnUrl: returnUrl || docusign.returnUrl,
     }),

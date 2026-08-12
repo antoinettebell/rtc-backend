@@ -4,7 +4,24 @@ const {
 	hasMarketplaceVendorAwardCapacity,
 	hasMarketplaceVendorCapacityForRequestedTypes,
 	isFoodVendorMarketplaceEvent,
+	getAllowedMarketplaceVendorCount,
 } = require('./marketplace-event-visibility-helper');
+
+assert.equal(getAllowedMarketplaceVendorCount({
+	service_types: ['Food Truck'],
+	number_of_guests: 50,
+	number_of_vendors_needed: 2,
+}), 1, 'a crafted request cannot increase Food Vendor capacity above the guest calculation');
+assert.equal(getAllowedMarketplaceVendorCount({
+	primary_service_style: 'Plated',
+	number_of_guests: 250,
+	number_of_vendors_needed: 2,
+}), 2, 'canonical catering styles use the same guest calculation');
+assert.equal(getAllowedMarketplaceVendorCount({
+	service_types: ['Food Truck'],
+	number_of_guests: 250,
+	number_of_vendors_needed: 1,
+}), 1, 'the coordinator may reduce the calculated count but not below one');
 
 const foodEvent = {
 	number_of_vendors_needed: 2,

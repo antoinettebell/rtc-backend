@@ -63,6 +63,9 @@ global.fetch = async (url, options = {}) => {
       }],
     });
   }
+  if (url.endsWith('/envelopes/envelope-1/views/recipient') && options.method === 'POST') {
+    return jsonResponse({ url: 'https://demo.docusign.test/sign-second' });
+  }
   throw new Error(`Unexpected DocuSign request: ${options.method || 'GET'} ${url}`);
 };
 
@@ -109,6 +112,21 @@ global.fetch = async (url, options = {}) => {
       requests.some(({ url }) =>
         url.endsWith('/envelopes/envelope-1/recipients?include_tabs=true'))
     );
+
+    const view = await helper.createRecipientView({
+      envelopeId: 'envelope-1',
+      signerName: 'Vendor Owner',
+      signerEmail: 'vendor@example.com',
+      vendorUserId: 'vendor-1',
+      clientUserId: 'vendor-1',
+      recipientId: '2',
+      returnUrl: 'rounddacornervendor://docusign/return?status=completed',
+    });
+    assert.equal(view.url, 'https://demo.docusign.test/sign-second');
+    const recipientViewRequest = requests.find(
+      ({ url, options }) => url.endsWith('/views/recipient') && options.method === 'POST'
+    );
+    assert.equal(JSON.parse(recipientViewRequest.options.body).recipientId, '2');
 
     console.log('DocuSign helper vendor signing tests passed');
   } finally {

@@ -4,6 +4,7 @@ const {
 const {
 	getMarketplaceFilledSlotSummary,
 	getMarketplaceServiceRequirements,
+	getMarketplaceVendorCapacity,
 } = require('./marketplace-participation-helper');
 
 const FOOD_APPLICATION_FILLED_STATUSES = ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'];
@@ -48,6 +49,17 @@ const isFoodVendorMarketplaceEvent = (event = {}) => {
 	];
 	return serviceTypes.some((value) => FOOD_VENDOR_SERVICE_TYPES.has(value)) ||
 		serviceStyles.some((value) => FOOD_VENDOR_SERVICE_STYLES.has(value));
+};
+
+const getAllowedMarketplaceVendorCount = (event = {}) => {
+	const requested = Number(event.number_of_vendors_needed);
+	if (!isFoodVendorMarketplaceEvent({ ...event, number_of_vendors_needed: requested || 1 })) {
+		return Math.max(1, Number.isFinite(requested) ? Math.floor(requested) : 1);
+	}
+	const { calculatedMaximum } = getMarketplaceVendorCapacity(event);
+	return Number.isFinite(requested)
+		? Math.max(1, Math.min(Math.floor(requested), calculatedMaximum))
+		: calculatedMaximum;
 };
 
 const hasFoodVendorAwardCapacity = ({ event = {}, bids = [], applications = [] }) => {
@@ -107,6 +119,7 @@ const hasMarketplaceVendorCapacityForRequestedTypes = ({
 module.exports = {
 	FOOD_APPLICATION_FILLED_STATUSES,
 	isFoodVendorMarketplaceEvent,
+	getAllowedMarketplaceVendorCount,
 	hasFoodVendorAwardCapacity,
 	hasMarketplaceVendorAwardCapacity,
 	hasMarketplaceVendorCapacityForRequestedTypes,

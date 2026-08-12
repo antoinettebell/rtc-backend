@@ -3,6 +3,7 @@ const {
   buildVendorMarketplaceEnvelopeDefinition,
   inspectMarketplaceAgreementDocuments,
   inspectMarketplaceAgreementSignatures,
+  getPendingEmbeddedVendorSigner,
   resolveTemplateSignerRole,
 } = require('./docusign-vendor-envelope');
 
@@ -27,8 +28,8 @@ assert.deepEqual(
     inlineSequence: template.inlineTemplates[0].sequence,
   })),
   [
-    { id: 'governance', templateId: 'governance-template', serverSequence: '1', inlineSequence: '2' },
-    { id: 'nda', templateId: 'nda-template', serverSequence: '1', inlineSequence: '2' },
+    { id: '1', templateId: 'governance-template', serverSequence: '1', inlineSequence: '2' },
+    { id: '2', templateId: 'nda-template', serverSequence: '1', inlineSequence: '2' },
   ],
   'each agreement document uses its own server-template then signer overlay sequence'
 );
@@ -64,6 +65,16 @@ assert.equal(
   }).valid,
   false,
   'a one-template envelope cannot satisfy Marketplace agreement signing'
+);
+assert.equal(
+  getPendingEmbeddedVendorSigner({
+    signers: [
+      { recipientId: '1', clientUserId: 'vendor-1', status: 'completed' },
+      { recipientId: '2', clientUserId: 'vendor-1', status: 'sent' },
+    ],
+  }, 'vendor-1').recipientId,
+  '2',
+  'after the first template is signed the second embedded signer is selected'
 );
 
 const templateRecipients = {

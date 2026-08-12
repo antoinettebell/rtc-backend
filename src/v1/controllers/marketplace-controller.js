@@ -86,6 +86,7 @@ const {
   FOOD_APPLICATION_FILLED_STATUSES,
   hasFoodVendorAwardCapacity,
   isFoodVendorMarketplaceEvent,
+  getAllowedMarketplaceVendorCount,
 } = require('../../helper/marketplace-event-visibility-helper');
 const {
   moderateMarketplaceText,
@@ -425,17 +426,7 @@ const normalizeMarketplaceEventLocation = (body) => {
 };
 
 const normalizeMarketplaceVendorCount = (body) => {
-  const serviceTypes = asArray(body.service_types?.length ? body.service_types : body.service_type);
-  if (body.primary_service_style === 'Food Truck' || serviceTypes.includes('Food Truck')) {
-    const { calculatedMaximum: maximum } = getMarketplaceVendorCapacity(body);
-    const minimum = 1;
-    const requested = Number(body.number_of_vendors_needed);
-    return Number.isFinite(requested)
-      ? Math.max(minimum, Math.min(Math.floor(requested), maximum))
-      : maximum;
-  }
-
-  return Math.max(1, Number(body.number_of_vendors_needed || 1));
+  return getAllowedMarketplaceVendorCount(body);
 };
 
 const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = {}) => {
@@ -1537,6 +1528,24 @@ const verifyVendorAgreementEnvelopeDocuments = async (agreement) =>
     recordAudit: (action, status, message) =>
       writeVendorAgreementAudit(agreement, action, { status, message }),
   });
+
+const createPendingVendorAgreementRecipientView = async ({ agreement, returnUrl }) => {
+  const recipients = await DocuSignHelper.getEnvelopeRecipients(agreement.envelope_id);
+  const signer = DocuSignHelper.getPendingEmbeddedVendorSigner(
+    recipients,
+    agreement.vendor_user_id
+  );
+  if (!signer) return null;
+  return DocuSignHelper.createRecipientView({
+    envelopeId: agreement.envelope_id,
+    signerName: signer.name || agreement.signer_name,
+    signerEmail: signer.email || agreement.signer_email,
+    vendorUserId: agreement.vendor_user_id,
+    clientUserId: signer.clientUserId || agreement.vendor_user_id,
+    recipientId: signer.recipientId,
+    returnUrl: returnUrl || docusign.returnUrl || getVendorAgreementReturnUrl(),
+  });
+};
 
 const normalizeDocuSignReturnStatus = (status) => {
   const value = String(status || '').toLowerCase();
@@ -6124,11 +6133,15 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
     }
 
     if (req.body.reconcile_only === true) {
+      const pendingRecipientView = existingAgreement?.envelope_id
+        ? await createPendingVendorAgreementRecipientView({ agreement: existingAgreement })
+        : null;
       return res.data(
         {
           marketplaceVendorAgreement: existingAgreement,
           already_signed: false,
           signing_incomplete: true,
+          signing_url: pendingRecipientView?.url || null,
         },
         existingAgreement
           ? 'Vendor agreement is not yet signed'
@@ -6228,13 +6241,13 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
 
       await setSubmissionSignatureStatus(agreement, 'PENDING_SIGNATURE');
 
-      const recipientView = await DocuSignHelper.createRecipientView({
-        envelopeId,
-        signerName: signer.signerName,
-        signerEmail: signer.signerEmail,
-        vendorUserId: req.user._id,
-        returnUrl: req.body.return_url || docusign.returnUrl || getVendorAgreementReturnUrl(),
+      const recipientView = await createPendingVendorAgreementRecipientView({
+        agreement,
+        returnUrl: req.body.return_url,
       });
+      if (!recipientView?.url) {
+        throw buildError('DocuSign did not provide both required signing steps. Please try again.', 502);
+      }
 
       return res.data(
         {
@@ -6343,8 +6356,22 @@ exports.vendorAgreementReturn = async (req, res, next) => {
         });
       }
 
+      const nextRecipientView = !['SIGNED', 'CANCELLED', 'DECLINED', 'VOIDED', 'ERROR'].includes(agreement.status)
+        ? await createPendingVendorAgreementRecipientView({ agreement })
+        : null;
+      if (nextRecipientView?.url) {
+        await writeVendorAgreementAudit(agreement, 'SIGNING_STEP_CONTINUED', {
+          source: 'APP_RETURN',
+          message: 'Next required agreement signer view issued',
+        });
+      }
+
       return res.data(
-        { marketplaceVendorAgreement: agreement },
+        {
+          marketplaceVendorAgreement: agreement,
+          signing_url: nextRecipientView?.url || null,
+          signing_incomplete: Boolean(nextRecipientView?.url),
+        },
         'Vendor agreement return recorded'
       );
     } catch (error) {
