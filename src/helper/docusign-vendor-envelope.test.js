@@ -2,6 +2,8 @@ const assert = require('assert');
 const {
   buildVendorMarketplaceEnvelopeDefinition,
   inspectMarketplaceAgreementDocuments,
+  inspectMarketplaceAgreementSignatures,
+  resolveTemplateSignerRole,
 } = require('./docusign-vendor-envelope');
 
 const definition = buildVendorMarketplaceEnvelopeDefinition({
@@ -62,6 +64,61 @@ assert.equal(
   }).valid,
   false,
   'a one-template envelope cannot satisfy Marketplace agreement signing'
+);
+
+const templateRecipients = {
+  signers: [
+    {
+      roleName: 'GovernanceSigner',
+      tabs: { signHereTabs: [{ documentId: '1' }] },
+    },
+  ],
+};
+assert.equal(resolveTemplateSignerRole(templateRecipients, 'VendorSigner'), 'GovernanceSigner');
+assert.throws(
+  () => resolveTemplateSignerRole({ signers: [{ roleName: 'UnsignedRole', tabs: {} }] }),
+  /no required signing tab/
+);
+assert.deepEqual(
+  inspectMarketplaceAgreementSignatures({
+    signers: [
+      {
+        clientUserId: 'vendor-1',
+        tabs: {
+          signHereTabs: [{ documentId: '1' }],
+          initialHereTabs: [{ documentId: '2' }],
+        },
+      },
+    ],
+  }, 'vendor-1'),
+  {
+    valid: true,
+    signatureDocumentCount: 2,
+    signatureDocumentIds: ['1', '2'],
+  }
+);
+assert.equal(
+  inspectMarketplaceAgreementSignatures({
+    signers: [{ clientUserId: 'vendor-1', tabs: { signHereTabs: [{ documentId: '2' }] } }],
+  }, 'vendor-1').valid,
+  false,
+  'two envelope documents with signing tabs on only the NDA are insufficient'
+);
+assert.equal(
+  inspectMarketplaceAgreementSignatures({
+    signers: [
+      {
+        clientUserId: 'vendor-1',
+        tabs: { signHereTabs: [{ documentId: '1' }] },
+      },
+      {
+        clientUserId: 'coordinator-1',
+        tabs: { signHereTabs: [{ documentId: '2' }] },
+      },
+    ],
+  }, 'vendor-1').valid,
+  false,
+  'another recipient cannot satisfy the vendor two-document signature requirement'
 );
 
 console.log('DocuSign vendor envelope tests passed');

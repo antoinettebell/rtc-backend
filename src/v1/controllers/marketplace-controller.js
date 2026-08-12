@@ -1457,6 +1457,7 @@ const getValidVendorAgreement = async (vendorUserId, eventVendorProfileId = null
       governance_version: docusign.governanceVersion,
       nda_version: docusign.ndaVersion,
       required_document_count: { $gte: 2 },
+      required_signature_document_count: { $gte: 2 },
       required_templates_verified_at: { $ne: null },
     },
     { singleResult: true, sort: { signed_at: -1 } }
@@ -1526,6 +1527,7 @@ const verifyVendorAgreementEnvelopeDocuments = async (agreement) =>
   verifyMarketplaceAgreementDocuments({
     agreement,
     getEnvelopeDocuments: DocuSignHelper.getEnvelopeDocuments,
+    getEnvelopeRecipients: DocuSignHelper.getEnvelopeRecipients,
     wait: (attempt) => new Promise((resolve) => setTimeout(resolve, attempt * 250)),
     recordAudit: (action, status, message) =>
       writeVendorAgreementAudit(agreement, action, { status, message }),

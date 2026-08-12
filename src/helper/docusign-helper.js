@@ -3,6 +3,8 @@ const { docusign } = require('../config');
 const {
   buildVendorMarketplaceEnvelopeDefinition,
   inspectMarketplaceAgreementDocuments,
+  inspectMarketplaceAgreementSignatures,
+  resolveTemplateSignerRole,
 } = require('./docusign-vendor-envelope');
 
 const DS_SCOPE = 'signature impersonation';
@@ -178,6 +180,26 @@ exports.createVendorMarketplaceSigningEnvelope = async ({
   assertTemplateSigningConfigured();
   const accessToken = await exports.getAccessToken();
   const url = `${docusign.basePath}/v2.1/accounts/${docusign.accountId}/envelopes`;
+  const templateRecipientsUrl = (templateId) =>
+    `${docusign.basePath}/v2.1/accounts/${docusign.accountId}/templates/${templateId}/recipients?include_tabs=true`;
+  const [governanceTemplateRecipients, ndaTemplateRecipients] = await Promise.all([
+    docusignFetch(templateRecipientsUrl(docusign.governanceTemplateId), {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    }),
+    docusignFetch(templateRecipientsUrl(docusign.ndaTemplateId), {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    }),
+  ]);
+  const governanceSignerRole = resolveTemplateSignerRole(
+    governanceTemplateRecipients,
+    docusign.signerRole
+  );
+  const ndaSignerRole = resolveTemplateSignerRole(
+    ndaTemplateRecipients,
+    docusign.signerRole
+  );
   return docusignFetch(url, {
     method: 'POST',
     headers: {
@@ -192,6 +214,8 @@ exports.createVendorMarketplaceSigningEnvelope = async ({
       event,
       bid,
       application,
+      governanceSignerRole,
+      ndaSignerRole,
     })),
   });
 };
@@ -208,7 +232,20 @@ exports.getEnvelopeDocuments = async (envelopeId) => {
   });
 };
 
+exports.getEnvelopeRecipients = async (envelopeId) => {
+  const accessToken = await exports.getAccessToken();
+  const url = `${docusign.basePath}/v2.1/accounts/${docusign.accountId}/envelopes/${envelopeId}/recipients?include_tabs=true`;
+  return docusignFetch(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+  });
+};
+
 exports.inspectMarketplaceAgreementDocuments = inspectMarketplaceAgreementDocuments;
+exports.inspectMarketplaceAgreementSignatures = inspectMarketplaceAgreementSignatures;
 
 exports.createRecipientView = async ({
   envelopeId,

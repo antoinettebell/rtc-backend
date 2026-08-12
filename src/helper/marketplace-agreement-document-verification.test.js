@@ -5,6 +5,7 @@ const {
 
 const makeAgreement = () => ({
   envelope_id: 'envelope-1',
+  vendor_user_id: 'vendor-1',
   status: 'SENT',
   active_identity_key: 'active-1',
   saveCount: 0,
@@ -23,11 +24,15 @@ const makeAgreement = () => ({
           { documentId: '2', name: 'NDA' },
         ],
       }),
+      getEnvelopeRecipients: async () => ({
+        signers: [{ clientUserId: 'vendor-1', tabs: { signHereTabs: [{ documentId: '1' }, { documentId: '2' }] } }],
+      }),
       recordAudit: async (...args) => audits.push(args),
     });
     assert.equal(result.valid, true);
     assert.equal(agreement.status, 'SENT');
     assert.equal(agreement.required_document_count, 2);
+    assert.equal(agreement.required_signature_document_count, 2);
     assert(agreement.required_templates_verified_at instanceof Date);
     assert.equal(agreement.active_identity_key, 'active-1');
     assert.equal(agreement.saveCount, 1);
@@ -42,14 +47,18 @@ const makeAgreement = () => ({
       getEnvelopeDocuments: async () => ({
         envelopeDocuments: [{ documentId: '1', name: 'NDA' }],
       }),
+      getEnvelopeRecipients: async () => ({
+        signers: [{ clientUserId: 'vendor-1', tabs: { signHereTabs: [{ documentId: '1' }] } }],
+      }),
       recordAudit: async (...args) => audits.push(args),
     });
     assert.equal(result.valid, false);
     assert.equal(agreement.status, 'ERROR');
     assert.equal(agreement.active_identity_key, null);
     assert.equal(agreement.required_document_count, 1);
+    assert.equal(agreement.required_signature_document_count, 1);
     assert.equal(agreement.required_templates_verified_at, null);
-    assert.match(agreement.error_message, /1 of 2 required agreement documents/);
+    assert.match(agreement.error_message, /1 of 2 required agreement documents and 1 of 2 required signed documents/);
     assert.equal(agreement.saveCount, 1);
     assert.equal(audits[0][0], 'REQUIRED_TEMPLATES_MISSING');
   }
@@ -70,9 +79,32 @@ const makeAgreement = () => ({
               ],
         };
       },
+      getEnvelopeRecipients: async () => ({
+        signers: [{ clientUserId: 'vendor-1', tabs: { signHereTabs: [{ documentId: '1' }, { documentId: '2' }] } }],
+      }),
     });
     assert.equal(result.valid, true);
     assert.equal(calls, 2, 'temporary DocuSign document propagation is retried');
+  }
+
+  {
+    const agreement = makeAgreement();
+    const result = await verifyMarketplaceAgreementDocuments({
+      agreement,
+      getEnvelopeDocuments: async () => ({
+        envelopeDocuments: [
+          { documentId: '1', name: 'Governance' },
+          { documentId: '2', name: 'NDA' },
+        ],
+      }),
+      getEnvelopeRecipients: async () => ({
+        signers: [{ clientUserId: 'vendor-1', tabs: { signHereTabs: [{ documentId: '2' }] } }],
+      }),
+    });
+    assert.equal(result.valid, false);
+    assert.equal(agreement.status, 'ERROR');
+    assert.equal(agreement.required_document_count, 2);
+    assert.equal(agreement.required_signature_document_count, 1);
   }
 
   console.log('Marketplace agreement document verification tests passed');

@@ -47,6 +47,7 @@ const {
   assert.match(agreementModelSource, /partialFilterExpression: \{ active_identity_key: \{ \$type: 'string' \} \}/,
     'legacy agreements without an active identity are excluded from the unique partial index');
   assert.match(agreementModelSource, /required_document_count/);
+  assert.match(agreementModelSource, /required_signature_document_count/);
   assert.match(agreementModelSource, /required_templates_verified_at/);
 
   const firstSigning = {

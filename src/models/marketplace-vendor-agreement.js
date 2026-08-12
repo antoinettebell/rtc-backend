@@ -80,6 +80,10 @@ const mSchema = mongoose.Schema(
       type: Number,
       default: 0,
     },
+    required_signature_document_count: {
+      type: Number,
+      default: 0,
+    },
     required_templates_verified_at: {
       type: Date,
       default: null,

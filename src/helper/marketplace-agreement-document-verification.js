@@ -1,23 +1,43 @@
 const {
   REQUIRED_MARKETPLACE_AGREEMENT_DOCUMENTS,
+  REQUIRED_MARKETPLACE_SIGNATURE_DOCUMENTS,
   inspectMarketplaceAgreementDocuments,
+  inspectMarketplaceAgreementSignatures,
 } = require('./docusign-vendor-envelope');
 
 const verifyMarketplaceAgreementDocuments = async ({
   agreement,
   getEnvelopeDocuments,
+  getEnvelopeRecipients,
   recordAudit = async () => {},
   attempts = 3,
   wait = async () => {},
 }) => {
-  let inspection = { valid: false, documentCount: 0, documents: [] };
+  let inspection = {
+    valid: false,
+    documentCount: 0,
+    documents: [],
+    signatureDocumentCount: 0,
+    signatureDocumentIds: [],
+  };
   let lastError = null;
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
-      inspection = inspectMarketplaceAgreementDocuments(
-        await getEnvelopeDocuments(agreement.envelope_id)
-      );
+      const [documentResponse, recipientResponse] = await Promise.all([
+        getEnvelopeDocuments(agreement.envelope_id),
+        getEnvelopeRecipients(agreement.envelope_id),
+      ]);
+      inspection = {
+        ...inspectMarketplaceAgreementDocuments(documentResponse),
+        ...inspectMarketplaceAgreementSignatures(
+          recipientResponse,
+          agreement.vendor_user_id
+        ),
+      };
+      inspection.valid =
+        inspection.documentCount >= REQUIRED_MARKETPLACE_AGREEMENT_DOCUMENTS &&
+        inspection.signatureDocumentCount >= REQUIRED_MARKETPLACE_SIGNATURE_DOCUMENTS;
       lastError = null;
       if (inspection.valid) break;
     } catch (error) {
@@ -30,6 +50,7 @@ const verifyMarketplaceAgreementDocuments = async ({
 
   if (inspection.valid) {
     agreement.required_document_count = inspection.documentCount;
+    agreement.required_signature_document_count = inspection.signatureDocumentCount;
     agreement.required_templates_verified_at = new Date();
     agreement.error_message = null;
     await agreement.save();
@@ -40,8 +61,9 @@ const verifyMarketplaceAgreementDocuments = async ({
   agreement.status = 'ERROR';
   agreement.active_identity_key = null;
   agreement.required_document_count = inspection.documentCount;
+  agreement.required_signature_document_count = inspection.signatureDocumentCount;
   agreement.required_templates_verified_at = null;
-  agreement.error_message = `DocuSign envelope contains ${inspection.documentCount} of ${REQUIRED_MARKETPLACE_AGREEMENT_DOCUMENTS} required agreement documents.`;
+  agreement.error_message = `DocuSign envelope contains ${inspection.documentCount} of ${REQUIRED_MARKETPLACE_AGREEMENT_DOCUMENTS} required agreement documents and ${inspection.signatureDocumentCount} of ${REQUIRED_MARKETPLACE_SIGNATURE_DOCUMENTS} required signed documents.`;
   await agreement.save();
   await recordAudit('REQUIRED_TEMPLATES_MISSING', 'ERROR', agreement.error_message);
   return inspection;

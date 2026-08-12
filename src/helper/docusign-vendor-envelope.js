@@ -1,4 +1,6 @@
 const REQUIRED_MARKETPLACE_AGREEMENT_DOCUMENTS = 2;
+const REQUIRED_MARKETPLACE_SIGNATURE_DOCUMENTS = 2;
+const SIGNING_TAB_COLLECTIONS = ['signHereTabs', 'initialHereTabs'];
 
 const buildTemplateSigner = ({
   vendorName,
@@ -35,23 +37,25 @@ const buildVendorMarketplaceEnvelopeDefinition = ({
   event,
   bid = null,
   application = null,
+  governanceSignerRole = null,
+  ndaSignerRole = null,
 }) => {
-  const signerInput = {
+  const signerInput = (signerRole) => ({
     vendorName,
     vendorEmail,
-    signerRole: docusign.signerRole,
+    signerRole,
     clientUserId: String(vendorUserId),
     event,
     bid,
     application,
-  };
-  const compositeTemplate = (compositeTemplateId, templateId) => ({
+  });
+  const compositeTemplate = (compositeTemplateId, templateId, signerRole) => ({
     compositeTemplateId,
     serverTemplates: [{ sequence: '1', templateId }],
     inlineTemplates: [
       {
         sequence: '2',
-        recipients: { signers: [buildTemplateSigner(signerInput)] },
+        recipients: { signers: [buildTemplateSigner(signerInput(signerRole))] },
       },
     ],
   });
@@ -59,11 +63,53 @@ const buildVendorMarketplaceEnvelopeDefinition = ({
   return {
     emailSubject: `RTC Event Marketplace Agreements - ${event?.event_name || event?.event_id}`,
     compositeTemplates: [
-      compositeTemplate('governance', docusign.governanceTemplateId),
-      compositeTemplate('nda', docusign.ndaTemplateId),
+      compositeTemplate(
+        'governance',
+        docusign.governanceTemplateId,
+        governanceSignerRole || docusign.signerRole
+      ),
+      compositeTemplate(
+        'nda',
+        docusign.ndaTemplateId,
+        ndaSignerRole || docusign.signerRole
+      ),
     ],
     status: 'sent',
   };
+};
+
+const getSignerTabDocumentIds = (response = {}, clientUserId = null) => {
+  const documentIds = new Set();
+  for (const signer of response.signers || []) {
+    if (
+      clientUserId !== null &&
+      String(signer?.clientUserId || '') !== String(clientUserId)
+    ) {
+      continue;
+    }
+    for (const collection of SIGNING_TAB_COLLECTIONS) {
+      for (const tab of signer?.tabs?.[collection] || []) {
+        const documentId = String(tab?.documentId || tab?.document_id || '').trim();
+        if (documentId) documentIds.add(documentId);
+      }
+    }
+  }
+  return [...documentIds];
+};
+
+const resolveTemplateSignerRole = (response = {}, preferredRole = null) => {
+  const signers = response.signers || [];
+  const preferred = signers.find(
+    (signer) => String(signer?.roleName || '') === String(preferredRole || '')
+  );
+  const signer = preferred || (signers.length === 1 ? signers[0] : null);
+  if (!signer?.roleName) {
+    throw new Error('DocuSign template must contain exactly one resolvable vendor signer role.');
+  }
+  if (!getSignerTabDocumentIds({ signers: [signer] }).length) {
+    throw new Error(`DocuSign template signer role ${signer.roleName} has no required signing tab.`);
+  }
+  return signer.roleName;
 };
 
 const getEnvelopeAgreementDocuments = (response = {}) =>
@@ -82,9 +128,22 @@ const inspectMarketplaceAgreementDocuments = (response) => {
   };
 };
 
+const inspectMarketplaceAgreementSignatures = (response, clientUserId = null) => {
+  const signatureDocumentIds = getSignerTabDocumentIds(response, clientUserId);
+  return {
+    valid: signatureDocumentIds.length >= REQUIRED_MARKETPLACE_SIGNATURE_DOCUMENTS,
+    signatureDocumentCount: signatureDocumentIds.length,
+    signatureDocumentIds,
+  };
+};
+
 module.exports = {
   REQUIRED_MARKETPLACE_AGREEMENT_DOCUMENTS,
+  REQUIRED_MARKETPLACE_SIGNATURE_DOCUMENTS,
   buildVendorMarketplaceEnvelopeDefinition,
   getEnvelopeAgreementDocuments,
+  getSignerTabDocumentIds,
   inspectMarketplaceAgreementDocuments,
+  inspectMarketplaceAgreementSignatures,
+  resolveTemplateSignerRole,
 };
