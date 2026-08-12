@@ -188,7 +188,7 @@ const loadMarketplaceController = (state) => {
 			getByData: async () => [],
 			getModel: () => ({}),
 		},
-		MarketplaceAttachmentService: {}, MarketplaceAgreementAuditService: {},
+		MarketplaceAttachmentService: { getByData: async () => [] }, MarketplaceAgreementAuditService: {},
 		MarketplaceEventImageService: {}, MarketplaceEventQuestionService: {},
 		MarketplaceFileAuditService: {}, MarketplacePaymentAuditService: {},
 		MarketplaceVendorAgreementService: {}, VendorComplianceDocumentService: { getByData: async () => [] },
@@ -434,6 +434,28 @@ const runFoodVendorTests = async () => {
 		const jazzy = await runController(controller.getOpenEvents, foodRequest('jazzy'));
 		assert.equal(jazzy.error, undefined);
 		assert.deepStrictEqual(jazzy.response.payload.marketplaceEventList, []);
+	}
+
+	{
+		const state = createFoodState();
+		addFoodVendor(state, 'draft-owner');
+		state.events.push(makeFoodEvent('both-path-draft', {
+			payment_responsibility: 'BOTH',
+			vendor_fee: 50,
+			budgeted_amount: 1000,
+		}));
+		state.bids.push({
+			bid_id: 'saved-draft', event_id: 'both-path-draft', vendor_user_id: 'draft-owner',
+			food_truck_id: 'truck-draft-owner', bid_status: 'DRAFT', archived_at: null,
+		});
+		const controller = loadMarketplaceController(state);
+		const result = await runController(controller.myBids, foodRequest('draft-owner'));
+		assert.equal(result.error, undefined);
+		assert.deepStrictEqual(
+			result.response.payload.marketplaceBidList.map((bid) => [bid.bid_id, bid.bid_status, bid.event_id]),
+			[['saved-draft', 'DRAFT', 'both-path-draft']],
+			'a saved BOTH-event bid draft remains available through My Bids'
+		);
 	}
 
 	{
