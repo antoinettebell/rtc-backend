@@ -3,6 +3,7 @@ const {
   MarketplaceEventImageModel,
   MarketplaceBidModel,
   MarketplaceApplicationModel,
+  EventVendorApplicationModel,
   MarketplaceAttachmentModel,
   MarketplaceEventQuestionModel,
   MarketplacePaymentModel,
@@ -11,6 +12,9 @@ const { BaseService } = require('../../common-services');
 const {
   getMarketplaceFilledSlotSummary,
 } = require('../../helper/marketplace-participation-helper');
+const {
+  getMarketplaceApplicationCounts,
+} = require('../../helper/marketplace-application-count-helper');
 
 class MarketplaceEventService extends BaseService {
   constructor() {
@@ -215,8 +219,32 @@ class MarketplaceEventService extends BaseService {
       { $match: { event_id: { $in: eventIds } } },
       { $group: { _id: '$event_id', total: { $sum: 1 } } },
     ]);
-    const applicationCounts = await MarketplaceApplicationModel.aggregate([
-      { $match: { event_id: { $in: eventIds } } },
+    const foodApplicationCounts = await MarketplaceApplicationModel.aggregate([
+      {
+        $match: {
+          event_id: { $in: eventIds },
+          application_status: {
+            $in: [
+              'SUBMITTED',
+              'UNDER_REVIEW',
+              'ACCEPTED',
+              'PAYMENT_DUE',
+              'PAID',
+              'CONFIRMED',
+              'NOT_SELECTED',
+            ],
+          },
+        },
+      },
+      { $group: { _id: '$event_id', total: { $sum: 1 } } },
+    ]);
+    const eventVendorApplicationCounts = await EventVendorApplicationModel.aggregate([
+      {
+        $match: {
+          event_id: { $in: eventIds },
+          status: { $ne: 'WITHDRAWN' },
+        },
+      },
       { $group: { _id: '$event_id', total: { $sum: 1 } } },
     ]);
     const unseenBidCounts = await MarketplaceBidModel.aggregate([
@@ -306,10 +334,6 @@ class MarketplaceEventService extends BaseService {
       acc[item._id] = item.total;
       return acc;
     }, {});
-    const applicationCountByEventId = applicationCounts.reduce((acc, item) => {
-      acc[item._id] = item.total;
-      return acc;
-    }, {});
     const unseenBidCountByEventId = unseenBidCounts.reduce((acc, item) => {
       acc[item._id] = item.total;
       return acc;
@@ -336,22 +360,29 @@ class MarketplaceEventService extends BaseService {
       return acc;
     }, {});
 
-    return events.map((event) => ({
-      ...event,
-      bid_count: countByEventId[event.event_id] || 0,
-      application_count: applicationCountByEventId[event.event_id] || 0,
-      submission_count:
-        (countByEventId[event.event_id] || 0) +
-        (applicationCountByEventId[event.event_id] || 0),
-      unseen_bid_count: unseenBidCountByEventId[event.event_id] || 0,
-      unseen_application_count:
-        unseenApplicationCountByEventId[event.event_id] || 0,
-      unseen_submission_count:
-        (unseenBidCountByEventId[event.event_id] || 0) +
-        (unseenApplicationCountByEventId[event.event_id] || 0),
-      unread_message_count: unreadMessageCountByEventId[event.event_id] || 0,
-      awarded_bids: awardedBidsByEventId[event.event_id] || [],
-    }));
+    return events.map((event) => {
+      const applicationCounts = getMarketplaceApplicationCounts({
+        eventId: event.event_id,
+        foodApplicationCounts,
+        eventVendorApplicationCounts,
+      });
+      return {
+        ...event,
+        bid_count: countByEventId[event.event_id] || 0,
+        ...applicationCounts,
+        submission_count:
+          (countByEventId[event.event_id] || 0) +
+          applicationCounts.application_count,
+        unseen_bid_count: unseenBidCountByEventId[event.event_id] || 0,
+        unseen_application_count:
+          unseenApplicationCountByEventId[event.event_id] || 0,
+        unseen_submission_count:
+          (unseenBidCountByEventId[event.event_id] || 0) +
+          (unseenApplicationCountByEventId[event.event_id] || 0),
+        unread_message_count: unreadMessageCountByEventId[event.event_id] || 0,
+        awarded_bids: awardedBidsByEventId[event.event_id] || [],
+      };
+    });
   }
 }
 
