@@ -83,9 +83,9 @@ assert.strictEqual(
 
 assert.deepStrictEqual(calculateTicketAmounts({ unitPrice: 50, quantity: 2 }), {
   ticketSubtotal: 100,
-  customerProcessingFee: 3.5,
+  customerProcessingFee: 0.01,
   coordinatorProcessingFee: 3.5,
-  checkoutSubtotal: 103.5,
+  checkoutSubtotal: 100.01,
   grossCoordinatorPayoutBeforeTax: 96.5,
 });
 

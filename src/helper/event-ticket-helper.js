@@ -20,6 +20,9 @@ const PLATFORM_SERVICE_TAX_CODE = 'SW054003';
 const CUSTOMER_PROCESSING_RATE = 0.035;
 const COORDINATOR_PROCESSING_RATE = 0.015;
 const COORDINATOR_PER_TICKET_FEE = 1;
+const {
+  getCustomerTicketProcessingFeeAmount,
+} = require('./marketplace-regression-test-fees');
 
 const toMoney = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 
@@ -55,7 +58,7 @@ const calculateTicketAmounts = ({ unitPrice, quantity }) => {
   }
 
   const ticketSubtotal = toMoney(safePrice * safeQuantity);
-  const customerProcessingFee = toMoney(ticketSubtotal * CUSTOMER_PROCESSING_RATE);
+  const customerProcessingFee = getCustomerTicketProcessingFeeAmount(ticketSubtotal);
   const coordinatorProcessingFee = toMoney(
     ticketSubtotal * COORDINATOR_PROCESSING_RATE +
       safeQuantity * COORDINATOR_PER_TICKET_FEE

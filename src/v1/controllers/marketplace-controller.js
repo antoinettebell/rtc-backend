@@ -71,6 +71,9 @@ const {
   refundPaidMarketplaceVendorFee,
 } = require('../../helper/marketplace-vendor-fee-refund');
 const {
+  getCoordinatorAwardFeeAmount,
+} = require('../../helper/marketplace-regression-test-fees');
+const {
   getPublicMarketplaceEventQuery,
   isPublicMarketplaceEventEligible,
   sanitizePublicMarketplaceEvent,
@@ -6525,7 +6528,7 @@ exports.awardBids = async (req, res, next) => {
         0
       ) || event.budgeted_amount
     );
-    const feeAmount = roundMoney(baseAmount * COORDINATOR_AWARD_FEE_RATE);
+    const feeAmount = getCoordinatorAwardFeeAmount(baseAmount);
 
     if (feeAmount > 0) {
       let marketplacePayment = await findActiveMarketplacePayment({
@@ -7017,7 +7020,7 @@ exports.adminAwardBids = async (req, res, next) => {
         0
       ) || event.budgeted_amount
     );
-    const feeAmount = roundMoney(baseAmount * COORDINATOR_AWARD_FEE_RATE);
+    const feeAmount = getCoordinatorAwardFeeAmount(baseAmount);
 
     if (feeAmount > 0) {
       let marketplacePayment = await findActiveMarketplacePayment({

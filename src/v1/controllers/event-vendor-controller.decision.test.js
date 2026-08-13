@@ -36,7 +36,11 @@ const loadController = (state) => {
 				counters.paymentSaves += 1;
 				return state.payment;
 			},
-			create: async () => { counters.paymentCreates += 1; return { payment_id: 'payment-1' }; },
+			create: async (payload) => {
+				counters.paymentCreates += 1;
+				state.createdPayment = payload;
+				return { payment_id: 'payment-1', ...payload };
+			},
 		},
 		UserModel: { findById: () => ({ lean: async () => state.coordinator || null }) },
 		EventVendorProfileModel: {}, EventVendorPhotoModel: {}, MarketplaceVendorAgreementModel: {},
@@ -136,6 +140,9 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 		assert.equal(result.error, undefined);
 		assert.equal(state.application.status, 'PAYMENT_DUE');
 		assert.equal(state.counters.paymentCreates, 1);
+		assert.equal(state.createdPayment.fee_amount, 0.01);
+		assert.equal(state.createdPayment.total_amount, 100.01);
+		assert.equal(state.createdPayment.fee_rate, 3.5);
 		assert.equal(state.counters.saves, 1);
 		assert.equal(state.counters.emails, 1);
 		assert.match(state.counters.emailArgs[0][2], /selection has been recorded/);

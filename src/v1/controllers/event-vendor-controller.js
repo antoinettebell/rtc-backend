@@ -65,6 +65,9 @@ const {
 const {
   refundPaidMarketplaceVendorFee,
 } = require('../../helper/marketplace-vendor-fee-refund');
+const {
+  getMarketplaceVendorApplicationCheckoutFeeAmount,
+} = require('../../helper/marketplace-regression-test-fees');
 
 const TYPES = ['MERCHANDISE', 'SERVICE', 'OTHER'];
 const EVENT_VENDOR_PUBLIC_EVENT_FIELDS = [
@@ -832,7 +835,7 @@ exports.awardApplication = async (req, res, next) => {
     const existingPayment = await MarketplacePaymentModel.findOne({ application_id: application.application_id, payment_status: { $in: ['PENDING', 'PAID'] } });
     if (existingPayment) return res.data({ eventVendorApplication: application, marketplacePayment: existingPayment }, 'Marketplace Vendor award checkout');
     const subtotal = Number(application.checkout_subtotal || 0);
-    const fee = Math.round(subtotal * 0.035 * 100) / 100;
+    const fee = getMarketplaceVendorApplicationCheckoutFeeAmount(subtotal);
     const payment = await MarketplacePaymentModel.create({
       event_id: event.event_id, application_id: application.application_id,
       payer_user_id: application.vendor_user_id, payer_type: 'VENDOR',
