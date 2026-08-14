@@ -1956,7 +1956,14 @@ exports.nearMe = async (req, res, next) => {
       })
       .filter((item) =>
         matchesFoodCuisineFilters(item, selectedCuisineIds, selectedCuisines)
-      );
+      )
+      .filter((item) => {
+        if (!numericDistance) return true;
+        const itemDistance = toNumberOrNull(
+          item.distanceInMeters ?? item.distance
+        );
+        return itemDistance !== null && itemDistance <= numericDistance;
+      });
     const eventItems = activeEventList
       .filter((event) => matchesEventSearch(event, search))
       .filter((event) => matchesEventTypeFilters(event, selectedEventTypes))

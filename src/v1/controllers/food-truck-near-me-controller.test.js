@@ -29,8 +29,24 @@ const run = async () => {
           long: '-122.4194',
           isOrderingOpen: true,
         },
+        distanceInMeters: 0,
+      }, {
+        _id: 'food-truck-2',
+        name: 'Far Away Vendor',
+        menu: [],
+        cuisine: [],
+        locations: [],
+        truck_units: [],
+        location: {
+          _id: 'new-york-location',
+          address: 'New York, NY',
+          lat: '40.7128',
+          long: '-74.0060',
+          isOrderingOpen: true,
+        },
+        distanceInMeters: 4129000,
       }],
-      total: 1,
+      total: 2,
     };
   };
   services.MarketplaceEventService.getByData = async () => [];
