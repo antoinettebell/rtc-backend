@@ -195,19 +195,20 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 		};
 		const controller = loadController(state);
 		const result = await run(controller.revokeApplicationAward);
-		assert.equal(result.error, undefined);
-		assert.equal(state.application.status, 'NOT_SELECTED');
-		assert.equal(state.payment.payment_status, 'CANCELLED');
-		assert.equal(state.counters.saves, 1);
-		assert.equal(state.counters.paymentSaves, 1);
-		assert.equal(state.counters.notifications, 1);
-		assert.deepEqual(state.counters.notificationUserIds, ['vendor-1']);
+		assert.equal(result.error?.code, 409);
+		assert.match(result.error.message, /not yet a completed award/i);
+		assert.equal(state.application.status, 'PAYMENT_DUE');
+		assert.equal(state.payment.payment_status, 'PENDING');
+		assert.equal(state.counters.saves, 0);
+		assert.equal(state.counters.paymentSaves, 0);
+		assert.equal(state.counters.notifications, 0);
+		assert.deepEqual(state.counters.notificationUserIds, []);
 		assert.equal(state.counters.paymentCreates, 0);
 		assert.equal(hasMarketplaceVendorAwardCapacity({
 			event: state.event,
 			profileTypes: ['MERCHANDISE'],
 			applications: [state.application],
-		}), true, 'revocation releases the Marketplace Vendor capacity slot');
+		}), false, 'a pending selection continues reserving Marketplace Vendor capacity');
 	}
 
 	{
@@ -258,11 +259,12 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 		state.paymentRaceToPaid = true;
 		const controller = loadController(state);
 		const result = await run(controller.revokeApplicationAward);
-		assert.equal(result.error, undefined);
-		assert.equal(state.counters.refunds, 1);
-		assert.equal(state.application.status, 'NOT_SELECTED');
-		assert.equal(state.payment.payment_status, 'REFUNDED');
-		assert.equal(state.counters.notifications, 1);
+		assert.equal(result.error?.code, 409);
+		assert.match(result.error.message, /not yet a completed award/i);
+		assert.equal(state.counters.refunds, 0);
+		assert.equal(state.application.status, 'PAYMENT_DUE');
+		assert.equal(state.payment.payment_status, 'PENDING');
+		assert.equal(state.counters.notifications, 0);
 	}
 
 	console.log('event vendor award and not-selected controller execution tests passed');

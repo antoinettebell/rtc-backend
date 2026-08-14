@@ -72,6 +72,7 @@ const {
 } = require('../../helper/marketplace-vendor-fee-refund');
 const {
   getCoordinatorAwardFeeAmount,
+  getMarketplaceVendorApplicationCheckoutFeeAmount,
 } = require('../../helper/marketplace-regression-test-fees');
 const {
   getPublicMarketplaceEventQuery,
@@ -3738,16 +3739,138 @@ const applyAwardSelections = async (event, selectedBids, awardSelections) => {
   }
 };
 
+const applyFoodApplicationSelections = async (event, selectedApplications = []) => {
+  const vendorFeeRequired = roundMoney(event.vendor_fee || 0) > 0;
+  if (vendorFeeRequired && !event.vendor_fee_payment_deadline) {
+    throw buildError(
+      'Set the Last Date to Accept Payments on the event before accepting vendors.',
+      409
+    );
+  }
+
+  for (const application of selectedApplications) {
+    application.application_status = vendorFeeRequired ? 'PAYMENT_DUE' : 'CONFIRMED';
+    application.payment_status = vendorFeeRequired ? 'PENDING' : 'NOT_REQUIRED';
+    application.payment_due_at = vendorFeeRequired
+      ? event.vendor_fee_payment_deadline || null
+      : null;
+    await application.save();
+
+    await MarketplaceCommunications.sendMarketplaceCommunication({
+      userId: application.vendor_user_id,
+      title: vendorFeeRequired
+        ? 'Vendor application accepted — payment due'
+        : 'Vendor application accepted',
+      body: vendorFeeRequired
+        ? `Your application for ${event.event_name || 'the event'} was accepted. Pay the vendor fee by ${new Date(application.payment_due_at).toLocaleDateString('en-US')}.`
+        : `Your application for ${event.event_name || 'the event'} was accepted.`,
+      data: {
+        notificationType: 'MARKETPLACE_APPLICATION_ACCEPTED',
+        eventId: event.event_id,
+        applicationId: application.application_id,
+      },
+      channels: ['push', 'email'],
+      metadata: { eventId: event.event_id, applicationId: application.application_id },
+    });
+
+    const coordinator = await UserService.getById(event.customer_user_id);
+    if (coordinator?.email) {
+      try {
+        await MailHelper.sendMail(
+          coordinator.email,
+          `RTC Marketplace application awarded - ${event.event_name || event.event_id}`,
+          `
+            <p>Your Food Vendor application selection has been recorded.</p>
+            <p><strong>Event:</strong> ${event.event_name || event.event_id}</p>
+            <p><strong>Application:</strong> ${application.application_id}</p>
+          `
+        );
+      } catch (mailError) {
+        console.error('Food Vendor application coordinator award email failed', {
+          eventId: event.event_id,
+          applicationId: application.application_id,
+          message: mailError.message,
+        });
+      }
+    }
+  }
+};
+
+const applyEventVendorApplicationSelections = async (
+  event,
+  selectedApplications = []
+) => {
+  for (const application of selectedApplications) {
+    let payment = await MarketplacePaymentService.getByData(
+      {
+        application_id: application.application_id,
+        payment_type: 'VENDOR_EVENT_FEE',
+        payment_status: { $in: ['PENDING', 'PROCESSING', 'PAID'] },
+      },
+      { singleResult: true }
+    );
+    if (!payment) {
+      const subtotal = Number(application.checkout_subtotal || 0);
+      const fee = getMarketplaceVendorApplicationCheckoutFeeAmount(subtotal);
+      payment = await MarketplacePaymentService.create({
+        event_id: event.event_id,
+        application_id: application.application_id,
+        payer_user_id: application.vendor_user_id,
+        payer_type: 'VENDOR',
+        payment_type: 'VENDOR_EVENT_FEE',
+        base_amount: subtotal,
+        fee_rate: 3.5,
+        fee_amount: fee,
+        total_amount: roundMoney(subtotal + fee),
+        coordinator_payout_amount: subtotal,
+        payment_status: 'PENDING',
+      });
+    }
+    application.status = payment.payment_status === 'PAID' ? 'PAID' : 'PAYMENT_DUE';
+    application.payment_id = payment.payment_id;
+    await application.save();
+
+    const coordinator = await UserService.getById(event.customer_user_id);
+    if (coordinator?.email) {
+      try {
+        await MailHelper.sendMail(
+          coordinator.email,
+          `RTC Marketplace Vendor awarded - ${event.event_name || event.event_id}`,
+          `
+            <p>Your Marketplace Vendor selection has been recorded.</p>
+            <p><strong>Event:</strong> ${event.event_name || event.event_id}</p>
+            <p><strong>Event date:</strong> ${event.event_date || 'Not provided'}</p>
+            <p>The vendor must complete the attendance-fee checkout before the award is confirmed.</p>
+          `
+        );
+      } catch (mailError) {
+        console.error('Marketplace Vendor coordinator award email failed', {
+          eventId: event.event_id,
+          applicationId: application.application_id,
+          message: mailError.message,
+        });
+      }
+    }
+  }
+};
+
 const finalizeFoodVendorAwardBatch = async ({
   event,
   selectedBids,
+  selectedFoodApplications = [],
+  selectedEventVendorApplications = [],
   awardSelections,
   payment = null,
 }) => {
   await applyAwardSelections(event, selectedBids, awardSelections);
+  await applyFoodApplicationSelections(event, selectedFoodApplications);
+  await applyEventVendorApplicationSelections(
+    event,
+    selectedEventVendorApplications
+  );
 
   const capacity = await getFoodVendorAwardState(event);
-  const foodSelectionClosed = capacity.remaining === 0;
+  const foodSelectionClosed = !isFoodVendorMarketplaceEvent(event) || capacity.remaining === 0;
 
   if (foodSelectionClosed) {
     await MarketplaceBidService.getModel().updateMany(
@@ -3815,10 +3938,150 @@ const finalizeFoodVendorAwardBatch = async ({
 
   return {
     awarded_bid_ids: selectedBidIds,
+    awarded_food_application_ids: selectedFoodApplications.map(
+      (application) => application.application_id
+    ),
+    awarded_event_vendor_application_ids: selectedEventVendorApplications.map(
+      (application) => application.application_id
+    ),
     marketplaceEvent,
     selection_closed: foodSelectionClosed,
     event_fully_awarded: eventFullyAwarded,
     remaining_food_vendor_awards: capacity.remaining,
+  };
+};
+
+const assertEventVendorAwardBatchCapacity = async (
+  event,
+  selectedApplications = []
+) => {
+  if (!selectedApplications.length) return;
+  const existingAwards = await EventVendorApplicationModel.find({
+    event_id: event.event_id,
+    status: { $in: ['AWARDED', 'PAYMENT_DUE', 'PAID'] },
+  }).lean();
+  const needs = event.event_vendor_needs || [];
+  const selectedCounts = new Map();
+  selectedApplications.forEach((application) => {
+    (application.vendor_types || []).forEach((type) => {
+      selectedCounts.set(type, (selectedCounts.get(type) || 0) + 1);
+    });
+  });
+
+  for (const [type, selectedCount] of selectedCounts.entries()) {
+    const need = needs.find((item) => item.vendor_type === type);
+    const existingCount = existingAwards.filter((application) =>
+      (application.vendor_types || []).includes(type)
+    ).length;
+    if (!need || existingCount + selectedCount > Number(need.quantity || 0)) {
+      throw buildError(`${type} vendor capacity has already been awarded`, 409);
+    }
+  }
+};
+
+const loadAwardBatchSelections = async (
+  event,
+  payload = {},
+  { allowFinalized = false } = {}
+) => {
+  const selectedBidIds = [...new Set(payload.bid_ids || [])];
+  const selectedFoodApplicationIds = [
+    ...new Set(payload.food_application_ids || []),
+  ];
+  const selectedEventVendorApplicationIds = [
+    ...new Set(payload.event_vendor_application_ids || []),
+  ];
+  if (
+    !selectedBidIds.length &&
+    !selectedFoodApplicationIds.length &&
+    !selectedEventVendorApplicationIds.length
+  ) {
+    throw buildError('Select at least one vendor submission to complete booking', 400);
+  }
+
+  const [selectedBids, selectedFoodApplications, selectedEventVendorApplications] =
+    await Promise.all([
+      selectedBidIds.length
+        ? MarketplaceBidService.getByData({
+            event_id: event.event_id,
+            bid_id: { $in: selectedBidIds },
+            bid_status: {
+              $in: allowFinalized
+                ? ['SUBMITTED', 'UNDER_REVIEW', 'AWARDED']
+                : ['SUBMITTED', 'UNDER_REVIEW'],
+            },
+            archived_at: null,
+          })
+        : [],
+      selectedFoodApplicationIds.length
+        ? MarketplaceApplicationService.getByData({
+            event_id: event.event_id,
+            application_id: { $in: selectedFoodApplicationIds },
+            application_status: {
+              $in: allowFinalized
+                ? ['SUBMITTED', 'UNDER_REVIEW', 'CONFIRMED', 'PAYMENT_DUE', 'PAID']
+                : ['SUBMITTED', 'UNDER_REVIEW'],
+            },
+            archived_at: null,
+          })
+        : [],
+      selectedEventVendorApplicationIds.length
+        ? EventVendorApplicationModel.find({
+            event_id: event.event_id,
+            application_id: { $in: selectedEventVendorApplicationIds },
+            status: {
+              $in: allowFinalized
+                ? ['SUBMITTED', 'UNDER_REVIEW', 'PAYMENT_DUE', 'PAID']
+                : ['SUBMITTED', 'UNDER_REVIEW'],
+            },
+          })
+        : [],
+    ]);
+
+  if (
+    selectedBids.length !== selectedBidIds.length ||
+    selectedFoodApplications.length !== selectedFoodApplicationIds.length ||
+    selectedEventVendorApplications.length !== selectedEventVendorApplicationIds.length
+  ) {
+    throw buildError('One or more selected submissions are no longer available', 409);
+  }
+
+  const pendingBids = selectedBids.filter((bid) =>
+    ['SUBMITTED', 'UNDER_REVIEW'].includes(String(bid.bid_status).toUpperCase())
+  );
+  const pendingFoodApplications = selectedFoodApplications.filter((application) =>
+    ['SUBMITTED', 'UNDER_REVIEW'].includes(
+      String(application.application_status).toUpperCase()
+    )
+  );
+  const pendingEventVendorApplications = selectedEventVendorApplications.filter(
+    (application) =>
+      ['SUBMITTED', 'UNDER_REVIEW'].includes(
+        String(application.status).toUpperCase()
+      )
+  );
+  const selectedFoodRecords = [...pendingBids, ...pendingFoodApplications];
+  const selectedFoodVendorIds = selectedFoodRecords.map((record) =>
+    String(record.vendor_user_id?._id || record.vendor_user_id || '')
+  );
+  if (new Set(selectedFoodVendorIds).size !== selectedFoodVendorIds.length) {
+    throw buildError('Select only one Food Vendor submission per vendor.', 409);
+  }
+  if (selectedFoodRecords.length) {
+    await assertFoodVendorAwardBatchCapacity(event, selectedFoodRecords);
+  }
+  await assertEventVendorAwardBatchCapacity(
+    event,
+    pendingEventVendorApplications
+  );
+
+  return {
+    selectedBidIds,
+    selectedFoodApplicationIds,
+    selectedEventVendorApplicationIds,
+    selectedBids: pendingBids,
+    selectedFoodApplications: pendingFoodApplications,
+    selectedEventVendorApplications: pendingEventVendorApplications,
   };
 };
 
@@ -3828,7 +4091,14 @@ const completeSignedAward = async (payment) => {
   }
 
   const selectedBidIds = payment.selected_bid_ids || [];
-  if (!selectedBidIds.length) {
+  const selectedFoodApplicationIds = payment.selected_food_application_ids || [];
+  const selectedEventVendorApplicationIds =
+    payment.selected_event_vendor_application_ids || [];
+  if (
+    !selectedBidIds.length &&
+    !selectedFoodApplicationIds.length &&
+    !selectedEventVendorApplicationIds.length
+  ) {
     return null;
   }
 
@@ -3837,32 +4107,40 @@ const completeSignedAward = async (payment) => {
     { singleResult: true }
   );
 
-  const selectedBids = await MarketplaceBidService.getByData({
-    event_id: payment.event_id,
-    bid_id: { $in: selectedBidIds },
-    archived_at: null,
-  });
-  const pendingSelectedBids = selectedBids.filter(
-    (bid) => String(bid.bid_status).toUpperCase() !== 'AWARDED'
+  const batch = await loadAwardBatchSelections(
+    existingEvent,
+    {
+      bid_ids: selectedBidIds,
+      food_application_ids: selectedFoodApplicationIds,
+      event_vendor_application_ids: selectedEventVendorApplicationIds,
+    },
+    { allowFinalized: true }
   );
-  if (!pendingSelectedBids.length) {
+  if (
+    !batch.selectedBids.length &&
+    !batch.selectedFoodApplications.length &&
+    !batch.selectedEventVendorApplications.length
+  ) {
     const capacity = await getFoodVendorAwardState(existingEvent);
     return {
       awarded_bid_ids: selectedBidIds,
+      awarded_food_application_ids: selectedFoodApplicationIds,
+      awarded_event_vendor_application_ids: selectedEventVendorApplicationIds,
       marketplaceEvent: existingEvent,
       selection_closed: capacity.remaining === 0,
       remaining_food_vendor_awards: capacity.remaining,
     };
   }
-  await assertFoodVendorAwardBatchCapacity(existingEvent, pendingSelectedBids);
   const awardSelections = resolveAwardSelections(
     existingEvent,
-    pendingSelectedBids,
+    batch.selectedBids,
     payment.award_selections || []
   );
   return finalizeFoodVendorAwardBatch({
     event: existingEvent,
-    selectedBids: pendingSelectedBids,
+    selectedBids: batch.selectedBids,
+    selectedFoodApplications: batch.selectedFoodApplications,
+    selectedEventVendorApplications: batch.selectedEventVendorApplications,
     awardSelections,
     payment,
   });
@@ -4993,7 +5271,10 @@ exports.getEventBids = async (req, res, next) => {
 
     const [bids, applications] = await Promise.all([
       MarketplaceBidService.getByData(
-        { event_id: req.params.eventId, bid_status: { $ne: 'DRAFT' } },
+        {
+          event_id: req.params.eventId,
+          bid_status: { $nin: ['DRAFT', 'PENDING_SIGNATURE'] },
+        },
         {
           sort: { submitted_at: -1, created_at: -1 },
           populate: [
@@ -5004,7 +5285,10 @@ exports.getEventBids = async (req, res, next) => {
         }
       ),
       MarketplaceApplicationService.getByData(
-        { event_id: req.params.eventId, application_status: { $ne: 'DRAFT' } },
+        {
+          event_id: req.params.eventId,
+          application_status: { $nin: ['DRAFT', 'PENDING_SIGNATURE'] },
+        },
         {
           sort: { submitted_at: -1, created_at: -1 },
           populate: [
@@ -6654,23 +6938,15 @@ exports.awardBids = async (req, res, next) => {
     const event = await getOwnedEvent(req.params.eventId, req.user._id);
     await reconcilePartiallyAwardedFoodEvent(event);
     assertEventOpenForSubmissionDecision(event);
-    const selectedBidIds = req.body.bid_ids || [];
-
-    if (!selectedBidIds.length) {
-      throw buildError('At least one bid is required to award vendors', 400);
-    }
-
-    const selectedBids = await MarketplaceBidService.getByData({
-      event_id: req.params.eventId,
-      bid_id: { $in: selectedBidIds },
-      bid_status: { $in: ['SUBMITTED', 'UNDER_REVIEW'] },
-      archived_at: null,
-    });
-
-    if (selectedBids.length !== selectedBidIds.length) {
-      throw buildError('One or more selected bids are invalid', 400);
-    }
-    await assertFoodVendorAwardBatchCapacity(event, selectedBids);
+    const batch = await loadAwardBatchSelections(event, req.body);
+    const {
+      selectedBidIds,
+      selectedFoodApplicationIds,
+      selectedEventVendorApplicationIds,
+      selectedBids,
+      selectedFoodApplications,
+      selectedEventVendorApplications,
+    } = batch;
     const awardSelections = resolveAwardSelections(
       event,
       selectedBids,
@@ -6682,7 +6958,9 @@ exports.awardBids = async (req, res, next) => {
         0
       ) || event.budgeted_amount
     );
-    const feeAmount = getCoordinatorAwardFeeAmount(baseAmount);
+    const feeAmount = selectedBids.length
+      ? getCoordinatorAwardFeeAmount(baseAmount)
+      : 0;
 
     if (feeAmount > 0) {
       let marketplacePayment = await findActiveMarketplacePayment({
@@ -6696,6 +6974,8 @@ exports.awardBids = async (req, res, next) => {
         marketplacePayment = await MarketplacePaymentService.create({
           event_id: event.event_id,
           selected_bid_ids: selectedBidIds,
+          selected_food_application_ids: selectedFoodApplicationIds,
+          selected_event_vendor_application_ids: selectedEventVendorApplicationIds,
           award_selections: awardSelections,
           payer_user_id: req.user._id,
           payer_type: 'CUSTOMER',
@@ -6709,6 +6989,9 @@ exports.awardBids = async (req, res, next) => {
         await createPaymentAudit(marketplacePayment, req, 'CREATE');
       } else if (marketplacePayment.payment_status === 'PENDING') {
         marketplacePayment.selected_bid_ids = selectedBidIds;
+        marketplacePayment.selected_food_application_ids = selectedFoodApplicationIds;
+        marketplacePayment.selected_event_vendor_application_ids =
+          selectedEventVendorApplicationIds;
         marketplacePayment.award_selections = awardSelections;
         marketplacePayment.base_amount = baseAmount;
         marketplacePayment.fee_amount = feeAmount;
@@ -6724,6 +7007,8 @@ exports.awardBids = async (req, res, next) => {
         return res.data(
           {
             awarded_bid_ids: selectedBidIds,
+            awarded_food_application_ids: selectedFoodApplicationIds,
+            awarded_event_vendor_application_ids: selectedEventVendorApplicationIds,
             marketplaceEvent: event,
             marketplacePayment,
             requires_payment: true,
@@ -6743,6 +7028,8 @@ exports.awardBids = async (req, res, next) => {
     const finalized = await finalizeFoodVendorAwardBatch({
       event,
       selectedBids,
+      selectedFoodApplications,
+      selectedEventVendorApplications,
       awardSelections,
     });
     return res.data(
@@ -7067,6 +7354,12 @@ exports.revokeApplicationAward = async (req, res, next) => {
       { singleResult: true }
     );
     if (!application) throw buildError('Awarded vendor application not found.', 404);
+    if (!['PAID', 'CONFIRMED'].includes(application.application_status)) {
+      throw buildError(
+        'This application is selected and awaiting payment. It is not yet a completed award and cannot be revoked.',
+        409
+      );
+    }
 
     const vendorPayment = await MarketplacePaymentService.getByData(
       {

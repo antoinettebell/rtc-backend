@@ -242,11 +242,26 @@ module.exports = {
 
   awardBids: {
     body: Joi.object({
-      bid_ids: Joi.array().items(Joi.string().required()).min(1).required(),
+      bid_ids: Joi.array().items(Joi.string().required()).default([]),
+      food_application_ids: Joi.array().items(Joi.string().required()).default([]),
+      event_vendor_application_ids: Joi.array().items(Joi.string().required()).default([]),
       award_selections: Joi.array().items(Joi.object({
         bid_id: Joi.string().required(),
         award_coverage: Joi.string().valid('REGULAR', 'VIP', 'BOTH').required(),
       })).default([]),
+    }).custom((value, helpers) => {
+      if (
+        !value.bid_ids.length &&
+        !value.food_application_ids.length &&
+        !value.event_vendor_application_ids.length
+      ) {
+        return helpers.error('any.custom', {
+          message: 'Select at least one vendor submission to complete booking',
+        });
+      }
+      return value;
+    }).messages({
+      'any.custom': '{{#message}}',
     }),
   },
 

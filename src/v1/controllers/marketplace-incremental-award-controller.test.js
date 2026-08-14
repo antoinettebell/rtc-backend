@@ -38,7 +38,11 @@ const loadController = (state) => {
     getByData: async (query, options = {}) => {
       const matches = state.applications.filter((application) =>
       application.event_id === query.event_id &&
-      (!query.application_id || application.application_id === query.application_id) &&
+      (!query.application_id || (
+        query.application_id.$in
+          ? query.application_id.$in.includes(application.application_id)
+          : application.application_id === query.application_id
+      )) &&
       (!query.application_status || matchesStatus(application.application_status, query.application_status)) &&
       (query.archived_at === undefined || application.archived_at === query.archived_at)
       );
@@ -74,8 +78,29 @@ const loadController = (state) => {
       },
     },
     MarketplaceFileAuditService: {},
-    MarketplacePaymentAuditService: {},
-    MarketplacePaymentService: {},
+    MarketplacePaymentAuditService: { create: async () => undefined },
+    MarketplacePaymentService: {
+      getByData: async (query, options = {}) => {
+        const matches = state.payments.filter((payment) =>
+          (!query.payment_id || payment.payment_id === query.payment_id) &&
+          (!query.event_id || payment.event_id === query.event_id) &&
+          (!query.payer_user_id || String(payment.payer_user_id) === String(query.payer_user_id)) &&
+          (!query.application_id || payment.application_id === query.application_id) &&
+          (!query.payment_type || payment.payment_type === query.payment_type) &&
+          (!query.payment_status || matchesStatus(payment.payment_status, query.payment_status))
+        );
+        return options.singleResult ? matches[0] || null : matches;
+      },
+      create: async (payload) => {
+        const payment = {
+          payment_id: `payment-${state.payments.length + 1}`,
+          ...payload,
+          save: async () => undefined,
+        };
+        state.payments.push(payment);
+        return payment;
+      },
+    },
     MarketplaceVendorAgreementService: { getByData: async () => null },
     UserService: {
       getById: async (id) => ({
@@ -94,7 +119,10 @@ const loadController = (state) => {
       if (request === '../services') return services;
       if (request === '../../helper/marketplace-award-batch') return actualAwardBatch;
       if (request === '../../helper/marketplace-participation-helper') return actualParticipation;
-      if (request === '../../helper/marketplace-regression-test-fees') return { getCoordinatorAwardFeeAmount: () => 0 };
+      if (request === '../../helper/marketplace-regression-test-fees') return {
+        getCoordinatorAwardFeeAmount: () => state.coordinatorFee,
+        getMarketplaceVendorApplicationCheckoutFeeAmount: () => 0.01,
+      };
       if (request === '../../helper/marketplace-communications-helper') return {
         sendMarketplaceCommunication: async () => { state.notifications += 1; },
         sendMarketplaceCommunications: async (messages) => { state.outcomes.push(...messages); },
@@ -107,7 +135,19 @@ const loadController = (state) => {
         buildEventVendorAwardDetailsHtml: () => '<p>award</p>',
       };
       if (request === '../../models') return {
-        EventVendorApplicationModel: { find: () => ({ lean: async () => [] }) },
+        EventVendorApplicationModel: {
+          find: (query) => {
+            const matches = state.eventVendorApplications.filter((application) =>
+              application.event_id === query.event_id &&
+              (!query.application_id?.$in || query.application_id.$in.includes(application.application_id)) &&
+              (!query.status || matchesStatus(application.status, query.status))
+            );
+            return {
+              lean: async () => matches,
+              then: (resolve, reject) => Promise.resolve(matches).then(resolve, reject),
+            };
+          },
+        },
       };
       if (request === '../../helper/vendor-plan-helper') return {
         canAccessEventMarketplace: () => true,
@@ -120,7 +160,10 @@ const loadController = (state) => {
       if (request === '../../helper/marketplace-vendor-agreement-reconciliation' || request === '../../helper/marketplace-agreement-document-verification' || request === '../../helper/marketplace-agreement-vendor-context') return {};
       if (request === '../../helper/marketplace-coordinator-details-email') return {};
       if (request === '../../helper/marketplace-vendor-contact-helper' || request === '../../helper/marketplace-event-close-helper' || request === '../../helper/marketplace-award-revocation' || request === '../../helper/marketplace-vendor-fee-refund') return {};
-      if (request === '../../helper/public-marketplace-event-helper' || request === '../../helper/marketplace-tax-exemption-helper' || request === '../../helper/marketplace-payment-policy-helper') return {};
+      if (request === '../../helper/marketplace-payment-policy-helper') return {
+        isMarketplacePaymentMethodAllowed: () => true,
+      };
+      if (request === '../../helper/public-marketplace-event-helper' || request === '../../helper/marketplace-tax-exemption-helper') return {};
       if (request === '../../config') return { docusign: {} };
       if (request === '../../helper/marketplace-submission-lifecycle') return {};
       if (request === '../../helper/marketplace-event-visibility-helper') return { isFoodVendorMarketplaceEvent: () => true };
@@ -156,6 +199,17 @@ const createApplication = (id, vendorId) => ({
   save: async () => undefined,
 });
 
+const createEventVendorApplication = (id, vendorId, type = 'MERCHANDISE') => ({
+  application_id: id,
+  event_id: 'event-1',
+  vendor_user_id: vendorId,
+  profile_id: `profile-${vendorId}`,
+  vendor_types: [type],
+  status: 'SUBMITTED',
+  checkout_subtotal: 25,
+  save: async () => undefined,
+});
+
 const createState = () => ({
   event: {
     event_id: 'event-1', customer_user_id: 'coordinator-1', event_name: 'Test Event',
@@ -164,16 +218,22 @@ const createState = () => ({
     agreement_status: 'NOT_REQUIRED', save: async () => undefined,
   },
   bids: [createBid('bid-1', 'vendor-1'), createBid('bid-2', 'vendor-2'), createBid('bid-3', 'vendor-3')],
-  applications: [], outcomes: [], emails: [], notifications: 0, questionArchives: 0,
+  applications: [], eventVendorApplications: [], payments: [], coordinatorFee: 0,
+  outcomes: [], emails: [], notifications: 0, questionArchives: 0,
 });
 
-const award = async (controller, bidIds) => {
+const award = async (controller, bidIds, overrides = {}) => {
   let response;
   let capturedError;
   await controller.awardBids(
     {
       params: { eventId: 'event-1' }, user: { _id: 'coordinator-1' },
-      body: { bid_ids: bidIds, award_selections: bidIds.map((bidId) => ({ bid_id: bidId, award_coverage: 'REGULAR' })) },
+      body: {
+        bid_ids: bidIds,
+        food_application_ids: overrides.foodApplicationIds || [],
+        event_vendor_application_ids: overrides.eventVendorApplicationIds || [],
+        award_selections: bidIds.map((bidId) => ({ bid_id: bidId, award_coverage: 'REGULAR' })),
+      },
     },
     { data: (payload, message) => { response = { payload, message }; } },
     (error) => { capturedError = error; }
@@ -259,6 +319,102 @@ const awardApplication = async (controller, applicationId) => {
   assert.equal(secondApplication.error, undefined);
   assert.equal(applicationState.applications[2].application_status, 'NOT_SELECTED');
   assert.equal(applicationState.event.status, 'AWARDED');
+
+  const batchedFoodApplicationState = createState();
+  batchedFoodApplicationState.bids = [];
+  batchedFoodApplicationState.applications = [
+    createApplication('application-batch', 'vendor-application'),
+  ];
+  const batchedFoodApplicationController = loadController(batchedFoodApplicationState);
+  const batchedFoodApplication = await award(
+    batchedFoodApplicationController,
+    [],
+    { foodApplicationIds: ['application-batch'] }
+  );
+  assert.equal(batchedFoodApplication.error, undefined);
+  assert.equal(
+    batchedFoodApplicationState.applications[0].application_status,
+    'CONFIRMED',
+    'Food applications finalize only through Complete Booking'
+  );
+  assert.deepStrictEqual(
+    batchedFoodApplication.response.payload.awarded_food_application_ids,
+    ['application-batch']
+  );
+
+  const eventVendorState = createState();
+  eventVendorState.event.number_of_vendors_needed = 0;
+  eventVendorState.event.service_type = 'Photography';
+  eventVendorState.event.service_types = ['Photography'];
+  eventVendorState.event.service_styles = ['Photography'];
+  eventVendorState.event.event_vendor_needs = [
+    { vendor_type: 'MERCHANDISE', quantity: 1, fee: 25 },
+  ];
+  eventVendorState.bids = [];
+  eventVendorState.eventVendorApplications = [
+    createEventVendorApplication('event-application-batch', 'market-vendor'),
+  ];
+  const eventVendorController = loadController(eventVendorState);
+  const eventVendorBatch = await award(eventVendorController, [], {
+    eventVendorApplicationIds: ['event-application-batch'],
+  });
+  assert.equal(eventVendorBatch.error, undefined);
+  assert.equal(eventVendorState.eventVendorApplications[0].status, 'PAYMENT_DUE');
+  assert.equal(eventVendorState.payments.length, 1, 'vendor checkout is created at Complete Booking');
+  assert.equal(
+    eventVendorState.payments[0].payer_type,
+    'VENDOR',
+    'a Marketplace Vendor selection never creates coordinator checkout'
+  );
+  assert.deepStrictEqual(
+    eventVendorBatch.response.payload.awarded_event_vendor_application_ids,
+    ['event-application-batch']
+  );
+
+  const paidBatchState = createState();
+  paidBatchState.coordinatorFee = 0.01;
+  paidBatchState.event.event_vendor_needs = [
+    { vendor_type: 'MERCHANDISE', quantity: 1, fee: 25 },
+  ];
+  paidBatchState.eventVendorApplications = [
+    createEventVendorApplication('event-application-paid-batch', 'market-vendor'),
+  ];
+  const paidBatchController = loadController(paidBatchState);
+  const paidBatch = await award(paidBatchController, ['bid-1'], {
+    eventVendorApplicationIds: ['event-application-paid-batch'],
+  });
+  assert.equal(paidBatch.error, undefined);
+  assert.equal(paidBatch.response.payload.requires_payment, true);
+  assert.equal(paidBatchState.bids[0].bid_status, 'SUBMITTED');
+  assert.equal(paidBatchState.eventVendorApplications[0].status, 'SUBMITTED');
+  assert.deepStrictEqual(
+    paidBatchState.payments[0].selected_event_vendor_application_ids,
+    ['event-application-paid-batch'],
+    'the coordinator checkout durably retains the Marketplace application selection'
+  );
+  paidBatchState.payments[0].payment_status = 'PAID';
+  let checkoutResponse;
+  let checkoutError;
+  await paidBatchController.checkoutPayment(
+    {
+      params: { paymentId: paidBatchState.payments[0].payment_id },
+      user: { _id: 'coordinator-1', userType: 'CUSTOMER' },
+      body: { payment_method: 'APPLE_PAY', expected_total: 0.01 },
+    },
+    { data: (payload, message) => { checkoutResponse = { payload, message }; } },
+    (error) => { checkoutError = error; }
+  );
+  assert.equal(checkoutError, undefined);
+  assert.equal(paidBatchState.bids[0].bid_status, 'AWARDED');
+  assert.equal(
+    paidBatchState.eventVendorApplications[0].status,
+    'PAYMENT_DUE',
+    'the retained Marketplace application finalizes only after coordinator checkout'
+  );
+  assert.deepStrictEqual(
+    checkoutResponse.payload.routingResult.awarded_event_vendor_application_ids,
+    ['event-application-paid-batch']
+  );
 
   console.log('marketplace incremental award controller tests passed');
 })().catch((error) => {

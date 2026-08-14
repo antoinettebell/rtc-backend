@@ -27,6 +27,14 @@ const mSchema = mongoose.Schema(
       type: [String],
       default: [],
     },
+    selected_food_application_ids: {
+      type: [String],
+      default: [],
+    },
+    selected_event_vendor_application_ids: {
+      type: [String],
+      default: [],
+    },
     award_selections: {
       type: [{
         bid_id: { type: String, required: true },

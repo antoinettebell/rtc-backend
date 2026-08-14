@@ -986,6 +986,12 @@ exports.revokeApplicationAward = async (req, res, next) => {
       status: { $in: ['AWARDED', 'PAYMENT_DUE', 'PAID'] },
     });
     if (!application) throw error('Awarded Marketplace Vendor application not found', 404);
+    if (application.status !== 'PAID') {
+      throw error(
+        'This application is selected and awaiting payment. It is not yet a completed award and cannot be revoked.',
+        409
+      );
+    }
     const event = await MarketplaceEventModel.findOne({
       event_id: application.event_id,
       customer_user_id: req.user._id,

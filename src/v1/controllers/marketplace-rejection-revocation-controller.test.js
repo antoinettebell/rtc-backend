@@ -408,11 +408,12 @@ const createState = ({ bidStatus = null, applicationStatus = null, paymentStatus
     const result = await run(controller.revokeApplicationAward, {
       params: { eventId: 'event-1', applicationId: 'application-1' }, body: {},
     });
-    assert.equal(result.error, undefined);
-    assert.equal(state.counters.refunds, 1);
-    assert.equal(state.application.application_status, 'NOT_SELECTED');
-    assert.equal(state.payment.payment_status, 'REFUNDED');
-    assert.equal(state.counters.notifications, 1);
+    assert.equal(result.error?.code, 409);
+    assert.match(result.error.message, /not yet a completed award/i);
+    assert.equal(state.counters.refunds, 0);
+    assert.equal(state.application.application_status, 'PAYMENT_DUE');
+    assert.equal(state.payment.payment_status, 'PENDING');
+    assert.equal(state.counters.notifications, 0);
   }
 
   console.log('marketplace rejection and revocation controller tests passed');

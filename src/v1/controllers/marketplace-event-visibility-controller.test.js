@@ -145,6 +145,11 @@ const loadMarketplaceController = (state) => {
 		MarketplaceEventService: {
 			getByData: async (query, options = {}) => getListOrOne(state.events, query, options),
 			getCount: async (query) => getListOrOne(state.events, query).length,
+			update: async (query, payload) => {
+				const item = state.events.find((event) => matchesQuery(event, query));
+				if (item) Object.assign(item, payload);
+				return item;
+			},
 			attachImages: async (events) => events,
 			getModel: () => ({
 				updateMany: async (query, update) => {
@@ -421,6 +426,44 @@ const assertEventVendorSubmissionUntouched = (state) => {
 };
 
 const runFoodVendorTests = async () => {
+	{
+		const state = createFoodState();
+		state.users.coordinator = {
+			_id: 'coordinator',
+			isEventCoordinator: true,
+			eventCoordinatorTaxIdEncrypted: 'encrypted-tax-id',
+		};
+		state.events.push(makeFoodEvent('coordinator-event', {
+			customer_user_id: 'coordinator',
+		}));
+		state.bids.push(
+			{ bid_id: 'signed-bid', event_id: 'coordinator-event', bid_status: 'SUBMITTED' },
+			{ bid_id: 'pending-bid', event_id: 'coordinator-event', bid_status: 'PENDING_SIGNATURE' }
+		);
+		state.applications.push(
+			{ application_id: 'signed-application', event_id: 'coordinator-event', application_status: 'SUBMITTED' },
+			{ application_id: 'pending-application', event_id: 'coordinator-event', application_status: 'PENDING_SIGNATURE' }
+		);
+		const controller = loadMarketplaceController(state);
+		const result = await runController(controller.getEventBids, {
+			user: { _id: 'coordinator', userType: 'CUSTOMER' },
+			params: { eventId: 'coordinator-event' },
+			query: {},
+			body: {},
+		});
+		assert.equal(result.error, undefined);
+		assert.deepStrictEqual(
+			result.response.payload.marketplaceBidList.map((bid) => bid.bid_id),
+			['signed-bid'],
+			'coordinators must not see Food Vendor bids that have not finished signing'
+		);
+		assert.deepStrictEqual(
+			result.response.payload.marketplaceApplicationList.map((application) => application.application_id),
+			['signed-application'],
+			'coordinators must not see Food Vendor applications that have not finished signing'
+		);
+	}
+
 	{
 		const state = createFoodState();
 		addFoodVendor(state, 'jazzy');
