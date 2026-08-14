@@ -1556,7 +1556,10 @@ const createPendingVendorAgreementRecipientView = async ({ agreement, returnUrl 
     vendorUserId: agreement.vendor_user_id,
     clientUserId: signer.clientUserId || agreement.vendor_user_id,
     recipientId: signer.recipientId,
-    returnUrl: returnUrl || docusign.returnUrl || getVendorAgreementReturnUrl(),
+    // Every embedded vendor signing step must return to the vendor app. A
+    // server-level website URL must not replace the mobile deep link on a
+    // continued Governance/NDA signing step.
+    returnUrl: returnUrl || getVendorAgreementReturnUrl(),
   });
 };
 

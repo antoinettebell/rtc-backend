@@ -40,6 +40,20 @@ const {
     /createVendorMarketplaceSigningEnvelope[\s\S]*verifyVendorAgreementEnvelopeDocuments\(agreement\)[\s\S]*createPendingVendorAgreementRecipientView/,
     'new envelopes must contain both required documents before the signing view opens'
   );
+  const recipientViewHelper = source.slice(
+    source.indexOf('const createPendingVendorAgreementRecipientView'),
+    source.indexOf('const normalizeDocuSignReturnStatus')
+  );
+  assert.match(
+    recipientViewHelper,
+    /returnUrl: returnUrl \|\| getVendorAgreementReturnUrl\(\)/,
+    'every continued signing step returns to the vendor app deep link'
+  );
+  assert.doesNotMatch(
+    recipientViewHelper,
+    /returnUrl: returnUrl \|\| docusign\.returnUrl/,
+    'a server website return URL cannot replace the vendor app return on a continued step'
+  );
   const agreementModelSource = fs.readFileSync(
     path.join(__dirname, '../../models/marketplace-vendor-agreement.js'),
     'utf8'
