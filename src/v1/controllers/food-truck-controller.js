@@ -1897,7 +1897,8 @@ exports.nearMe = async (req, res, next) => {
 	            search,
 	            distanceInMeters,
 	            false,
-	            null
+	            null,
+	            true
 	          )
         : { data: [], total: 0 },
       includeEvents

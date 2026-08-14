@@ -40,6 +40,24 @@ assert.equal(limited[0].name, 'Round Da Corner');
   const eligibilityMatch = pipeline.find((stage) => stage.$match?.['menu.0']);
   assert.deepEqual(eligibilityMatch.$match['menu.0'], { $exists: true });
   assert.equal(eligibilityMatch.$match['menu.available'], true);
+
+  let nearMePipeline;
+  FoodTruckModel.aggregate = async (value) => {
+    nearMePipeline = value;
+    return [{ data: [], total: 0 }];
+  };
+  try {
+    await FoodTruckService.getWithFiltersNew(
+      null, null, null, 37.7749, -122.4194, 50, 1, '', 32186.9,
+      false, null, true
+    );
+  } finally {
+    FoodTruckModel.aggregate = originalAggregate;
+  }
+  const nearMeMenuEligibility = nearMePipeline.find(
+    (stage) => stage.$match?.['menu.0'] || stage.$match?.['menu.available']
+  );
+  assert.equal(nearMeMenuEligibility, undefined);
   console.log('Food-truck search relevance tests passed.');
 })().catch((error) => {
   console.error(error);

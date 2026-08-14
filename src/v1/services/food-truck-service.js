@@ -814,7 +814,8 @@ class FoodTruckService extends BaseService {
     search,
     distanceMeters,
     available,
-    featured
+    featured,
+    includeWithoutMenu = false
   ) {
     try {
       const userLat = parseFloat(lat);
@@ -955,8 +956,10 @@ class FoodTruckService extends BaseService {
         q['featured'] = true;
       }
   
-      q['menu.0'] = { $exists: true };
-      q['menu.available'] = true;
+      if (!includeWithoutMenu) {
+        q['menu.0'] = { $exists: true };
+        q['menu.available'] = true;
+      }
   
       const data = (
         await Model.aggregate([
