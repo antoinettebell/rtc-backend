@@ -16,9 +16,22 @@ const getMarketplaceVendorApplicationCheckoutFeeAmount = () =>
 const getCustomerTicketProcessingFeeAmount = () =>
   REGRESSION_TEST_TRANSACTION_FEE;
 
+// TEMPORARY REGRESSION TEST OVERRIDE.
+// Production final-event payment values:
+// baseAmount = roundMoney(awardedBid.full_bid_amount)
+// tipAmount = roundMoney(requestedTipAmount)
+// totalAmount/coordinatorPayoutAmount = roundMoney(baseAmount + tipAmount)
+const getFinalEventPaymentAmounts = () => ({
+  baseAmount: REGRESSION_TEST_TRANSACTION_FEE,
+  tipAmount: 0,
+  totalAmount: REGRESSION_TEST_TRANSACTION_FEE,
+  coordinatorPayoutAmount: REGRESSION_TEST_TRANSACTION_FEE,
+});
+
 module.exports = {
   REGRESSION_TEST_TRANSACTION_FEE,
   getCoordinatorAwardFeeAmount,
   getCustomerTicketProcessingFeeAmount,
+  getFinalEventPaymentAmounts,
   getMarketplaceVendorApplicationCheckoutFeeAmount,
 };

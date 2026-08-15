@@ -212,6 +212,18 @@ const createState = ({ bidStatus = null, applicationStatus = null, paymentStatus
   }
 
   {
+    const state = createState({ applicationStatus: 'UNDER_REVIEW' });
+    state.event.status = 'AWARDED';
+    const controller = loadController(state);
+    const result = await run(controller.declineApplication, {
+      params: { applicationId: 'application-1' },
+    });
+    assert.equal(result.error, undefined, 'a pending submission remains rejectable after another vendor is awarded');
+    assert.equal(state.application.application_status, 'NOT_SELECTED');
+    assert.equal(state.counters.notifications, 1);
+  }
+
+  {
     const state = createState({ bidStatus: 'DECLINED' });
     const controller = loadController(state);
     const result = await run(controller.declineBid, { params: { bidId: 'bid-1' } });

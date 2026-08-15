@@ -886,7 +886,7 @@ exports.declineApplication = async (req, res, next) => {
     if (transition.idempotent) {
       return res.data({ eventVendorApplication: application }, 'Marketplace Vendor application already not selected');
     }
-    if (!['OPEN', 'REOPENED'].includes(event.status) || event.vendor_applications_closed_at || (event.event_close_date && new Date(event.event_close_date) <= new Date()) || !transition.eligible) {
+    if (!['OPEN', 'REOPENED', 'AWARDED'].includes(event.status) || event.vendor_applications_closed_at || (event.event_close_date && new Date(event.event_close_date) <= new Date()) || !transition.eligible) {
       throw error('This application can no longer be marked not selected.', 409);
     }
     application.status = transition.targetStatus;

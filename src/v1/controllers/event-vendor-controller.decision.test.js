@@ -175,6 +175,15 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 	}
 
 	{
+		const state = createState({ eventStatus: 'AWARDED' });
+		const controller = loadController(state);
+		const result = await run(controller.declineApplication);
+		assert.equal(result.error, undefined, 'a pending Marketplace Vendor application remains rejectable after another award');
+		assert.equal(state.application.status, 'NOT_SELECTED');
+		assert.equal(state.counters.notifications, 1);
+	}
+
+	{
 		const state = createState({ eventStatus: 'CLOSED', applicationStatus: 'NOT_SELECTED' });
 		const controller = loadController(state);
 		const result = await run(controller.declineApplication);

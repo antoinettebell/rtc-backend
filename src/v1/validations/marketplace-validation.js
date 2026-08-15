@@ -242,9 +242,9 @@ module.exports = {
 
   awardBids: {
     body: Joi.object({
-      bid_ids: Joi.array().items(Joi.string().required()).default([]),
-      food_application_ids: Joi.array().items(Joi.string().required()).default([]),
-      event_vendor_application_ids: Joi.array().items(Joi.string().required()).default([]),
+      bid_ids: Joi.array().items(Joi.string()).default([]),
+      food_application_ids: Joi.array().items(Joi.string()).default([]),
+      event_vendor_application_ids: Joi.array().items(Joi.string()).default([]),
       award_selections: Joi.array().items(Joi.object({
         bid_id: Joi.string().required(),
         award_coverage: Joi.string().valid('REGULAR', 'VIP', 'BOTH').required(),

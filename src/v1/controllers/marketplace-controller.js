@@ -72,6 +72,7 @@ const {
 } = require('../../helper/marketplace-vendor-fee-refund');
 const {
   getCoordinatorAwardFeeAmount,
+  getFinalEventPaymentAmounts,
   getMarketplaceVendorApplicationCheckoutFeeAmount,
 } = require('../../helper/marketplace-regression-test-fees');
 const {
@@ -225,9 +226,19 @@ const COORDINATOR_AWARD_FEE_RATE = 0.015;
 const VENDOR_EVENT_PROCESSING_RATE = 0.02;
 const roundMoney = (value) => Number((Number(value || 0)).toFixed(2));
 const ACTIVE_EVENT_STATUSES = ['OPEN', 'REOPENED'];
+const REJECTION_EVENT_STATUSES = [...ACTIVE_EVENT_STATUSES, 'AWARDED'];
 const assertEventOpenForSubmissionDecision = (event) => {
   if (
     !ACTIVE_EVENT_STATUSES.includes(String(event?.status || '').toUpperCase()) ||
+    event?.vendor_applications_closed_at ||
+    (event?.event_close_date && new Date(event.event_close_date) <= new Date())
+  ) {
+    throw buildError('This event is no longer open for vendor submission decisions.', 409);
+  }
+};
+const assertEventOpenForRejectionDecision = (event) => {
+  if (
+    !REJECTION_EVENT_STATUSES.includes(String(event?.status || '').toUpperCase()) ||
     event?.vendor_applications_closed_at ||
     (event?.event_close_date && new Date(event.event_close_date) <= new Date())
   ) {
@@ -3872,25 +3883,6 @@ const finalizeFoodVendorAwardBatch = async ({
   const capacity = await getFoodVendorAwardState(event);
   const foodSelectionClosed = !isFoodVendorMarketplaceEvent(event) || capacity.remaining === 0;
 
-  if (foodSelectionClosed) {
-    await MarketplaceBidService.getModel().updateMany(
-      {
-        event_id: event.event_id,
-        bid_status: { $in: ['SUBMITTED', 'UNDER_REVIEW'] },
-        archived_at: null,
-      },
-      { $set: { bid_status: 'NOT_AWARDED' } }
-    );
-    await MarketplaceApplicationService.getModel().updateMany(
-      {
-        event_id: event.event_id,
-        application_status: { $in: ['SUBMITTED', 'UNDER_REVIEW'] },
-        archived_at: null,
-      },
-      { $set: { application_status: 'NOT_SELECTED' } }
-    );
-  }
-
   const marketplaceVendorNeedsFilled = await areMarketplaceVendorAwardNeedsFilled(event);
   const eventFullyAwarded = foodSelectionClosed && marketplaceVendorNeedsFilled;
 
@@ -3923,7 +3915,7 @@ const finalizeFoodVendorAwardBatch = async ({
 
   const selectedBidIds = selectedBids.map((bid) => bid.bid_id);
   await notifyBidAwardOutcomes(marketplaceEvent, selectedBidIds, {
-    selectionClosed: foodSelectionClosed,
+    selectionClosed: false,
   });
   for (const bid of selectedBids) {
     await sendCoordinatorFoodAwardSelectionEmail({
@@ -5401,8 +5393,8 @@ exports.declineBid = async (req, res, next) => {
     if (transition.idempotent) {
       return res.data({ marketplaceBid: bid }, 'Marketplace bid already declined');
     }
-    assertEventOpenForSubmissionDecision(event);
-    if (!ACTIVE_EVENT_STATUSES.includes(event.status) || !transition.eligible) {
+    assertEventOpenForRejectionDecision(event);
+    if (!transition.eligible) {
       throw buildError('This bid can no longer be declined.', 409);
     }
     const marketplaceBid = await MarketplaceBidService.update(
@@ -5440,8 +5432,8 @@ exports.declineApplication = async (req, res, next) => {
         'Marketplace application already not selected'
       );
     }
-    assertEventOpenForSubmissionDecision(event);
-    if (!ACTIVE_EVENT_STATUSES.includes(event.status) || !transition.eligible) {
+    assertEventOpenForRejectionDecision(event);
+    if (!transition.eligible) {
       throw buildError('This application can no longer be marked not selected.', 409);
     }
     const marketplaceApplication = await MarketplaceApplicationService.update(
@@ -7119,23 +7111,6 @@ exports.acceptApplication = async (req, res, next) => {
 
     const updatedCapacity = await getFoodVendorAwardState(event);
     if (updatedCapacity.remaining === 0) {
-      await MarketplaceBidService.getModel().updateMany(
-        {
-          event_id: event.event_id,
-          bid_status: { $in: ['SUBMITTED', 'UNDER_REVIEW'] },
-          archived_at: null,
-        },
-        { $set: { bid_status: 'NOT_AWARDED' } }
-      );
-      await MarketplaceApplicationService.getModel().updateMany(
-        {
-          event_id: event.event_id,
-          application_id: { $ne: application.application_id },
-          application_status: { $in: ['SUBMITTED', 'UNDER_REVIEW'] },
-          archived_at: null,
-        },
-        { $set: { application_status: 'NOT_SELECTED' } }
-      );
       if (await areMarketplaceVendorAwardNeedsFilled(event)) {
         event.status = 'AWARDED';
         await event.save();
@@ -7898,15 +7873,20 @@ exports.createFinalEventPayment = async (req, res, next) => {
       throw buildError('Selected awarded vendor is not available for final payment.', 400);
     }
 
-    const baseAmount = awardedBid
+    const awardedAmount = awardedBid
       ? roundMoney(awardedBid.full_bid_amount || 0)
       : roundMoney(event.budgeted_amount || 0);
-    if (baseAmount <= 0) {
+    if (awardedAmount <= 0) {
       throw buildError('Award amount is required before closing event for payment.', 400);
     }
 
-    const tipAmount = roundMoney(req.body.tip_amount || 0);
-    const totalAmount = roundMoney(baseAmount + tipAmount);
+    const requestedTipAmount = roundMoney(req.body.tip_amount || 0);
+    const {
+      baseAmount,
+      tipAmount,
+      totalAmount,
+      coordinatorPayoutAmount,
+    } = getFinalEventPaymentAmounts(awardedAmount, requestedTipAmount);
     const foodTruckId = awardedBid?.food_truck_id || awardedApplication?.food_truck_id || null;
 
     let marketplacePayment = await findActiveMarketplacePayment({
@@ -7933,7 +7913,7 @@ exports.createFinalEventPayment = async (req, res, next) => {
           fee_amount: 0,
           tip_amount: tipAmount,
           total_amount: totalAmount,
-          coordinator_payout_amount: totalAmount,
+          coordinator_payout_amount: coordinatorPayoutAmount,
           payment_status: 'PENDING',
         });
         await createPaymentAudit(marketplacePayment, req, 'CREATE');
@@ -7956,7 +7936,7 @@ exports.createFinalEventPayment = async (req, res, next) => {
       marketplacePayment.fee_amount = 0;
       marketplacePayment.tip_amount = tipAmount;
       marketplacePayment.total_amount = totalAmount;
-      marketplacePayment.coordinator_payout_amount = totalAmount;
+      marketplacePayment.coordinator_payout_amount = coordinatorPayoutAmount;
       await marketplacePayment.save();
     }
 

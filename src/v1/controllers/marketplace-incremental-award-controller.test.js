@@ -274,11 +274,11 @@ const awardApplication = async (controller, applicationId) => {
   const second = await award(controller, ['bid-2']);
   assert.equal(second.error, undefined);
   assert.equal(state.bids[1].bid_status, 'AWARDED');
-  assert.equal(state.bids[2].bid_status, 'NOT_AWARDED', 'remaining bid closes only when capacity fills');
+  assert.equal(state.bids[2].bid_status, 'SUBMITTED', 'untouched bid remains pending for an explicit coordinator decision');
   assert.equal(state.event.status, 'AWARDED');
   assert.equal(second.response.payload.remaining_food_vendor_awards, 0);
   assert.equal(state.questionArchives, 1);
-  assert.equal(state.outcomes.filter((message) => message.title.includes('not selected')).length, 1);
+  assert.equal(state.outcomes.filter((message) => message.title.includes('not selected')).length, 0);
 
   const overCapacity = await award(controller, ['bid-3']);
   assert.equal(overCapacity.error?.code, 409, 'capacity-closed event cannot accept another award');
@@ -296,7 +296,7 @@ const awardApplication = async (controller, applicationId) => {
   const legacyNextAward = await award(legacyController, ['bid-2']);
   assert.equal(legacyNextAward.error, undefined, 'a legacy partial AWARDED event is reconciled for its remaining slot');
   assert.equal(legacyState.bids[1].bid_status, 'AWARDED');
-  assert.equal(legacyState.bids[2].bid_status, 'NOT_AWARDED');
+  assert.equal(legacyState.bids[2].bid_status, 'SUBMITTED');
 
   const applicationState = createState();
   applicationState.bids = [];
@@ -317,7 +317,7 @@ const awardApplication = async (controller, applicationId) => {
   );
   const secondApplication = await awardApplication(applicationController, 'application-2');
   assert.equal(secondApplication.error, undefined);
-  assert.equal(applicationState.applications[2].application_status, 'NOT_SELECTED');
+  assert.equal(applicationState.applications[2].application_status, 'SUBMITTED');
   assert.equal(applicationState.event.status, 'AWARDED');
 
   const batchedFoodApplicationState = createState();
