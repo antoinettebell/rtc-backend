@@ -448,6 +448,57 @@ module.exports = {
     ),
   },
 
+  guestCheckoutTickets: {
+    body: Joi.object({
+      ga_quantity: Joi.number().integer().min(0).default(0),
+      vip_quantity: Joi.number().integer().min(0).default(0),
+      payment_method: Joi.string().valid('APPLE_PAY', 'GOOGLE_PAY').required(),
+      payment_data: Joi.alternatives().try(Joi.object().unknown(true), Joi.string()).required(),
+      idempotency_key: Joi.string().guid({ version: ['uuidv4'] }).required(),
+      purchaser: Joi.object({
+        first_name: Joi.string().trim().min(1).max(100).required(),
+        last_name: Joi.string().trim().min(1).max(100).required(),
+        email: Joi.string().trim().email().max(254).required(),
+        phone: Joi.string().trim().pattern(/^\+?[0-9() .-]{7,25}$/).required(),
+      }).required(),
+      billing_address: Joi.object({
+        line1: Joi.string().trim().required(),
+        city: Joi.string().trim().required(),
+        region: Joi.string().trim().length(2).required(),
+        postalCode: Joi.string().trim().required(),
+        country: Joi.string().trim().default('US'),
+      }).required(),
+    }).custom((value, helpers) =>
+      value.ga_quantity + value.vip_quantity > 0
+        ? value
+        : helpers.message({ custom: 'At least one ticket is required' })
+    ),
+  },
+
+  guestQuoteTickets: {
+    body: Joi.object({
+      ga_quantity: Joi.number().integer().min(0).default(0),
+      vip_quantity: Joi.number().integer().min(0).default(0),
+      purchaser: Joi.object({
+        first_name: Joi.string().trim().min(1).max(100).required(),
+        last_name: Joi.string().trim().min(1).max(100).required(),
+        email: Joi.string().trim().email().max(254).required(),
+        phone: Joi.string().trim().pattern(/^\+?[0-9() .-]{7,25}$/).required(),
+      }).required(),
+      billing_address: Joi.object({
+        line1: Joi.string().trim().required(),
+        city: Joi.string().trim().required(),
+        region: Joi.string().trim().length(2).required(),
+        postalCode: Joi.string().trim().required(),
+        country: Joi.string().trim().default('US'),
+      }).required(),
+    }).custom((value, helpers) =>
+      value.ga_quantity + value.vip_quantity > 0
+        ? value
+        : helpers.message({ custom: 'At least one ticket is required' })
+    ),
+  },
+
   validateTicket: {
     body: Joi.object({
       ticket_token: Joi.string().trim().min(20).required(),

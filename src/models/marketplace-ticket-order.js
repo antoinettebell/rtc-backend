@@ -8,7 +8,7 @@ const mSchema = mongoose.Schema(
     customer_user_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'users',
-      required: true,
+      default: null,
       index: true,
     },
     idempotency_key: { type: String, required: true },

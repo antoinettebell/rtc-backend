@@ -33,6 +33,9 @@ const {
 const SmsHelper = require('../../helper/sms-helper');
 const MailHelper = require('../../helper/mail-helper');
 const { isScannerAvailable } = require('../../helper/event-ticket-helper');
+const {
+  sanitizePublicMarketplaceEvent,
+} = require('../../helper/public-marketplace-event-helper');
 
 const money = (value) => Number(Number(value || 0).toFixed(2));
 const buildError = (message, code = 400) => Object.assign(new Error(message), { code });
@@ -45,6 +48,22 @@ const addressFromEvent = (event) => ({
   country: 'US',
   latitude: event.latitude,
   longitude: event.longitude,
+});
+
+const getTicketInvitationEvent = (shareToken) => MarketplaceEventModel.findOne({
+  ticket_share_token_hash: hashTicketToken(shareToken),
+  ticket_sales_enabled: true,
+  ticket_sales_closed_at: null,
+  status: { $nin: ['DRAFT', 'CANCELLED', 'CLOSED'] },
+});
+
+const getGuestPurchaser = (purchaser = {}) => ({
+  _id: null,
+  firstName: purchaser.first_name,
+  lastName: purchaser.last_name,
+  email: purchaser.email,
+  countryCode: '',
+  mobileNumber: purchaser.phone,
 });
 
 const responseTicketsForOrder = async (order) => {
@@ -60,7 +79,7 @@ const responseTicketsForOrder = async (order) => {
   });
 };
 
-const buildTicketQuote = async ({ event, user, gaQuantity, vipQuantity, billingAddress }) => {
+const buildTicketQuote = async ({ event, customerReference, gaQuantity, vipQuantity, billingAddress }) => {
   const gaAmounts = gaQuantity
     ? calculateTicketAmounts({ unitPrice: event.ga_ticket_price, quantity: gaQuantity })
     : null;
@@ -70,7 +89,8 @@ const buildTicketQuote = async ({ event, user, gaQuantity, vipQuantity, billingA
   const ticketSubtotal = money((gaAmounts?.ticketSubtotal || 0) + (vipAmounts?.ticketSubtotal || 0));
   const customerProcessingFee = money((gaAmounts?.customerProcessingFee || 0) + (vipAmounts?.customerProcessingFee || 0));
   const coordinatorProcessingFee = money((gaAmounts?.coordinatorProcessingFee || 0) + (vipAmounts?.coordinatorProcessingFee || 0));
-  const transactionCode = `RTC-TICKET-${Date.now()}-${String(user._id).slice(-6)}`;
+  const safeCustomerReference = String(customerReference || 'GUEST').replace(/[^a-zA-Z0-9]/g, '');
+  const transactionCode = `RTC-TICKET-${Date.now()}-${safeCustomerReference.slice(-6) || 'GUEST'}`;
   const exemptionApproved = event.tax_exemption_status === 'APPROVED' &&
     (!event.tax_exemption_expires_at || event.tax_exemption_expires_at > new Date());
   const entityUseCode = exemptionApproved
@@ -85,7 +105,7 @@ const buildTicketQuote = async ({ event, user, gaQuantity, vipQuantity, billingA
     ticketAmount: ticketSubtotal,
     serviceFee: customerProcessingFee,
     admissionsTaxCode: getAdmissionsTaxCode(event.event_type),
-    customerCode: String(user._id),
+    customerCode: String(customerReference || 'GUEST'),
     merchantSellerIdentifier: String(event.customer_user_id),
     entityUseCode,
     transactionCode,
@@ -134,12 +154,24 @@ exports.quote = async (req, res, next) => {
     }
     const quote = await buildTicketQuote({
       event,
-      user: req.user,
+      customerReference: req.user._id || req.user.email,
       gaQuantity,
       vipQuantity,
       billingAddress: req.body.billing_address,
     });
     return res.data({ quote }, 'Ticket quote calculated');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.guestQuote = async (req, res, next) => {
+  try {
+    const event = await getTicketInvitationEvent(req.params.shareToken).select('event_id').lean();
+    if (!event) throw buildError('Ticket invitation is unavailable', 404);
+    req.params.eventId = event.event_id;
+    req.user = getGuestPurchaser(req.body.purchaser);
+    return exports.quote(req, res, next);
   } catch (error) {
     return next(error);
   }
@@ -173,7 +205,7 @@ exports.checkout = async (req, res, next) => {
 
     const quote = await buildTicketQuote({
       event,
-      user: req.user,
+      customerReference: req.user._id || req.user.email,
       gaQuantity,
       vipQuantity,
       billingAddress: req.body.billing_address,
@@ -221,7 +253,7 @@ exports.checkout = async (req, res, next) => {
       email: req.user.email,
       subTotal: money(ticketSubtotal + customerProcessingFee),
       taxAmount: salesTax,
-      userId: req.user._id,
+      userId: req.user._id || order.ticket_order_id,
     });
     if (!charge.success) {
       order.status = 'PAYMENT_FAILED';
@@ -314,6 +346,18 @@ exports.checkout = async (req, res, next) => {
       }
       return next(buildError('This ticket purchase is already being processed. Check My Tickets before retrying.', 409));
     }
+    return next(error);
+  }
+};
+
+exports.guestCheckout = async (req, res, next) => {
+  try {
+    const event = await getTicketInvitationEvent(req.params.shareToken).select('event_id').lean();
+    if (!event) throw buildError('Ticket invitation is unavailable', 404);
+    req.params.eventId = event.event_id;
+    req.user = getGuestPurchaser(req.body.purchaser);
+    return exports.checkout(req, res, next);
+  } catch (error) {
     return next(error);
   }
 };
@@ -772,16 +816,13 @@ exports.coordinatorTicketSummary = async (req, res, next) => {
 
 exports.publicTicketInvitation = async (req, res, next) => {
   try {
-    const event = await MarketplaceEventModel.findOne({
-      ticket_share_token_hash: hashTicketToken(req.params.shareToken),
-      ticket_sales_enabled: true,
-      ticket_sales_closed_at: null,
-      status: { $nin: ['DRAFT', 'CANCELLED', 'CLOSED'] },
-    }).select('event_id event_name event_date event_city event_state').lean();
+    const event = await getTicketInvitationEvent(req.params.shareToken)
+      .select('event_id event_name event_date event_city event_state')
+      .lean();
     if (!event) return res.status(404).send('Ticket invitation is unavailable');
     const deepLink = `rtc-customer://invite/${encodeURIComponent(req.params.shareToken)}`;
     res.set({ 'Cache-Control': 'no-store, private', 'X-Content-Type-Options': 'nosniff' });
-    return res.type('html').send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>RTC Event Invitation</title><style>body{font-family:-apple-system,sans-serif;background:#0f172a;color:#fff;padding:28px}.card{max-width:480px;margin:auto;background:#fff;color:#172033;padding:28px;border-radius:22px}a{display:block;text-align:center;background:#ea580c;color:#fff;padding:16px;border-radius:14px;text-decoration:none;font-weight:800}</style></head><body><main class="card"><p>ROUND DA' CORNER</p><h1>${String(event.event_name).replace(/[<>&]/g, '')}</h1><p>${String(event.event_city || '')}, ${String(event.event_state || '')}</p><p>Open Round Da' Corner, sign in or create your customer profile, then select your tickets.</p><a href="${deepLink}">Open Ticket Checkout</a></main></body></html>`);
+    return res.type('html').send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>RTC Event Invitation</title><style>body{font-family:-apple-system,sans-serif;background:#0f172a;color:#fff;padding:28px}.card{max-width:480px;margin:auto;background:#fff;color:#172033;padding:28px;border-radius:22px}a{display:block;text-align:center;background:#ea580c;color:#fff;padding:16px;border-radius:14px;text-decoration:none;font-weight:800}</style></head><body><main class="card"><p>ROUND DA' CORNER</p><h1>${String(event.event_name).replace(/[<>&]/g, '')}</h1><p>${String(event.event_city || '')}, ${String(event.event_state || '')}</p><p>Open Round Da' Corner, enter your contact information, then select your tickets.</p><a href="${deepLink}">Get Tickets</a></main></body></html>`);
   } catch (error) {
     return next(error);
   }
@@ -789,14 +830,12 @@ exports.publicTicketInvitation = async (req, res, next) => {
 
 exports.getTicketInvitationEvent = async (req, res, next) => {
   try {
-    const event = await MarketplaceEventModel.findOne({
-      ticket_share_token_hash: hashTicketToken(req.params.shareToken),
-      ticket_sales_enabled: true,
-      ticket_sales_closed_at: null,
-      status: { $nin: ['DRAFT', 'CANCELLED', 'CLOSED'] },
-    }).lean();
+    const event = await getTicketInvitationEvent(req.params.shareToken).lean();
     if (!event) throw buildError('Ticket invitation is unavailable', 404);
-    return res.data({ marketplaceEvent: event }, 'Private ticket invitation');
+    return res.data(
+      { marketplaceEvent: sanitizePublicMarketplaceEvent(event) },
+      'Private ticket invitation'
+    );
   } catch (error) {
     return next(error);
   }

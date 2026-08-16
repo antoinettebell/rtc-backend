@@ -24,6 +24,7 @@ const {
   MenuItemValidation,
   TaxRatesValidation,
   CouponValidation,
+  MarketplaceValidation,
   validate,
 } = require('../validations');
 const authenticate = require('../../middleware/authenticate');
@@ -204,8 +205,21 @@ router.post(
 
 router.get(
   '/marketplace/ticket-invitations/:shareToken',
-  authenticate,
   MarketplaceTicketController.getTicketInvitationEvent
+);
+
+router.post(
+  '/marketplace/ticket-invitations/:shareToken/quote',
+  publicReviewRateLimit,
+  validate(MarketplaceValidation.guestQuoteTickets),
+  MarketplaceTicketController.guestQuote
+);
+
+router.post(
+  '/marketplace/ticket-invitations/:shareToken/checkout',
+  publicReviewRateLimit,
+  validate(MarketplaceValidation.guestCheckoutTickets),
+  MarketplaceTicketController.guestCheckout
 );
 
 /** [GET] /api/v1/public/diet */

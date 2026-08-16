@@ -13,6 +13,27 @@ assert(publicDetail, 'Public event-detail route must exist');
 assert.equal(publicDetail.route.stack.length, 1, 'Public event-detail GET must not authenticate');
 assert.notEqual(publicDetail.route.stack[0].handle.name, 'Authenticate');
 
+const ticketInvitation = findRoute(
+  publicRouter,
+  '/marketplace/ticket-invitations/:shareToken',
+  'get'
+);
+const guestTicketQuote = findRoute(
+  publicRouter,
+  '/marketplace/ticket-invitations/:shareToken/quote',
+  'post'
+);
+const guestTicketCheckout = findRoute(
+  publicRouter,
+  '/marketplace/ticket-invitations/:shareToken/checkout',
+  'post'
+);
+assert(ticketInvitation && guestTicketQuote && guestTicketCheckout, 'Guest ticket routes must exist');
+assert.equal(ticketInvitation.route.stack.length, 1, 'Ticket invitation GET must not authenticate');
+assert.notEqual(ticketInvitation.route.stack[0].handle.name, 'Authenticate');
+assert.notEqual(guestTicketQuote.route.stack[0].handle.name, 'Authenticate');
+assert.notEqual(guestTicketCheckout.route.stack[0].handle.name, 'Authenticate');
+
 const ticketClick = findRoute(publicRouter, '/marketplace/events/:eventId/ticket-click', 'post');
 assert.equal(ticketClick.route.stack[0].handle.name, 'Authenticate');
 

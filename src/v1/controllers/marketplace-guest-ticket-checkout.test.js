@@ -1,0 +1,185 @@
+const assert = require('assert');
+const Module = require('module');
+const path = require('path');
+
+const controllerPath = path.join(__dirname, 'marketplace-ticket-controller.js');
+const originalLoad = Module._load;
+
+const event = {
+  event_id: 'event-guest-ticket',
+  event_name: 'Public Festival',
+  event_city: 'Buffalo',
+  event_state: 'NY',
+  customer_user_id: 'coordinator-1',
+  ticket_sales_enabled: true,
+  ticket_sales_closed_at: null,
+  status: 'OPEN',
+  ga_ticket_price: 10,
+  ga_ticket_quantity: 100,
+  ga_tickets_sold: 0,
+  ga_tickets_reserved: 0,
+  vip_ticket_price: 25,
+  vip_ticket_quantity: 10,
+  vip_tickets_sold: 0,
+  vip_tickets_reserved: 0,
+  tax_exemption_status: 'NOT_REQUESTED',
+  event_type: 'Festival',
+};
+
+let createdOrderPayload;
+let chargedPayment;
+let smsPayload;
+let emailRecipient;
+
+const queryFor = (value) => ({
+  select() { return this; },
+  lean: async () => value,
+});
+
+const orderModel = {
+  findOne: async () => null,
+  create: async (payload) => {
+    createdOrderPayload = payload;
+    return {
+      ...payload,
+      ticket_order_id: 'guest-order-1',
+      save: async () => undefined,
+    };
+  },
+};
+
+const models = {
+  MarketplaceEventModel: {
+    findOne: () => queryFor(event),
+  },
+  MarketplaceTicketOrderModel: orderModel,
+  MarketplaceTicketModel: {},
+  MarketplaceScannerSessionModel: {},
+  MarketplaceAttachmentModel: {},
+  UserModel: {},
+};
+
+const ticketService = {
+  reserveEventInventory: async () => event,
+  reservationExpiry: () => new Date('2099-01-01T00:00:00.000Z'),
+  releaseReservation: async () => undefined,
+  confirmReservation: async () => undefined,
+  createTicketsForPaidOrder: async () => [{
+    ticket: { attendee_label: 'Guest 1', ticket_type: 'GA' },
+    url: 'https://tickets.example/t/one',
+  }],
+};
+
+Module._load = (request, parent, isMain) => {
+  if (parent?.filename === controllerPath) {
+    if (request === '../../models') return models;
+    if (request === '../services/marketplace-ticket-service') return ticketService;
+    if (request === '../../helper/payment-helper') return {
+      chargePaymentUnified: async (payload) => {
+        chargedPayment = payload;
+        return { success: true, transactionId: 'transaction-1' };
+      },
+    };
+    if (request === '../../helper/tax-helper') return {
+      calculateEventTicketTax: async () => ({ success: true, totalTax: 0 }),
+      commitAvalaraTransaction: async () => ({ success: true }),
+    };
+    if (request === '../../helper/event-ticket-helper') return {
+      calculateTicketAmounts: ({ unitPrice, quantity }) => ({
+        ticketSubtotal: Number(unitPrice) * Number(quantity),
+        customerProcessingFee: 0,
+        coordinatorProcessingFee: 0,
+      }),
+      getAdmissionsTaxCode: () => 'P0000000',
+      getEntityUseCode: () => null,
+      cancellationDeadline: () => new Date(),
+      assertInventoryAvailable: () => undefined,
+      encodeWalletPaymentToken: () => 'opaque-token',
+      isScannerAvailable: () => true,
+    };
+    if (request === '../../helper/ticket-token-helper') return {
+      hashTicketToken: (token) => `hashed-${token}`,
+      createTicketToken: () => ({ token: 'token', tokenHash: 'hash' }),
+      buildPublicTicketUrl: () => 'https://tickets.example/t/one',
+    };
+    if (request === '../../config') return { server: { publicTicketBaseURL: 'https://tickets.example' } };
+    if (request === '../../helper/aws') return {};
+    if (request === '../../helper/encryption') return {};
+    if (request === '../../helper/public-ticket-page') return {};
+    if (request === '../../helper/sms-helper') return {
+      sendSms: async (payload) => { smsPayload = payload; return { sent: true }; },
+    };
+    if (request === '../../helper/mail-helper') return {
+      sendMail: async (recipient) => { emailRecipient = recipient; return { sent: true }; },
+    };
+    if (request === '../../helper/public-marketplace-event-helper') return {
+      sanitizePublicMarketplaceEvent: (value) => value,
+    };
+  }
+  return originalLoad(request, parent, isMain);
+};
+
+delete require.cache[require.resolve(controllerPath)];
+const controller = require(controllerPath);
+Module._load = originalLoad;
+
+const requestBody = {
+  ga_quantity: 1,
+  vip_quantity: 0,
+  purchaser: {
+    first_name: 'Guest',
+    last_name: 'Buyer',
+    email: 'guest@example.com',
+    phone: '+15555550123',
+  },
+  billing_address: {
+    line1: '1 Main Street',
+    city: 'Buffalo',
+    region: 'NY',
+    postalCode: '14201',
+    country: 'US',
+  },
+  payment_method: 'APPLE_PAY',
+  payment_data: { token: 'wallet-token' },
+  idempotency_key: '10f38a80-8ee6-4c10-a28c-03bd6254917a',
+};
+
+(async () => {
+  let response;
+  let error;
+  await controller.guestCheckout(
+    { params: { shareToken: 'private-share-token' }, body: requestBody },
+    { data: (payload, message) => { response = { payload, message }; } },
+    (nextError) => { error = nextError; }
+  );
+
+  assert.equal(error, undefined);
+  assert.equal(response.message, 'Ticket purchase confirmed');
+  assert.equal(createdOrderPayload.customer_user_id, null, 'guest checkout does not manufacture an account');
+  assert.equal(createdOrderPayload.purchaser_name, 'Guest Buyer');
+  assert.equal(createdOrderPayload.purchaser_email, 'guest@example.com');
+  assert.equal(createdOrderPayload.purchaser_phone, '+15555550123');
+  assert.equal(chargedPayment.userId, 'guest-order-1', 'processor reference uses the durable ticket order');
+  assert.equal(chargedPayment.email, 'guest@example.com');
+  assert.equal(smsPayload.to, '+15555550123');
+  assert.equal(emailRecipient, 'guest@example.com');
+
+  let html;
+  await controller.publicTicketInvitation(
+    { params: { shareToken: 'private-share-token' } },
+    {
+      set: () => undefined,
+      type: () => ({ send: (value) => { html = value; } }),
+      status: () => ({ send: () => undefined }),
+    },
+    (nextError) => { throw nextError; }
+  );
+  assert.match(html, />Get Tickets<\/a>/);
+  assert.doesNotMatch(html, /sign in|create your customer profile/i);
+
+  console.log('marketplace guest ticket checkout controller tests passed');
+})().catch((error) => {
+  Module._load = originalLoad;
+  console.error(error);
+  process.exitCode = 1;
+});
