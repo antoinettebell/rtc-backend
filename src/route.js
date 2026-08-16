@@ -7,6 +7,10 @@ const { OrderController, MarketplaceTicketController } = require('./v1/controlle
 const router = express.Router();
 const { server } = require('./config');
 const { renderPublicReviewPage } = require('./helper/public-review-page');
+const {
+  sendAppleAppSiteAssociation,
+  sendAndroidAssetLinks,
+} = require('./helper/mobile-app-association');
 
 /**
  * Server status route
@@ -16,6 +20,13 @@ router.get('/', (req, res) => {
 });
 
 router.get('/review', renderPublicReviewPage);
+
+router.get(
+  '/.well-known/apple-app-site-association',
+  sendAppleAppSiteAssociation
+);
+router.get('/apple-app-site-association', sendAppleAppSiteAssociation);
+router.get('/.well-known/assetlinks.json', sendAndroidAssetLinks);
 
 router.get('/t/:token', MarketplaceTicketController.publicTicketPage);
 router.get('/events/:shareToken', MarketplaceTicketController.publicTicketInvitation);
