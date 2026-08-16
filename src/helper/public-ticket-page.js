@@ -12,7 +12,7 @@ const pageShell = ({ title, body, scripts = '' }) => `<!doctype html>
 *{box-sizing:border-box}body{margin:0;background:#0f172a;color:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}.wrap{width:min(100% - 28px,480px);margin:auto;padding:24px 0}.card{background:#fff;color:#172033;border-radius:22px;padding:24px;box-shadow:0 18px 48px #02061766}.brand{color:#f97316;font-weight:800;letter-spacing:.04em}.muted{color:#64748b}.pill{display:inline-block;padding:6px 11px;border-radius:999px;background:#fff7ed;color:#c2410c;font-weight:700}.qr{display:flex;justify-content:center;padding:22px 0}.status{padding:14px;border-radius:12px;text-align:center;font-weight:800;margin-top:18px}.active{background:#dcfce7;color:#166534}.bad{background:#fee2e2;color:#991b1b}.button{width:100%;border:0;border-radius:14px;padding:15px;background:#ea580c;color:white;font-size:16px;font-weight:800}.reader{overflow:hidden;border-radius:16px;background:#020617}.result{padding:16px;border-radius:14px;margin:18px 0;text-align:center;font-weight:800;display:none}.result:before{display:block;font-size:72px;line-height:1;margin-bottom:10px}.success{display:block;background:#dcfce7;color:#166534}.success:before{content:"✓"}.error{display:block;background:#fee2e2;color:#991b1b}.error:before{content:"✕"}.processing{display:block;background:#fef3c7;color:#92400e}.processing:before{content:"…"}
 </style></head><body>${body}${scripts}</body></html>`;
 
-const renderTicketPage = ({ ticket, event, ticketUrl }) => {
+const renderTicketPage = ({ ticket, event, qrDataUrl }) => {
   const active = ticket.status === 'ACTIVE';
   const statusLabel = ticket.status.replaceAll('_', ' ');
   return pageShell({
@@ -23,14 +23,13 @@ const renderTicketPage = ({ ticket, event, ticketUrl }) => {
       ticket.attendee_label
     )}</h2><p class="muted">${escapeHtml(event.event_address)}, ${escapeHtml(
       event.event_city
-    )}, ${escapeHtml(event.event_state)}</p><div id="qr" class="qr"></div><div class="status ${
+    )}, ${escapeHtml(event.event_state)}</p><div id="qr" class="qr">${
+      active && qrDataUrl
+        ? `<img src="${escapeHtml(qrDataUrl)}" width="240" height="240" alt="Ticket QR code">`
+        : ''
+    }</div><div class="status ${
       active ? 'active' : 'bad'
     }">${escapeHtml(statusLabel)}</div><p class="muted">Present this QR code at event check-in. Each ticket may be admitted once.</p></div></main>`,
-    scripts: active
-      ? `<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script><script>new QRCode(document.getElementById('qr'),{text:${JSON.stringify(
-          ticketUrl
-        )},width:240,height:240,correctLevel:QRCode.CorrectLevel.H});</script>`
-      : '',
   });
 };
 

@@ -259,6 +259,7 @@ const createState = ({ bidStatus = null, applicationStatus = null, paymentStatus
     });
     assert.equal(result.error, undefined);
     assert.equal(state.bid.bid_status, 'NOT_AWARDED');
+    assert.ok(state.bid.award_revoked_at instanceof Date);
     assert.equal(state.event.status, 'REOPENED');
     assert.equal(state.counters.bidSaves, 1);
     assert.equal(state.counters.notifications, 1);
@@ -314,6 +315,8 @@ const createState = ({ bidStatus = null, applicationStatus = null, paymentStatus
     assert.equal(state.payment.payment_status, 'REFUNDED');
     assert.equal(state.bid.bid_status, 'NOT_AWARDED');
     assert.equal(state.application.application_status, 'NOT_SELECTED');
+    assert.ok(state.bid.award_revoked_at instanceof Date);
+    assert.ok(state.application.award_revoked_at instanceof Date);
     assert.equal(state.counters.notifications, 1);
   }
 
@@ -364,6 +367,7 @@ const createState = ({ bidStatus = null, applicationStatus = null, paymentStatus
     assert.equal(state.payment.payment_status, 'CANCELLED');
     assert.equal(state.application.application_status, 'NOT_SELECTED');
     assert.equal(state.application.payment_status, 'CANCELLED');
+    assert.ok(state.application.award_revoked_at instanceof Date);
     assert.equal(state.bid.bid_status, 'NOT_AWARDED');
     assert.equal(state.counters.paymentUpdates, 1);
     assert.equal(state.counters.applicationSaves, 1);

@@ -37,6 +37,7 @@ const schema = mongoose.Schema({
   governance_accepted_at: { type: Date, required: true },
   accepted_ip: { type: String, default: null },
   status: { type: String, enum: ['SUBMITTED', 'UNDER_REVIEW', 'AWARDED', 'NOT_SELECTED', 'PAYMENT_DUE', 'PAID', 'WITHDRAWN'], default: 'SUBMITTED', index: true },
+  award_revoked_at: { type: Date, default: null, index: true },
   withdrawn_at: { type: Date, default: null },
   payment_id: { type: String, default: null, index: true },
   coordinator_details_email_status: { type: String, enum: ['PENDING', 'SENDING', 'SENT', 'RETRYABLE'], default: 'PENDING', index: true },

@@ -60,6 +60,12 @@ const {
   sanitizeMarketplaceContactForCoordinator,
 } = require('../../helper/marketplace-vendor-contact-helper');
 const {
+  getUnlockedMarketplaceCoordinatorContact,
+} = require('../../helper/marketplace-coordinator-contact');
+const {
+  applyMarketplaceEventLocationPrivacy,
+} = require('../../helper/marketplace-event-location-privacy');
+const {
   buildVendorEventCloseState,
   getMarketplaceEventTiming,
 } = require('../../helper/marketplace-event-close-helper');
@@ -1202,6 +1208,7 @@ const getMarketplaceUnlockState = ({ event, bid = null, application = null }) =>
   return {
     scenario,
     details_unlocked: !!detailsUnlocked,
+    location_unlocked: !!matchSatisfied,
     obligations: {
       match_satisfied: !!matchSatisfied,
       coordinator_payment_satisfied: !!coordinatorPaymentSatisfied,
@@ -1792,6 +1799,7 @@ const redactLockedMarketplaceEvent = (event, unlockState, { fullAccess = false }
   const marketplace_unlock = unlockState || {
     scenario: getPaymentScenario(plainEvent),
     details_unlocked: false,
+    location_unlocked: false,
     obligations: {
       match_satisfied: false,
       coordinator_payment_satisfied: false,
@@ -1807,23 +1815,14 @@ const redactLockedMarketplaceEvent = (event, unlockState, { fullAccess = false }
     };
   }
 
-  const redacted = {
+  let redacted = {
     ...plainEvent,
     marketplace_unlock,
-    exact_address_locked: true,
     contracts_locked: true,
     logistics_locked: true,
   };
 
   [
-    'event_address',
-    'formatted_address',
-    'geocoded_address',
-    'latitude',
-    'longitude',
-    'place_id',
-    'geocoding_provider',
-    'geocoded_at',
     'agreement_envelope_id',
     'agreement_sent_at',
     'agreement_signed_at',
@@ -1890,6 +1889,10 @@ const redactLockedMarketplaceRecord = (
     'coordinator_documents',
   ].forEach((field) => {
     delete redacted[field];
+  });
+
+  redacted = applyMarketplaceEventLocationPrivacy(redacted, {
+    locationUnlocked: marketplace_unlock.location_unlocked,
   });
 
   if (redacted.vendor_user_id && typeof redacted.vendor_user_id === 'object') {
@@ -2425,6 +2428,13 @@ const buildVendorSubmissionNotification = ({
 const getVendorSubmissionNotificationCopy = (status, submissionType) => {
   const normalizedStatus = String(status || '').toUpperCase();
   const label = submissionType === 'application' ? 'application' : 'bid';
+
+  if (normalizedStatus === 'REVOKED') {
+    return {
+      title: `Event ${label} award revoked`,
+      subtitle: 'Open the event to review the update.',
+    };
+  }
 
   if (['AWARDED', 'ACCEPTED', 'CONFIRMED'].includes(normalizedStatus)) {
     return {
@@ -3295,6 +3305,18 @@ const attachEventsToBids = async (bids = [], options = {}) => {
     acc[event.event_id] = event;
     return acc;
   }, {});
+  const coordinatorIds = [...new Set(events.map((event) => event.customer_user_id).filter(Boolean).map(String))];
+  const coordinators = coordinatorIds.length
+    ? await UserService.getByData(
+        { _id: { $in: coordinatorIds } },
+        { lean: true },
+        'firstName lastName email mobileNumber countryCode'
+      )
+    : [];
+  const coordinatorById = coordinators.reduce((acc, coordinator) => {
+    acc[String(coordinator._id)] = coordinator;
+    return acc;
+  }, {});
 
   return bids.map((bid) => {
     const event = eventById[bid.event_id] || null;
@@ -3305,12 +3327,20 @@ const attachEventsToBids = async (bids = [], options = {}) => {
       options.redactRecord === false
         ? toPlainObject(bid)
         : redactLockedMarketplaceRecord(bid, unlockState, options);
+    const visibleEvent = event
+      ? redactLockedMarketplaceEvent(event, unlockState, options)
+      : null;
+    if (visibleEvent && unlockState?.details_unlocked) {
+      const coordinator = coordinatorById[String(event.customer_user_id)];
+      visibleEvent.coordinator_contact = getUnlockedMarketplaceCoordinatorContact({
+        coordinator,
+        detailsUnlocked: unlockState.details_unlocked,
+      });
+    }
     return {
       ...visibleBid,
       marketplace_unlock: unlockState,
-      marketplaceEvent: event
-        ? redactLockedMarketplaceEvent(event, unlockState, options)
-        : null,
+      marketplaceEvent: visibleEvent,
     };
   });
 };
@@ -3331,6 +3361,18 @@ const attachEventsToApplications = async (applications = [], options = {}) => {
     acc[event.event_id] = event;
     return acc;
   }, {});
+  const coordinatorIds = [...new Set(events.map((event) => event.customer_user_id).filter(Boolean).map(String))];
+  const coordinators = coordinatorIds.length
+    ? await UserService.getByData(
+        { _id: { $in: coordinatorIds } },
+        { lean: true },
+        'firstName lastName email mobileNumber countryCode'
+      )
+    : [];
+  const coordinatorById = coordinators.reduce((acc, coordinator) => {
+    acc[String(coordinator._id)] = coordinator;
+    return acc;
+  }, {});
 
   return applications.map((application) => {
     const event = eventById[application.event_id] || null;
@@ -3341,12 +3383,20 @@ const attachEventsToApplications = async (applications = [], options = {}) => {
       options.redactRecord === false
         ? toPlainObject(application)
         : redactLockedMarketplaceRecord(application, unlockState, options);
+    const visibleEvent = event
+      ? redactLockedMarketplaceEvent(event, unlockState, options)
+      : null;
+    if (visibleEvent && unlockState?.details_unlocked) {
+      const coordinator = coordinatorById[String(event.customer_user_id)];
+      visibleEvent.coordinator_contact = getUnlockedMarketplaceCoordinatorContact({
+        coordinator,
+        detailsUnlocked: unlockState.details_unlocked,
+      });
+    }
     return {
       ...visibleApplication,
       marketplace_unlock: unlockState,
-      marketplaceEvent: event
-        ? redactLockedMarketplaceEvent(event, unlockState, options)
-        : null,
+      marketplaceEvent: visibleEvent,
     };
   });
 };
@@ -5948,13 +5998,14 @@ exports.vendorNotificationSummary = async (req, res, next) => {
 
     const bidNotifications = bids
       .map((bid) => {
-        const copy = getVendorSubmissionNotificationCopy(bid.bid_status, 'bid');
+        const displayStatus = bid.award_revoked_at ? 'REVOKED' : bid.bid_status;
+        const copy = getVendorSubmissionNotificationCopy(displayStatus, 'bid');
         if (!copy) return null;
         return buildVendorSubmissionNotification({
           id: `marketplace-bid-${bid.bid_id}-${bid.bid_status}`,
           type: 'MARKETPLACE_BID',
           event: eventById[String(bid.event_id)] || {},
-          status: bid.bid_status,
+          status: displayStatus,
           title: copy.title,
           subtitle: copy.subtitle,
           bidId: bid.bid_id,
@@ -5964,8 +6015,11 @@ exports.vendorNotificationSummary = async (req, res, next) => {
 
     const applicationNotifications = applications
       .map((application) => {
+        const displayStatus = application.award_revoked_at
+          ? 'REVOKED'
+          : application.application_status;
         const copy = getVendorSubmissionNotificationCopy(
-          application.application_status,
+          displayStatus,
           'application'
         );
         if (!copy) return null;
@@ -5973,7 +6027,7 @@ exports.vendorNotificationSummary = async (req, res, next) => {
           id: `marketplace-application-${application.application_id}-${application.application_status}`,
           type: 'MARKETPLACE_APPLICATION',
           event: eventById[String(application.event_id)] || {},
-          status: application.application_status,
+          status: displayStatus,
           title: copy.title,
           subtitle: copy.subtitle,
           applicationId: application.application_id,
@@ -7261,12 +7315,14 @@ exports.revokeAward = async (req, res, next) => {
 
     if (linkedApplication) {
       linkedApplication.application_status = 'NOT_SELECTED';
+      linkedApplication.award_revoked_at = new Date();
       linkedApplication.payment_status = 'CANCELLED';
       linkedApplication.archived_at = new Date();
       linkedApplication.archived_reason = req.body?.reason || 'Award revoked by coordinator';
       await linkedApplication.save();
     }
     bid.bid_status = 'NOT_AWARDED';
+    bid.award_revoked_at = new Date();
     bid.awarded_coverage = null;
     bid.linked_application_id = null;
     bid.combined_vendor_fee_waived = false;
@@ -7370,6 +7426,7 @@ exports.revokeApplicationAward = async (req, res, next) => {
     }
 
     application.application_status = 'NOT_SELECTED';
+    application.award_revoked_at = new Date();
     application.payment_status = 'CANCELLED';
     application.payment_due_at = null;
     application.archived_at = new Date();

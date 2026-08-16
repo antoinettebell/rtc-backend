@@ -11,11 +11,12 @@ const event = {
 const ticketHtml = renderTicketPage({
   event,
   ticket: { ticket_type: 'GA', attendee_label: 'Guest 1', status: 'ACTIVE' },
-  ticketUrl: 'https://tickets.roundthecornerapp.com/t/secret',
+  qrDataUrl: 'data:image/png;base64,secure-ticket-qr',
 });
 assert.match(ticketHtml, /&lt;Summer &amp; Music&gt;/);
 assert.doesNotMatch(ticketHtml, /<Summer & Music>/);
-assert.match(ticketHtml, /qrcodejs@1\.0\.0/);
+assert.match(ticketHtml, /<img src="data:image\/png;base64,secure-ticket-qr"/);
+assert.doesNotMatch(ticketHtml, /qrcodejs|new QRCode/);
 
 const scannerHtml = renderScannerPage({ event, sessionToken: 'scanner-secret' });
 assert.match(scannerHtml, /html5-qrcode@2\.3\.8/);

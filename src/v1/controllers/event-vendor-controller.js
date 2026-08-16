@@ -68,13 +68,16 @@ const {
 const {
   getMarketplaceVendorApplicationCheckoutFeeAmount,
 } = require('../../helper/marketplace-regression-test-fees');
+const {
+  getUnlockedMarketplaceCoordinatorContact,
+} = require('../../helper/marketplace-coordinator-contact');
 
 const TYPES = ['MERCHANDISE', 'SERVICE', 'OTHER'];
 const EVENT_VENDOR_PUBLIC_EVENT_FIELDS = [
   'event_id', 'event_name', 'event_description', 'event_type', 'status',
   'event_date', 'event_start_date', 'event_end_date', 'event_start_time',
   'event_end_time', 'event_time', 'event_close_time', 'event_timezone',
-  'event_address', 'formatted_address', 'event_city', 'event_state',
+  'event_address', 'formatted_address', 'geocoded_address', 'event_city', 'event_state', 'event_zip',
   'expected_ga_guests', 'expected_vip_guests', 'expected_guest_count',
   'number_of_guests', 'vip_guest_count', 'payment_responsibility', 'who_pays',
   'last_date_to_accept_payments', 'vendor_payment_deadline',
@@ -760,25 +763,49 @@ exports.myApplications = async (req, res, next) => {
       status: 'PUBLISHED',
     }).select('application_id initiated_by_role created_at answered_at vendor_read_at answer_text_public').lean();
     const eventsById = new Map(events.map((event) => [event.event_id, event]));
+    const paidEventIds = new Set(
+      applications.filter((application) => application.status === 'PAID').map((application) => application.event_id)
+    );
+    const coordinatorIds = [...new Set(
+      events.filter((event) => paidEventIds.has(event.event_id)).map((event) => event.customer_user_id).filter(Boolean)
+    )];
+    const coordinators = coordinatorIds.length
+      ? await UserModel.find({ _id: { $in: coordinatorIds } })
+          .select('firstName lastName email mobileNumber countryCode')
+          .lean()
+      : [];
+    const coordinatorsById = new Map(coordinators.map((coordinator) => [String(coordinator._id), coordinator]));
     return res.data({
-      applicationList: applications.map((application) => ({
-        ...application,
-        participation_path: resolveEventVendorParticipationPath({
-          paymentResponsibility: eventsById.get(application.event_id)?.payment_responsibility,
-          existingApplication: application,
-        }),
-        unread_message_count: questions.filter((question) => {
-          if (question.application_id !== application.application_id) return false;
-          const relevantAt = question.initiated_by_role === 'CUSTOMER'
-            ? question.created_at
-            : question.answered_at;
-          return relevantAt && (!question.vendor_read_at || new Date(question.vendor_read_at) < new Date(relevantAt));
-        }).length,
-        event: eventsById.has(application.event_id) ? {
-          ...sanitizeEventVendorEvent(eventsById.get(application.event_id)),
-          public_images: images.filter((image) => image.event_id === application.event_id),
-        } : null,
-      })),
+      applicationList: applications.map((application) => {
+        const event = eventsById.get(application.event_id);
+        const coordinator = application.status === 'PAID' && event
+          ? coordinatorsById.get(String(event.customer_user_id))
+          : null;
+        return {
+          ...application,
+          participation_path: resolveEventVendorParticipationPath({
+            paymentResponsibility: event?.payment_responsibility,
+            existingApplication: application,
+          }),
+          unread_message_count: questions.filter((question) => {
+            if (question.application_id !== application.application_id) return false;
+            const relevantAt = question.initiated_by_role === 'CUSTOMER'
+              ? question.created_at
+              : question.answered_at;
+            return relevantAt && (!question.vendor_read_at || new Date(question.vendor_read_at) < new Date(relevantAt));
+          }).length,
+          event: event ? {
+            ...sanitizeEventVendorEvent(event),
+            ...(coordinator ? {
+              coordinator_contact: getUnlockedMarketplaceCoordinatorContact({
+                coordinator,
+                detailsUnlocked: application.status === 'PAID',
+              }),
+            } : {}),
+            public_images: images.filter((image) => image.event_id === application.event_id),
+          } : null,
+        };
+      }),
     }, 'Marketplace Vendor applications');
   } catch (e) { return next(e); }
 };
@@ -1029,6 +1056,7 @@ exports.revokeApplicationAward = async (req, res, next) => {
     }
 
     application.status = 'NOT_SELECTED';
+    application.award_revoked_at = new Date();
     await application.save();
     await MarketplaceCommunications.sendMarketplaceCommunication({
       userId: application.vendor_user_id,

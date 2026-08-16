@@ -234,6 +234,7 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 		assert.equal(result.error, undefined);
 		assert.equal(state.counters.refunds, 1);
 		assert.equal(state.application.status, 'NOT_SELECTED');
+		assert.ok(state.application.award_revoked_at instanceof Date);
 		assert.equal(state.payment.payment_status, 'REFUNDED');
 		assert.equal(state.counters.notifications, 1);
 	}

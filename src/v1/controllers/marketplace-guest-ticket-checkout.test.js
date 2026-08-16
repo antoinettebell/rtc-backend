@@ -29,7 +29,7 @@ const event = {
 let createdOrderPayload;
 let chargedPayment;
 let smsPayload;
-let emailRecipient;
+let emailDelivery;
 
 const queryFor = (value) => ({
   select() { return this; },
@@ -65,7 +65,7 @@ const ticketService = {
   releaseReservation: async () => undefined,
   confirmReservation: async () => undefined,
   createTicketsForPaidOrder: async () => [{
-    ticket: { attendee_label: 'Guest 1', ticket_type: 'GA' },
+    ticket: { ticket_id: 'ticket-1', attendee_label: 'Guest 1', ticket_type: 'GA' },
     url: 'https://tickets.example/t/one',
   }],
 };
@@ -106,11 +106,27 @@ Module._load = (request, parent, isMain) => {
     if (request === '../../helper/aws') return {};
     if (request === '../../helper/encryption') return {};
     if (request === '../../helper/public-ticket-page') return {};
+    if (request === '../../helper/ticket-qr-helper') return {
+      buildTicketQrDataUrl: async () => 'data:image/png;base64,page-qr',
+      buildTicketQrEmailAttachment: async ({ ticketId }) => ({
+        contentId: `rtc-ticket-${ticketId}`,
+        attachment: {
+          content: 'email-qr',
+          filename: `rtc-ticket-${ticketId}.png`,
+          type: 'image/png',
+          disposition: 'inline',
+          content_id: `rtc-ticket-${ticketId}`,
+        },
+      }),
+    };
     if (request === '../../helper/sms-helper') return {
       sendSms: async (payload) => { smsPayload = payload; return { sent: true }; },
     };
     if (request === '../../helper/mail-helper') return {
-      sendMail: async (recipient) => { emailRecipient = recipient; return { sent: true }; },
+      sendMail: async (recipient, subject, html, options) => {
+        emailDelivery = { recipient, subject, html, options };
+        return { sent: true };
+      },
     };
     if (request === '../../helper/public-marketplace-event-helper') return {
       sanitizePublicMarketplaceEvent: (value) => value,
@@ -162,7 +178,12 @@ const requestBody = {
   assert.equal(chargedPayment.userId, 'guest-order-1', 'processor reference uses the durable ticket order');
   assert.equal(chargedPayment.email, 'guest@example.com');
   assert.equal(smsPayload.to, '+15555550123');
-  assert.equal(emailRecipient, 'guest@example.com');
+  assert.equal(emailDelivery.recipient, 'guest@example.com');
+  assert.equal(emailDelivery.subject, 'Your tickets for Public Festival');
+  assert.match(emailDelivery.html, /cid:rtc-ticket-ticket-1/);
+  assert.match(emailDelivery.html, /Open secure ticket/);
+  assert.equal(emailDelivery.options.attachments.length, 1);
+  assert.equal(emailDelivery.options.attachments[0].content_id, 'rtc-ticket-ticket-1');
 
   let html;
   await controller.publicTicketInvitation(

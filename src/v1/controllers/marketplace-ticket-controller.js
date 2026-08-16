@@ -32,6 +32,10 @@ const {
 } = require('../../helper/public-ticket-page');
 const SmsHelper = require('../../helper/sms-helper');
 const MailHelper = require('../../helper/mail-helper');
+const {
+  buildTicketQrDataUrl,
+  buildTicketQrEmailAttachment,
+} = require('../../helper/ticket-qr-helper');
 const { isScannerAvailable } = require('../../helper/event-ticket-helper');
 const {
   sanitizePublicMarketplaceEvent,
@@ -284,6 +288,16 @@ exports.checkout = async (req, res, next) => {
     const ticketLinks = tickets
       .map(({ ticket, url }) => `${ticket.attendee_label} (${ticket.ticket_type}): ${url}`)
       .join('\n');
+    const emailTickets = await Promise.all(
+      tickets.map(async ({ ticket, url }) => ({
+        ticket,
+        url,
+        qr: await buildTicketQrEmailAttachment({
+          ticketId: ticket.ticket_id,
+          ticketUrl: url,
+        }),
+      }))
+    );
     const [smsDelivery, emailDelivery] = await Promise.allSettled([
       SmsHelper.sendSms({
         to: order.purchaser_phone,
@@ -293,12 +307,13 @@ exports.checkout = async (req, res, next) => {
       MailHelper.sendMail(
         order.purchaser_email,
         `Your tickets for ${event.event_name}`,
-        `<h2>Your event tickets</h2>${tickets
+        `<h2>Your event tickets</h2>${emailTickets
           .map(
-            ({ ticket, url }) =>
-              `<p><strong>${ticket.attendee_label} (${ticket.ticket_type})</strong><br><a href="${url}">View secure QR ticket</a></p>`
+            ({ ticket, url, qr }) =>
+              `<p><strong>${ticket.attendee_label} (${ticket.ticket_type})</strong><br><img src="cid:${qr.contentId}" width="240" height="240" alt="Ticket QR code"><br><a href="${url}">Open secure ticket</a></p>`
           )
-          .join('')}`
+          .join('')}`,
+        { attachments: emailTickets.map(({ qr }) => qr.attachment) }
       ),
     ]);
     const smsResult = smsDelivery.status === 'fulfilled' ? smsDelivery.value : null;
@@ -885,10 +900,14 @@ exports.publicTicketPage = async (req, res, next) => {
     if (!ticket) return res.status(404).send('Ticket not found');
     const event = await MarketplaceEventModel.findOne({ event_id: ticket.event_id }).lean();
     if (!event) return res.status(404).send('Event not found');
+    const ticketUrl = `${server.publicTicketBaseURL}/t/${encodeURIComponent(req.params.token)}`;
+    const qrDataUrl = ticket.status === 'ACTIVE'
+      ? await buildTicketQrDataUrl(ticketUrl)
+      : null;
     res.set({
       'Cache-Control': 'no-store, private',
       'Content-Security-Policy':
-        "default-src 'none'; script-src 'self' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'self'",
+        "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'self'",
       'Referrer-Policy': 'no-referrer',
       'X-Content-Type-Options': 'nosniff',
     });
@@ -896,7 +915,7 @@ exports.publicTicketPage = async (req, res, next) => {
       renderTicketPage({
         ticket,
         event,
-        ticketUrl: `${server.publicTicketBaseURL}/t/${encodeURIComponent(req.params.token)}`,
+        qrDataUrl,
       })
     );
   } catch (error) {

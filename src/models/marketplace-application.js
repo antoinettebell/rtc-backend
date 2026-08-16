@@ -132,6 +132,11 @@ const mSchema = mongoose.Schema(
       default: 'DRAFT',
       index: true,
     },
+    award_revoked_at: {
+      type: Date,
+      default: null,
+      index: true,
+    },
     payment_id: {
       type: String,
       default: null,
