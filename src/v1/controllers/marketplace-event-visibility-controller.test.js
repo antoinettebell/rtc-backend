@@ -435,6 +435,7 @@ const runFoodVendorTests = async () => {
 		};
 		state.events.push(makeFoodEvent('coordinator-event', {
 			customer_user_id: 'coordinator',
+			status: 'CLOSED',
 		}));
 		state.bids.push(
 			{ bid_id: 'signed-bid', event_id: 'coordinator-event', bid_status: 'SUBMITTED' },

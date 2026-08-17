@@ -71,6 +71,12 @@ const {
 const {
   getUnlockedMarketplaceCoordinatorContact,
 } = require('../../helper/marketplace-coordinator-contact');
+const {
+  applyMarketplaceEventLocationPrivacy,
+} = require('../../helper/marketplace-event-location-privacy');
+const {
+  isEventVendorApplicationUnlocked,
+} = require('../../helper/marketplace-vendor-access-policy');
 
 const TYPES = ['MERCHANDISE', 'SERVICE', 'OTHER'];
 const EVENT_VENDOR_PUBLIC_EVENT_FIELDS = [
@@ -585,7 +591,9 @@ exports.eligibleEvents = async (req, res, next) => {
       status: 'ACTIVE',
     }).select('image_id event_id image_url original_name mime_type').lean();
     const marketplaceEventList = eventsWithCapacity.map((event) => ({
-      ...sanitizeEventVendorEvent(event),
+      ...applyMarketplaceEventLocationPrivacy(sanitizeEventVendorEvent(event), {
+        locationUnlocked: false,
+      }),
       public_images: images.filter((image) => image.event_id === event.event_id),
     }));
     return res.data({ marketplaceEventList }, 'Eligible Marketplace Vendor events');
@@ -763,11 +771,11 @@ exports.myApplications = async (req, res, next) => {
       status: 'PUBLISHED',
     }).select('application_id initiated_by_role created_at answered_at vendor_read_at answer_text_public').lean();
     const eventsById = new Map(events.map((event) => [event.event_id, event]));
-    const paidEventIds = new Set(
-      applications.filter((application) => application.status === 'PAID').map((application) => application.event_id)
+    const unlockedEventIds = new Set(
+      applications.filter(isEventVendorApplicationUnlocked).map((application) => application.event_id)
     );
     const coordinatorIds = [...new Set(
-      events.filter((event) => paidEventIds.has(event.event_id)).map((event) => event.customer_user_id).filter(Boolean)
+      events.filter((event) => unlockedEventIds.has(event.event_id)).map((event) => event.customer_user_id).filter(Boolean)
     )];
     const coordinators = coordinatorIds.length
       ? await UserModel.find({ _id: { $in: coordinatorIds } })
@@ -778,7 +786,8 @@ exports.myApplications = async (req, res, next) => {
     return res.data({
       applicationList: applications.map((application) => {
         const event = eventsById.get(application.event_id);
-        const coordinator = application.status === 'PAID' && event
+        const accessUnlocked = isEventVendorApplicationUnlocked(application);
+        const coordinator = accessUnlocked && event
           ? coordinatorsById.get(String(event.customer_user_id))
           : null;
         return {
@@ -795,11 +804,13 @@ exports.myApplications = async (req, res, next) => {
             return relevantAt && (!question.vendor_read_at || new Date(question.vendor_read_at) < new Date(relevantAt));
           }).length,
           event: event ? {
-            ...sanitizeEventVendorEvent(event),
+            ...applyMarketplaceEventLocationPrivacy(sanitizeEventVendorEvent(event), {
+              locationUnlocked: accessUnlocked,
+            }),
             ...(coordinator ? {
               coordinator_contact: getUnlockedMarketplaceCoordinatorContact({
                 coordinator,
-                detailsUnlocked: application.status === 'PAID',
+                detailsUnlocked: accessUnlocked,
               }),
             } : {}),
             public_images: images.filter((image) => image.event_id === application.event_id),

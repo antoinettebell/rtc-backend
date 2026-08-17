@@ -66,6 +66,10 @@ const {
   applyMarketplaceEventLocationPrivacy,
 } = require('../../helper/marketplace-event-location-privacy');
 const {
+  isMarketplaceDetailsUnlocked,
+  isMarketplaceLocationUnlocked,
+} = require('../../helper/marketplace-vendor-access-policy');
+const {
   buildVendorEventCloseState,
   getMarketplaceEventTiming,
 } = require('../../helper/marketplace-event-close-helper');
@@ -1203,15 +1207,22 @@ const getMarketplaceUnlockState = ({ event, bid = null, application = null }) =>
     ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'].includes(
       application?.application_status
     );
-  const detailsUnlocked =
-    scenario === 'NO_PAYMENT'
-      ? matchSatisfied
-      : coordinatorPaymentSatisfied && vendorPaymentSatisfied;
+  const detailsUnlocked = isMarketplaceDetailsUnlocked({
+    matchSatisfied,
+    scenario,
+    coordinatorPaymentSatisfied,
+    vendorPaymentSatisfied,
+  });
+  const locationUnlocked = isMarketplaceLocationUnlocked({
+    bid,
+    application,
+    vendorPaymentSatisfied,
+  });
 
   return {
     scenario,
     details_unlocked: !!detailsUnlocked,
-    location_unlocked: !!matchSatisfied,
+    location_unlocked: !!locationUnlocked,
     obligations: {
       match_satisfied: !!matchSatisfied,
       coordinator_payment_satisfied: !!coordinatorPaymentSatisfied,
@@ -1811,15 +1822,19 @@ const redactLockedMarketplaceEvent = (event, unlockState, { fullAccess = false }
     },
   };
 
+  const locationSafeEvent = applyMarketplaceEventLocationPrivacy(plainEvent, {
+    locationUnlocked: fullAccess || marketplace_unlock.location_unlocked,
+  });
+
   if (fullAccess || marketplace_unlock.details_unlocked) {
     return {
-      ...plainEvent,
+      ...locationSafeEvent,
       marketplace_unlock,
     };
   }
 
   let redacted = {
-    ...plainEvent,
+    ...locationSafeEvent,
     marketplace_unlock,
     contracts_locked: true,
     logistics_locked: true,
@@ -1847,6 +1862,14 @@ const redactLockedMarketplaceEvent = (event, unlockState, { fullAccess = false }
 	    'coordinator_payment_qr_code_key',
 	    'coordinator_direct_deposit_routing_number',
 	    'coordinator_direct_deposit_account_number',
+	    'coordinator_contact',
+	    'coordinatorContact',
+	    'coordinator_contact_name',
+	    'coordinatorContactName',
+	    'coordinator_phone',
+	    'coordinatorPhone',
+	    'coordinator_email',
+	    'coordinatorEmail',
 	  ].forEach((field) => {
     delete redacted[field];
   });
@@ -1864,7 +1887,7 @@ const redactLockedMarketplaceRecord = (
     return plainRecord;
   }
 
-  const redacted = {
+  let redacted = {
     ...sanitizeMarketplaceContactForCoordinator(plainRecord),
     marketplace_unlock: unlockState,
     private_details_locked: true,
@@ -1890,12 +1913,20 @@ const redactLockedMarketplaceRecord = (
     'permit_license_keys',
     'private_documents',
     'coordinator_documents',
+    'coordinator_contact',
+    'coordinatorContact',
+    'coordinator_contact_name',
+    'coordinatorContactName',
+    'coordinator_phone',
+    'coordinatorPhone',
+    'coordinator_email',
+    'coordinatorEmail',
   ].forEach((field) => {
     delete redacted[field];
   });
 
   redacted = applyMarketplaceEventLocationPrivacy(redacted, {
-    locationUnlocked: marketplace_unlock.location_unlocked,
+    locationUnlocked: unlockState?.location_unlocked === true,
   });
 
   if (redacted.vendor_user_id && typeof redacted.vendor_user_id === 'object') {
