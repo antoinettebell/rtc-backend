@@ -2,6 +2,7 @@ const assert = require('assert');
 const {
   buildVendorEventCloseState,
   getMarketplaceEventTiming,
+  isFinalPaymentAvailable,
 } = require('./marketplace-event-close-helper');
 
 const event = {
@@ -14,16 +15,27 @@ const event = {
 const timing = getMarketplaceEventTiming(event);
 assert.strictEqual(timing.start_at.toISOString(), '2026-08-04T22:30:00.000Z');
 assert.strictEqual(timing.end_at.toISOString(), '2026-08-05T00:30:00.000Z');
-assert.strictEqual(timing.vendor_close_available_at.toISOString(), '2026-08-05T01:30:00.000Z');
+assert.strictEqual(timing.final_payment_available_at.toISOString(), '2026-08-04T22:30:00.000Z');
+assert.strictEqual(timing.vendor_close_available_at.toISOString(), '2026-08-04T22:30:00.000Z');
+assert.strictEqual(isFinalPaymentAvailable(event, new Date('2026-08-04T22:29:59.000Z')), false);
+assert.strictEqual(isFinalPaymentAvailable(event, new Date('2026-08-04T22:30:00.000Z')), true);
 
-const waiting = buildVendorEventCloseState(event, new Date('2026-08-05T01:00:00.000Z'));
+const waiting = buildVendorEventCloseState(event, new Date('2026-08-04T22:29:59.000Z'));
 assert.strictEqual(waiting.can_close, false);
-assert.strictEqual(waiting.status, 'WAITING_FOR_COORDINATOR');
-assert.strictEqual(waiting.seconds_remaining, 1800);
+assert.strictEqual(waiting.status, 'WAITING_FOR_EVENT_START');
+assert.strictEqual(waiting.seconds_remaining, 1);
 
-const available = buildVendorEventCloseState(event, new Date('2026-08-05T01:30:00.000Z'));
+const available = buildVendorEventCloseState(event, new Date('2026-08-04T22:30:00.000Z'));
 assert.strictEqual(available.can_close, true);
 assert.strictEqual(available.status, 'AVAILABLE');
+
+const pending = buildVendorEventCloseState({
+  ...event,
+  final_payment_id: 'payment-pending',
+  final_payment_status: 'PENDING',
+}, new Date('2026-08-04T23:00:00.000Z'));
+assert.strictEqual(pending.can_close, false);
+assert.strictEqual(pending.status, 'PAYMENT_CREATED');
 
 const paid = buildVendorEventCloseState({
   ...event,

@@ -32,6 +32,8 @@ let chargedPayment;
 let smsPayload;
 let emailDelivery;
 let publicEventEligible = true;
+let lastEventFindQuery;
+let shareLinkUpdate;
 
 const queryFor = (value) => ({
   select() { return this; },
@@ -52,7 +54,14 @@ const orderModel = {
 
 const models = {
   MarketplaceEventModel: {
-    findOne: () => queryFor(event),
+    findOne: (query) => {
+      lastEventFindQuery = query;
+      return queryFor(event);
+    },
+    findOneAndUpdate: async (query, update) => {
+      shareLinkUpdate = { query, update };
+      return event;
+    },
   },
   MarketplaceTicketOrderModel: orderModel,
   MarketplaceTicketModel: {},
@@ -132,6 +141,7 @@ Module._load = (request, parent, isMain) => {
     };
     if (request === '../../helper/public-marketplace-event-helper') return {
       isPublicMarketplaceEventEligible: () => publicEventEligible,
+      isPublicTicketPurchaseAvailable: () => publicEventEligible,
       sanitizePublicMarketplaceEvent: (value) => value,
     };
   }
@@ -174,6 +184,8 @@ const requestBody = {
 
   assert.equal(error, undefined);
   assert.equal(response.message, 'Ticket purchase confirmed');
+  assert.equal(lastEventFindQuery.event_date, undefined, 'share links are not event-date limited');
+  assert.equal(lastEventFindQuery.$and[0].$or.length, 2, 'legacy and retained link hashes remain valid');
   assert.equal(createdOrderPayload.customer_user_id, null, 'guest checkout does not manufacture an account');
   assert.equal(createdOrderPayload.purchaser_name, 'Guest Buyer');
   assert.equal(createdOrderPayload.purchaser_email, 'guest@example.com');
@@ -237,6 +249,22 @@ const requestBody = {
   );
   assert.match(html, />Get Tickets<\/a>/);
   assert.doesNotMatch(html, /sign in|create your customer profile/i);
+
+  let shareResponse;
+  await controller.createTicketShareLink(
+    { params: { eventId: event.event_id }, user: { _id: 'coordinator-1' } },
+    { data: (payload) => { shareResponse = payload; } },
+    (nextError) => { throw nextError; }
+  );
+  assert.match(shareResponse.share_url, /\/events\//);
+  assert(Array.isArray(shareLinkUpdate.update));
+  const shareSet = shareLinkUpdate.update[0].$set;
+  assert.equal(shareSet.ticket_share_token_hashes.$setUnion[1][0], shareSet.ticket_share_token_hash);
+  assert.deepEqual(
+    shareSet.ticket_share_token_hashes.$setUnion[2].$cond[1],
+    ['$ticket_share_token_hash'],
+    'new links preserve the previously issued legacy hash'
+  );
 
   models.MarketplaceEventModel.findOne = () => queryFor(null);
   let unavailablePage;

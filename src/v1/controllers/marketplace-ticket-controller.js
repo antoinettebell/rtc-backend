@@ -39,6 +39,7 @@ const {
 const { isScannerAvailable } = require('../../helper/event-ticket-helper');
 const {
   isPublicMarketplaceEventEligible,
+  isPublicTicketPurchaseAvailable,
   sanitizePublicMarketplaceEvent,
 } = require('../../helper/public-marketplace-event-helper');
 
@@ -55,11 +56,47 @@ const addressFromEvent = (event) => ({
   longitude: event.longitude,
 });
 
+const availableTicketInventoryQuery = {
+  $or: [
+    { $expr: { $gt: [
+      { $subtract: [
+        { $ifNull: ['$ga_ticket_quantity', 0] },
+        { $add: [
+          { $ifNull: ['$ga_tickets_sold', 0] },
+          { $ifNull: ['$ga_tickets_reserved', 0] },
+        ] },
+      ] },
+      0,
+    ] } },
+    {
+      vip_section_enabled: true,
+      $expr: { $gt: [
+        { $subtract: [
+          { $ifNull: ['$vip_ticket_quantity', 0] },
+          { $add: [
+            { $ifNull: ['$vip_tickets_sold', 0] },
+            { $ifNull: ['$vip_tickets_reserved', 0] },
+          ] },
+        ] },
+        0,
+      ] },
+    },
+  ],
+};
+
 const getTicketInvitationEvent = (shareToken) => MarketplaceEventModel.findOne({
-  ticket_share_token_hash: hashTicketToken(shareToken),
   ticket_sales_enabled: true,
   ticket_sales_closed_at: null,
   status: { $nin: ['DRAFT', 'CANCELLED'] },
+  $and: [
+    {
+      $or: [
+        { ticket_share_token_hash: hashTicketToken(shareToken) },
+        { ticket_share_token_hashes: hashTicketToken(shareToken) },
+      ],
+    },
+    availableTicketInventoryQuery,
+  ],
 });
 
 const getPublicGuestTicketEvent = async (eventId) => {
@@ -68,9 +105,13 @@ const getPublicGuestTicketEvent = async (eventId) => {
     event_visibility: 'PUBLIC',
     ticket_sales_enabled: true,
     ticket_sales_closed_at: null,
-    status: 'OPEN',
+    status: { $in: ['OPEN', 'CLOSED'] },
   }).lean();
-  return event && isPublicMarketplaceEventEligible(event) ? event : null;
+  return event &&
+    isPublicMarketplaceEventEligible(event) &&
+    isPublicTicketPurchaseAvailable(event)
+    ? event
+    : null;
 };
 
 const closeTicketSalesAfterFinalCheckIn = async ({ eventId, checkedInAt }) => {
@@ -853,17 +894,41 @@ exports.closeTicketSales = async (req, res, next) => {
 
 exports.createTicketShareLink = async (req, res, next) => {
   try {
-    const event = await MarketplaceEventModel.findOne({
-      event_id: req.params.eventId,
-      customer_user_id: req.user._id,
-      ticket_sales_enabled: true,
-      ticket_sales_closed_at: null,
-      status: { $nin: ['DRAFT', 'CANCELLED'] },
-    });
-    if (!event) throw buildError('Ticket sales are unavailable', 404);
     const { token, tokenHash } = createTicketToken();
-    event.ticket_share_token_hash = tokenHash;
-    await event.save();
+    const event = await MarketplaceEventModel.findOneAndUpdate(
+      {
+        event_id: req.params.eventId,
+        customer_user_id: req.user._id,
+        ticket_sales_enabled: true,
+        ticket_sales_closed_at: null,
+        status: { $nin: ['DRAFT', 'CANCELLED'] },
+      },
+      [{
+        $set: {
+          ticket_share_token_hash: tokenHash,
+          ticket_share_token_hashes: {
+            $setUnion: [
+              { $ifNull: ['$ticket_share_token_hashes', []] },
+              [tokenHash],
+              {
+                $cond: [
+                  {
+                    $and: [
+                      { $ne: ['$ticket_share_token_hash', null] },
+                      { $ne: ['$ticket_share_token_hash', ''] },
+                    ],
+                  },
+                  ['$ticket_share_token_hash'],
+                  [],
+                ],
+              },
+            ],
+          },
+        },
+      }],
+      { new: true }
+    );
+    if (!event) throw buildError('Ticket sales are unavailable', 404);
     return res.data(
       { share_url: `${server.publicTicketBaseURL}/events/${encodeURIComponent(token)}` },
       'Private ticket invitation created'

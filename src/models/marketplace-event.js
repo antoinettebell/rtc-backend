@@ -84,6 +84,12 @@ const mSchema = mongoose.Schema(
       default: null,
       index: true,
     },
+    ticket_share_token_hashes: {
+      type: [String],
+      select: false,
+      default: [],
+      index: true,
+    },
     vendor_applications_closed_at: {
       type: Date,
       default: null,

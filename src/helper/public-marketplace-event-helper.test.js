@@ -1,9 +1,11 @@
 const assert = require('assert');
 const {
   filterActivePublicMarketplaceEvents,
+  getRemainingTicketInventory,
   getPublicMarketplaceEventQuery,
   isMarketplaceEventExpired,
   isPublicMarketplaceEventEligible,
+  isPublicTicketPurchaseAvailable,
   sanitizePublicMarketplaceEvent,
 } = require('./public-marketplace-event-helper');
 
@@ -16,6 +18,15 @@ const event = (overrides = {}) => ({
   event_duration_hours: 4,
   event_duration_minutes: 0,
   event_timezone: 'America/New_York',
+  ticket_sales_enabled: true,
+  ticket_sales_closed_at: null,
+  ga_ticket_quantity: 10,
+  ga_tickets_sold: 2,
+  ga_tickets_reserved: 1,
+  vip_section_enabled: true,
+  vip_ticket_quantity: 5,
+  vip_tickets_sold: 1,
+  vip_tickets_reserved: 1,
   ...overrides,
 });
 assert.equal(isMarketplaceEventExpired(event(), new Date('2026-08-08T17:59:59Z')), false);
@@ -28,7 +39,7 @@ assert.equal(filterActivePublicMarketplaceEvents([
 ], new Date('2026-08-09T18:00:00Z')).map((item) => item.event_id).join(','), 'active');
 assert.deepEqual(getPublicMarketplaceEventQuery('event-1'), {
   event_id: 'event-1',
-  status: 'OPEN',
+  status: { $in: ['OPEN', 'CLOSED'] },
   event_visibility: 'PUBLIC',
   tax_exemption_status: { $in: ['NOT_REQUESTED', 'APPROVED'] },
 });
@@ -36,9 +47,31 @@ const beforeEnd = new Date('2026-08-08T17:00:00Z');
 assert.equal(isPublicMarketplaceEventEligible(event(), beforeEnd), true);
 assert.equal(isPublicMarketplaceEventEligible(event({ tax_exemption_status: 'APPROVED' }), beforeEnd), true);
 assert.equal(isPublicMarketplaceEventEligible(event({ event_visibility: 'PRIVATE' }), beforeEnd), false);
-assert.equal(isPublicMarketplaceEventEligible(event({ status: 'CLOSED' }), beforeEnd), false);
+assert.equal(isPublicMarketplaceEventEligible(event({ status: 'CLOSED' }), beforeEnd), true);
+assert.equal(isPublicMarketplaceEventEligible(event({
+  status: 'CLOSED',
+  ticket_sales_closed_at: new Date(),
+}), beforeEnd), false);
+assert.equal(isPublicMarketplaceEventEligible(event({
+  status: 'CLOSED',
+  ga_ticket_quantity: 3,
+  ga_tickets_sold: 2,
+  ga_tickets_reserved: 1,
+  vip_ticket_quantity: 2,
+  vip_tickets_sold: 2,
+}), beforeEnd), false);
 assert.equal(isPublicMarketplaceEventEligible(event({ tax_exemption_status: 'PENDING' }), beforeEnd), false);
 assert.equal(isPublicMarketplaceEventEligible(event(), new Date('2026-08-08T19:00:00Z')), false);
+assert.equal(isPublicMarketplaceEventEligible(
+  event({ status: 'CLOSED' }),
+  new Date('2026-08-09T19:00:00Z')
+), true);
+assert.equal(getRemainingTicketInventory(event()), 10);
+assert.equal(isPublicTicketPurchaseAvailable(event({ status: 'CLOSED' })), true);
+assert.equal(isPublicTicketPurchaseAvailable(event({
+  status: 'CLOSED',
+  ticket_sales_closed_at: new Date(),
+})), false);
 const sanitized = sanitizePublicMarketplaceEvent({
   ...event(),
   event_id: 'event-1',

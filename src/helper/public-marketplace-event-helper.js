@@ -6,24 +6,51 @@ const isMarketplaceEventExpired = (event = {}, now = new Date()) => {
   return timing.end_at.getTime() < new Date(now).getTime();
 };
 
+const getRemainingTicketInventory = (event = {}) => {
+  const remainingGa = Math.max(
+    0,
+    Number(event.ga_ticket_quantity || 0) -
+      Number(event.ga_tickets_sold || 0) -
+      Number(event.ga_tickets_reserved || 0)
+  );
+  const remainingVip = event.vip_section_enabled
+    ? Math.max(
+      0,
+      Number(event.vip_ticket_quantity || 0) -
+        Number(event.vip_tickets_sold || 0) -
+        Number(event.vip_tickets_reserved || 0)
+    )
+    : 0;
+  return remainingGa + remainingVip;
+};
+
+const isPublicTicketPurchaseAvailable = (event = {}) =>
+  event.ticket_sales_enabled === true &&
+  !event.ticket_sales_closed_at &&
+  !['DRAFT', 'CANCELLED'].includes(event.status) &&
+  getRemainingTicketInventory(event) > 0;
+
+const hasPublicEventAccess = (event = {}, now = new Date()) =>
+  (event.status === 'OPEN' && !isMarketplaceEventExpired(event, now)) ||
+  (event.status === 'CLOSED' && isPublicTicketPurchaseAvailable(event));
+
 const filterActivePublicMarketplaceEvents = (events = [], now = new Date()) =>
-  events.filter((event) => !isMarketplaceEventExpired(event, now));
+  events.filter((event) => isPublicMarketplaceEventEligible(event, now));
 
 const getPublicMarketplaceEventQuery = (eventId) => ({
   event_id: eventId,
-  status: 'OPEN',
+  status: { $in: ['OPEN', 'CLOSED'] },
   event_visibility: 'PUBLIC',
   tax_exemption_status: { $in: ['NOT_REQUESTED', 'APPROVED'] },
 });
 
 const isPublicMarketplaceEventEligible = (event = {}, now = new Date()) =>
-  event.status === 'OPEN' &&
   event.event_visibility === 'PUBLIC' &&
   ['NOT_REQUESTED', 'APPROVED'].includes(event.tax_exemption_status) &&
-  !isMarketplaceEventExpired(event, now);
+  hasPublicEventAccess(event, now);
 
 const PUBLIC_MARKETPLACE_EVENT_FIELDS = [
-  'event_id', 'event_name', 'event_description', 'event_type',
+  'event_id', 'event_name', 'event_description', 'event_type', 'status',
   'event_date', 'event_time', 'event_timezone',
   'event_duration_hours', 'event_duration_minutes',
   'event_address', 'formatted_address', 'geocoded_address', 'event_city',
@@ -50,8 +77,10 @@ const sanitizePublicMarketplaceEvent = (event = {}) => {
 
 module.exports = {
   filterActivePublicMarketplaceEvents,
+  getRemainingTicketInventory,
   getPublicMarketplaceEventQuery,
   isMarketplaceEventExpired,
   isPublicMarketplaceEventEligible,
+  isPublicTicketPurchaseAvailable,
   sanitizePublicMarketplaceEvent,
 };

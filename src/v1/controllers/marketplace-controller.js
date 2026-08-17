@@ -72,6 +72,7 @@ const {
 const {
   buildVendorEventCloseState,
   getMarketplaceEventTiming,
+  isFinalPaymentAvailable,
 } = require('../../helper/marketplace-event-close-helper');
 const {
   getCoordinatorPaymentCompletion,
@@ -91,6 +92,7 @@ const {
 const {
   getPublicMarketplaceEventQuery,
   isPublicMarketplaceEventEligible,
+  isPublicTicketPurchaseAvailable,
   sanitizePublicMarketplaceEvent,
 } = require('../../helper/public-marketplace-event-helper');
 const { resolveMarketplaceTaxExemptionUpdate } = require('../../helper/marketplace-tax-exemption-helper');
@@ -4975,20 +4977,18 @@ exports.getPublicOpenEvent = async (req, res, next) => {
 
 exports.trackPublicEventTicketClick = async (req, res, next) => {
   try {
+    const event = await MarketplaceEventService.getByData(
+      getPublicMarketplaceEventQuery(req.params.eventId),
+      { singleResult: true, lean: true }
+    );
+    if (!event || !isPublicTicketPurchaseAvailable(event)) {
+      throw buildError('Open ticketed marketplace event not found', 404);
+    }
     const marketplaceEvent = await MarketplaceEventService.update(
-      {
-        event_id: req.params.eventId,
-        status: 'OPEN',
-        ticket_sales_enabled: true,
-        ticket_sales_closed_at: null,
-      },
+      { event_id: event.event_id },
       { $inc: { ticket_click_count: 1 } },
       { directApply: true, getNew: true, lean: true }
     );
-
-    if (!marketplaceEvent) {
-      throw buildError('Open ticketed marketplace event not found', 404);
-    }
 
     return res.data({ marketplaceEvent }, 'Marketplace ticket click tracked');
   } catch (e) {
@@ -7903,8 +7903,8 @@ exports.createFinalEventPayment = async (req, res, next) => {
       if (!timing) {
         throw buildError('A valid event date, time, duration, and timezone are required.', 409);
       }
-      if (Date.now() < timing.end_at.getTime()) {
-        throw buildError('The event cannot be closed for payment before it ends.', 409);
+      if (!isFinalPaymentAvailable(event)) {
+        throw buildError('Final event payment is available when the event starts.', 409);
       }
     }
 
@@ -7946,8 +7946,8 @@ exports.createFinalEventPayment = async (req, res, next) => {
       });
       if (!existingVendorPayment && !closeState.can_close) {
         const error = buildError(
-          closeState.status === 'WAITING_FOR_COORDINATOR'
-            ? 'The coordinator still has time to close this event for payment.'
+          closeState.status === 'WAITING_FOR_EVENT_START'
+            ? 'Final event payment is available when the event starts.'
             : 'This event is not available for vendor close.',
           409
         );

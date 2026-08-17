@@ -1,5 +1,3 @@
-const VENDOR_CLOSE_GRACE_MINUTES = 60;
-
 const parseEventTime = (value) => {
   const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})(?:\s*([AP]M))?$/i);
   if (!match) return null;
@@ -71,13 +69,20 @@ const getMarketplaceEventTiming = (event = {}) => {
     return {
       start_at: startAt,
       end_at: endAt,
-      vendor_close_available_at: new Date(
-        endAt.getTime() + VENDOR_CLOSE_GRACE_MINUTES * 60 * 1000
-      ),
+      final_payment_available_at: startAt,
+      // Retained for mobile response compatibility; final payment now opens at event start.
+      vendor_close_available_at: startAt,
     };
   } catch (error) {
     return null;
   }
+};
+
+const isFinalPaymentAvailable = (event = {}, now = new Date()) => {
+  const timing = getMarketplaceEventTiming(event);
+  return Boolean(
+    timing && new Date(now).getTime() >= timing.final_payment_available_at.getTime()
+  );
 };
 
 const buildVendorEventCloseState = (event = {}, now = new Date()) => {
@@ -101,18 +106,18 @@ const buildVendorEventCloseState = (event = {}, now = new Date()) => {
       seconds_remaining: 0,
     };
   }
-  const remainingMs = timing.vendor_close_available_at.getTime() - new Date(now).getTime();
+  const remainingMs = timing.final_payment_available_at.getTime() - new Date(now).getTime();
   return {
     can_close: remainingMs <= 0,
-    status: remainingMs <= 0 ? 'AVAILABLE' : 'WAITING_FOR_COORDINATOR',
+    status: remainingMs <= 0 ? 'AVAILABLE' : 'WAITING_FOR_EVENT_START',
     event_end_at: timing.end_at.toISOString(),
-    available_at: timing.vendor_close_available_at.toISOString(),
+    available_at: timing.final_payment_available_at.toISOString(),
     seconds_remaining: Math.max(0, Math.ceil(remainingMs / 1000)),
   };
 };
 
 module.exports = {
-  VENDOR_CLOSE_GRACE_MINUTES,
   buildVendorEventCloseState,
   getMarketplaceEventTiming,
+  isFinalPaymentAvailable,
 };

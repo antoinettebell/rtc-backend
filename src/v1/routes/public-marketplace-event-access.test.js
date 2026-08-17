@@ -82,7 +82,9 @@ const exerciseCustomerGuard = (route, user) => new Promise((resolve) => {
     event_date: new Date('2099-08-08T00:00:00.000Z'), event_time: '10:00',
     event_duration_hours: 4, event_duration_minutes: 0,
     event_timezone: 'America/New_York', ticket_sales_enabled: true,
+    ticket_sales_closed_at: null,
     ga_ticket_price: 25, ga_ticket_quantity: 100, ga_tickets_sold: 10,
+    ga_tickets_reserved: 0,
     tax_exemption_certificate_url: 'https://private/certificate.pdf',
     tax_exemption_certificate: { file_url: 'https://private/certificate.pdf' },
     coordinator_tax_id: 'private-tax-id', routing_number: 'private-routing',
@@ -118,9 +120,24 @@ const exerciseCustomerGuard = (route, user) => new Promise((resolve) => {
     assert.equal(publicEvent.agreement_document_url, undefined);
     assert.equal(publicEvent.images[0].image_key, undefined);
 
+    scenario = {
+      ...eligibleEvent,
+      status: 'CLOSED',
+      event_date: new Date('2020-01-01T00:00:00.000Z'),
+    };
+    const closedTicketResponse = await callPublicController();
+    assert.ifError(closedTicketResponse.error);
+    assert.equal(closedTicketResponse.data.marketplaceEvent.status, 'CLOSED');
+
     for (const invalidEvent of [
       { ...eligibleEvent, event_visibility: 'PRIVATE' },
-      { ...eligibleEvent, status: 'CLOSED' },
+      { ...eligibleEvent, status: 'CLOSED', ticket_sales_closed_at: new Date() },
+      {
+        ...eligibleEvent,
+        status: 'CLOSED',
+        ga_tickets_sold: 100,
+        ga_tickets_reserved: 0,
+      },
       { ...eligibleEvent, event_date: new Date('2020-01-01T00:00:00.000Z') },
       { ...eligibleEvent, tax_exemption_status: 'PENDING' },
       null,
