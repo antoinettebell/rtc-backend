@@ -149,7 +149,11 @@ module.exports = {
 
   submitBid: {
     body: Joi.object({
-      price_per_guest: Joi.number().min(0).allow(null),
+      price_per_guest: Joi.when('bid_status', {
+        is: Joi.valid('PENDING_SIGNATURE', 'SUBMITTED'),
+        then: Joi.number().greater(0).required(),
+        otherwise: Joi.number().min(0).allow(null),
+      }),
       average_price_per_meal: Joi.number().min(0).allow(null),
       full_bid_amount: Joi.number().min(0).allow(null),
       guest_coverage: Joi.string().valid('REGULAR', 'VIP', 'BOTH').default('REGULAR'),

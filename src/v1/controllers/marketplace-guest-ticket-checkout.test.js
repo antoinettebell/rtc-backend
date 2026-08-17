@@ -24,12 +24,14 @@ const event = {
   vip_tickets_reserved: 0,
   tax_exemption_status: 'NOT_REQUESTED',
   event_type: 'Festival',
+  event_visibility: 'PUBLIC',
 };
 
 let createdOrderPayload;
 let chargedPayment;
 let smsPayload;
 let emailDelivery;
+let publicEventEligible = true;
 
 const queryFor = (value) => ({
   select() { return this; },
@@ -129,6 +131,7 @@ Module._load = (request, parent, isMain) => {
       },
     };
     if (request === '../../helper/public-marketplace-event-helper') return {
+      isPublicMarketplaceEventEligible: () => publicEventEligible,
       sanitizePublicMarketplaceEvent: (value) => value,
     };
   }
@@ -174,6 +177,7 @@ const requestBody = {
   assert.equal(createdOrderPayload.customer_user_id, null, 'guest checkout does not manufacture an account');
   assert.equal(createdOrderPayload.purchaser_name, 'Guest Buyer');
   assert.equal(createdOrderPayload.purchaser_email, 'guest@example.com');
+
   assert.equal(createdOrderPayload.purchaser_phone, '+15555550123');
   assert.equal(chargedPayment.userId, 'guest-order-1', 'processor reference uses the durable ticket order');
   assert.equal(chargedPayment.email, 'guest@example.com');
@@ -184,6 +188,42 @@ const requestBody = {
   assert.match(emailDelivery.html, /Open secure ticket/);
   assert.equal(emailDelivery.options.attachments.length, 1);
   assert.equal(emailDelivery.options.attachments[0].content_id, 'rtc-ticket-ticket-1');
+
+  response = undefined;
+  error = undefined;
+  await controller.publicGuestQuote(
+    { params: { eventId: event.event_id }, body: requestBody },
+    { data: (payload, message) => { response = { payload, message }; } },
+    (nextError) => { error = nextError; }
+  );
+  assert.equal(error, undefined);
+  assert.equal(response.message, 'Ticket quote calculated');
+  assert.equal(response.payload.quote.totalAmount, 10);
+
+  createdOrderPayload = undefined;
+  response = undefined;
+  error = undefined;
+  await controller.publicGuestCheckout(
+    { params: { eventId: event.event_id }, body: { ...requestBody, idempotency_key: 'public-event-guest-key' } },
+    { data: (payload, message) => { response = { payload, message }; } },
+    (nextError) => { error = nextError; }
+  );
+  assert.equal(error, undefined);
+  assert.equal(response.message, 'Ticket purchase confirmed');
+  assert.equal(createdOrderPayload.customer_user_id, null, 'public-event checkout remains account-free');
+  assert.equal(createdOrderPayload.purchaser_email, 'guest@example.com');
+
+  publicEventEligible = false;
+  createdOrderPayload = undefined;
+  error = undefined;
+  await controller.publicGuestCheckout(
+    { params: { eventId: event.event_id }, body: { ...requestBody, idempotency_key: 'private-event-guest-key' } },
+    { data: () => { throw new Error('Ineligible public checkout must not respond successfully'); } },
+    (nextError) => { error = nextError; }
+  );
+  assert.equal(error?.code, 404);
+  assert.equal(createdOrderPayload, undefined, 'ineligible event creates no guest ticket order');
+  publicEventEligible = true;
 
   let html;
   await controller.publicTicketInvitation(
@@ -197,6 +237,26 @@ const requestBody = {
   );
   assert.match(html, />Get Tickets<\/a>/);
   assert.doesNotMatch(html, /sign in|create your customer profile/i);
+
+  models.MarketplaceEventModel.findOne = () => queryFor(null);
+  let unavailablePage;
+  let unavailableStatus;
+  await controller.publicTicketInvitation(
+    { params: { shareToken: 'expired-share-token' } },
+    {
+      set: () => undefined,
+      status: (status) => {
+        unavailableStatus = status;
+        return {
+          type: () => ({ send: (value) => { unavailablePage = value; } }),
+        };
+      },
+    },
+    (nextError) => { throw nextError; }
+  );
+  assert.equal(unavailableStatus, 404);
+  assert.match(unavailablePage, /Tickets are no longer available to purchase/);
+  assert.match(unavailablePage, /font-size:30px/);
 
   console.log('marketplace guest ticket checkout controller tests passed');
 })().catch((error) => {

@@ -38,6 +38,7 @@ const {
 } = require('../../helper/ticket-qr-helper');
 const { isScannerAvailable } = require('../../helper/event-ticket-helper');
 const {
+  isPublicMarketplaceEventEligible,
   sanitizePublicMarketplaceEvent,
 } = require('../../helper/public-marketplace-event-helper');
 
@@ -60,6 +61,17 @@ const getTicketInvitationEvent = (shareToken) => MarketplaceEventModel.findOne({
   ticket_sales_closed_at: null,
   status: { $nin: ['DRAFT', 'CANCELLED'] },
 });
+
+const getPublicGuestTicketEvent = async (eventId) => {
+  const event = await MarketplaceEventModel.findOne({
+    event_id: eventId,
+    event_visibility: 'PUBLIC',
+    ticket_sales_enabled: true,
+    ticket_sales_closed_at: null,
+    status: 'OPEN',
+  }).lean();
+  return event && isPublicMarketplaceEventEligible(event) ? event : null;
+};
 
 const closeTicketSalesAfterFinalCheckIn = async ({ eventId, checkedInAt }) => {
   try {
@@ -162,6 +174,10 @@ exports.quote = async (req, res, next) => {
       ticket_sales_enabled: true,
       status: { $nin: ['DRAFT', 'CANCELLED'] },
       ticket_sales_closed_at: null,
+      ...(req.publicGuestCheckout ? {
+        event_visibility: 'PUBLIC',
+        tax_exemption_status: { $in: ['NOT_REQUESTED', 'APPROVED'] },
+      } : {}),
     }).lean();
     if (!event) throw buildError('Ticket sales are unavailable', 404);
     const gaQuantity = Number(req.body.ga_quantity || 0);
@@ -207,6 +223,18 @@ exports.guestQuote = async (req, res, next) => {
   }
 };
 
+exports.publicGuestQuote = async (req, res, next) => {
+  try {
+    const event = await getPublicGuestTicketEvent(req.params.eventId);
+    if (!event) throw buildError('Ticket sales are unavailable', 404);
+    req.user = getGuestPurchaser(req.body.purchaser);
+    req.publicGuestCheckout = true;
+    return exports.quote(req, res, next);
+  } catch (error) {
+    return next(error);
+  }
+};
+
 exports.checkout = async (req, res, next) => {
   let order = null;
   let inventoryReserved = false;
@@ -232,6 +260,9 @@ exports.checkout = async (req, res, next) => {
       vipQuantity,
     });
     inventoryReserved = true;
+    if (req.publicGuestCheckout && !isPublicMarketplaceEventEligible(event)) {
+      throw buildError('Ticket sales are unavailable', 404);
+    }
 
     const quote = await buildTicketQuote({
       event,
@@ -397,6 +428,18 @@ exports.guestCheckout = async (req, res, next) => {
     if (!event) throw buildError('Ticket invitation is unavailable', 404);
     req.params.eventId = event.event_id;
     req.user = getGuestPurchaser(req.body.purchaser);
+    return exports.checkout(req, res, next);
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.publicGuestCheckout = async (req, res, next) => {
+  try {
+    const event = await getPublicGuestTicketEvent(req.params.eventId);
+    if (!event) throw buildError('Ticket sales are unavailable', 404);
+    req.user = getGuestPurchaser(req.body.purchaser);
+    req.publicGuestCheckout = true;
     return exports.checkout(req, res, next);
   } catch (error) {
     return next(error);
@@ -866,7 +909,10 @@ exports.publicTicketInvitation = async (req, res, next) => {
     const event = await getTicketInvitationEvent(req.params.shareToken)
       .select('event_id event_name event_date event_city event_state')
       .lean();
-    if (!event) return res.status(404).send('Ticket invitation is unavailable');
+    if (!event) {
+      res.set({ 'Cache-Control': 'no-store, private', 'X-Content-Type-Options': 'nosniff' });
+      return res.status(404).type('html').send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Tickets Unavailable</title><style>body{align-items:center;background:#0f172a;color:#172033;display:flex;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;justify-content:center;margin:0;min-height:100vh;padding:24px}.card{background:#fff;border-radius:22px;box-sizing:border-box;max-width:520px;padding:36px 28px;text-align:center;width:100%}h1{font-size:30px;line-height:1.2;margin:0 0 14px}p{color:#526176;font-size:19px;line-height:1.45;margin:0}</style></head><body><main class="card"><h1>Tickets are no longer available to purchase.</h1><p>Ticket sales for this event have ended.</p></main></body></html>`);
+    }
     const deepLink = `rtc-customer://invite/${encodeURIComponent(req.params.shareToken)}`;
     res.set({ 'Cache-Control': 'no-store, private', 'X-Content-Type-Options': 'nosniff' });
     return res.type('html').send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>RTC Event Invitation</title><style>body{font-family:-apple-system,sans-serif;background:#0f172a;color:#fff;padding:28px}.card{max-width:480px;margin:auto;background:#fff;color:#172033;padding:28px;border-radius:22px}a{display:block;text-align:center;background:#ea580c;color:#fff;padding:16px;border-radius:14px;text-decoration:none;font-weight:800}</style></head><body><main class="card"><p>ROUND DA' CORNER</p><h1>${String(event.event_name).replace(/[<>&]/g, '')}</h1><p>${String(event.event_city || '')}, ${String(event.event_state || '')}</p><p>Open Round Da' Corner, enter your contact information, then select your tickets.</p><a href="${deepLink}">Get Tickets</a></main></body></html>`);

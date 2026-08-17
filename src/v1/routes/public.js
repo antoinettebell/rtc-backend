@@ -209,6 +209,20 @@ router.get(
 );
 
 router.post(
+  '/marketplace/events/:eventId/tickets/quote',
+  publicReviewRateLimit,
+  validate(MarketplaceValidation.guestQuoteTickets),
+  MarketplaceTicketController.publicGuestQuote
+);
+
+router.post(
+  '/marketplace/events/:eventId/tickets/checkout',
+  publicReviewRateLimit,
+  validate(MarketplaceValidation.guestCheckoutTickets),
+  MarketplaceTicketController.publicGuestCheckout
+);
+
+router.post(
   '/marketplace/ticket-invitations/:shareToken/quote',
   publicReviewRateLimit,
   validate(MarketplaceValidation.guestQuoteTickets),
