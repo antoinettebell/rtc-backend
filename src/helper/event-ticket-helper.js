@@ -114,14 +114,24 @@ const zonedParts = (date, timeZone) =>
       .map(({ type, value }) => [type, Number(value)])
   );
 
-const isScannerAvailable = ({ eventDate, timeZone = 'America/New_York', now = new Date(), closedAt }) => {
+const isScannerAvailable = ({
+  eventDate,
+  eventTime,
+  timeZone = 'America/New_York',
+  now = new Date(),
+  closedAt,
+}) => {
   if (closedAt) return false;
   const today = zonedParts(now, timeZone);
   const eventDay = String(eventDate instanceof Date ? eventDate.toISOString() : eventDate).slice(0, 10);
   const todayKey = `${today.year}-${String(today.month).padStart(2, '0')}-${String(today.day).padStart(2, '0')}`;
-  if (todayKey > eventDay) return true;
   if (todayKey < eventDay) return false;
-  return today.hour >= 6;
+  if (todayKey === eventDay && today.hour < 6) return false;
+
+  const scanningDeadline = new Date(
+    eventStartUtc({ eventDate, eventTime, timeZone }).getTime() + 24 * 60 * 60 * 1000
+  );
+  return now < scanningDeadline;
 };
 
 const parseClockTime = (value) => {

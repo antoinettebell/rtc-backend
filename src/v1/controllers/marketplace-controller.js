@@ -70,6 +70,9 @@ const {
   getMarketplaceEventTiming,
 } = require('../../helper/marketplace-event-close-helper');
 const {
+  getCoordinatorPaymentCompletion,
+} = require('../../helper/marketplace-event-completion-helper');
+const {
   getMarketplaceAwardRevocationDecision,
   getMarketplaceAwardRevocationError,
 } = require('../../helper/marketplace-award-revocation');
@@ -3228,7 +3231,14 @@ const archiveMarketplaceSubmissionsForReopen = async (eventId, now = new Date())
 };
 
 const notifyClosedWithoutAward = async (event) => {
-  const [bids, applications, awardedBids, awardedApplications] = await Promise.all([
+  const [
+    bids,
+    applications,
+    eventVendorApplications,
+    awardedBids,
+    awardedApplications,
+    awardedEventVendorApplications,
+  ] = await Promise.all([
     MarketplaceBidService.getByData(
       { event_id: event.event_id, bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] } },
       { lean: true }
@@ -3237,6 +3247,10 @@ const notifyClosedWithoutAward = async (event) => {
       { event_id: event.event_id, application_status: { $nin: ['DRAFT', 'WITHDRAWN'] } },
       { lean: true }
     ),
+    EventVendorApplicationModel.find({
+      event_id: event.event_id,
+      status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+    }).lean(),
     MarketplaceBidService.getByData(
       { event_id: event.event_id, bid_status: 'AWARDED' },
       { lean: true }
@@ -3248,18 +3262,26 @@ const notifyClosedWithoutAward = async (event) => {
       },
       { lean: true }
     ),
+    EventVendorApplicationModel.find({
+      event_id: event.event_id,
+      status: { $in: ['AWARDED', 'PAYMENT_DUE', 'PAID'] },
+    }).lean(),
   ]);
 
-  if (!bids.length && !applications.length) {
+  if (!bids.length && !applications.length && !eventVendorApplications.length) {
     return;
   }
-  if (awardedBids.length || awardedApplications.length) {
+  if (
+    awardedBids.length ||
+    awardedApplications.length ||
+    awardedEventVendorApplications.length
+  ) {
     return;
   }
 
   const vendorIds = [
     ...new Set(
-      [...bids, ...applications]
+      [...bids, ...applications, ...eventVendorApplications]
         .map((item) => item.vendor_user_id)
         .filter(Boolean)
         .map(String)
@@ -3564,48 +3586,32 @@ const getFinalEventPaymentAggregateStatus = async (eventId) => {
     { event_id: eventId, bid_status: 'AWARDED', archived_at: null },
     { lean: true }
   );
-  const awardedApplications = await MarketplaceApplicationService.getByData(
+  const finalPayments = await MarketplacePaymentService.getByData(
     {
       event_id: eventId,
-      application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
-      archived_at: null,
+      payment_type: 'FINAL_EVENT_PAYMENT',
+      payment_status: { $in: ['PENDING', 'PROCESSING', 'PAID', 'FAILED'] },
     },
     { lean: true }
   );
-  const targetQueries = [
-    ...awardedBids.map((bid) => ({ bid_id: bid.bid_id })),
-    ...awardedApplications.map((application) => ({
-      application_id: application.application_id,
-    })),
-  ];
-
-  if (!targetQueries.length) {
-    return 'NOT_REQUIRED';
-  }
-
-	  const finalPayments = await MarketplacePaymentService.getByData(
-	    {
-	      event_id: eventId,
-	      payment_type: 'FINAL_EVENT_PAYMENT',
-	      payment_status: { $in: ['PENDING', 'PROCESSING', 'PAID', 'FAILED'] },
-	      $or: targetQueries,
-	    },
-	    { lean: true }
-	  );
-
-  const isTargetPaid = (query) =>
-    finalPayments.some(
-      (payment) =>
-        payment.payment_status === 'PAID' &&
-        (!query.bid_id || payment.bid_id === query.bid_id) &&
-        (!query.application_id || payment.application_id === query.application_id)
-    );
-
-  if (targetQueries.every(isTargetPaid)) {
-    return 'PAID';
-  }
-
+  const completion = getCoordinatorPaymentCompletion({ awardedBids, finalPayments });
+  if (!completion.paymentRequired) return 'NOT_REQUIRED';
+  if (completion.allRequiredPaymentsComplete) return 'PAID';
   return finalPayments.length ? 'PENDING' : 'NOT_REQUIRED';
+};
+
+const getCoordinatorPaymentCompletionForEvent = async (eventId) => {
+  const [awardedBids, finalPayments] = await Promise.all([
+    MarketplaceBidService.getByData(
+      { event_id: eventId, bid_status: 'AWARDED', archived_at: null },
+      { lean: true }
+    ),
+    MarketplacePaymentService.getByData(
+      { event_id: eventId, payment_type: 'FINAL_EVENT_PAYMENT' },
+      { lean: true }
+    ),
+  ]);
+  return getCoordinatorPaymentCompletion({ awardedBids, finalPayments });
 };
 
 const sendFinalEventPaymentReceipt = async ({ payment, event }) => {
@@ -4303,13 +4309,22 @@ const finalizePaidFinalEventPayment = async (payment) => {
   );
   const shouldSendReceipt = existingEvent?.final_payment_status !== 'PAID';
 
+  const finalPaymentStatus = await getFinalEventPaymentAggregateStatus(payment.event_id);
+  const completedAt = new Date();
   const marketplaceEvent = await MarketplaceEventService.update(
     { event_id: payment.event_id },
     {
       final_payment_id: payment.payment_id,
       final_payment_food_truck_id: payment.food_truck_id || null,
-      final_payment_status: await getFinalEventPaymentAggregateStatus(payment.event_id),
-      closed_at: new Date(),
+      final_payment_status: finalPaymentStatus,
+      ...(finalPaymentStatus === 'PAID'
+        ? {
+            status: 'CLOSED',
+            closed_at: completedAt,
+            vendor_applications_closed_at:
+              existingEvent.vendor_applications_closed_at || completedAt,
+          }
+        : {}),
     },
     { getNew: true }
   );
@@ -4666,17 +4681,24 @@ exports.closeEvent = async (req, res, next) => {
     }
 
     const event = await getOwnedEvent(req.params.eventId, req.user._id);
-    if (event.status === 'AWARDED') {
-      throw buildError('Awarded events cannot be closed.', 400);
-    }
-    if (!ACTIVE_EVENT_STATUSES.includes(event.status)) {
+    if (![...ACTIVE_EVENT_STATUSES, 'AWARDED'].includes(event.status)) {
       throw buildError('Only open events can be closed.', 400);
+    }
+
+    const completion = await getCoordinatorPaymentCompletionForEvent(event.event_id);
+    if (completion.outstandingBidIds.length) {
+      throw buildError(
+        'Complete all coordinator vendor payments before closing this event.',
+        409
+      );
     }
 
     const now = new Date();
     const marketplaceEvent = await MarketplaceEventService.update(
       { event_id: req.params.eventId, customer_user_id: req.user._id },
       {
+        status: 'CLOSED',
+        closed_at: now,
         vendor_applications_closed_at: now,
         close_comment: req.body.close_comment,
         closed_by_user_id: req.user._id,
@@ -7842,7 +7864,7 @@ exports.createFinalEventPayment = async (req, res, next) => {
           { singleResult: true }
         );
     if (!event) throw buildError('Marketplace event not found', 404);
-    if (event.status !== 'AWARDED') {
+    if (!['AWARDED', 'CLOSED'].includes(event.status)) {
       throw buildError('Final event payment is only available for awarded events.', 400);
     }
     if (isCoordinator) {

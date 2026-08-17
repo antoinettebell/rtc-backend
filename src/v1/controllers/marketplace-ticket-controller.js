@@ -58,8 +58,35 @@ const getTicketInvitationEvent = (shareToken) => MarketplaceEventModel.findOne({
   ticket_share_token_hash: hashTicketToken(shareToken),
   ticket_sales_enabled: true,
   ticket_sales_closed_at: null,
-  status: { $nin: ['DRAFT', 'CANCELLED', 'CLOSED'] },
+  status: { $nin: ['DRAFT', 'CANCELLED'] },
 });
+
+const closeTicketSalesAfterFinalCheckIn = async ({ eventId, checkedInAt }) => {
+  try {
+    const remainingActiveTickets = await MarketplaceTicketModel.countDocuments({
+      event_id: eventId,
+      status: 'ACTIVE',
+    });
+    if (remainingActiveTickets > 0) return false;
+
+    const result = await MarketplaceEventModel.updateOne(
+      {
+        event_id: eventId,
+        ticket_sales_enabled: true,
+        ticket_sales_closed_at: null,
+        status: { $ne: 'CANCELLED' },
+      },
+      { $set: { ticket_sales_closed_at: checkedInAt } }
+    );
+    return Boolean(result?.modifiedCount || result?.nModified);
+  } catch (error) {
+    console.error('Unable to close ticket sales after final check-in', {
+      eventId,
+      message: error?.message || 'Unknown error',
+    });
+    return false;
+  }
+};
 
 const getGuestPurchaser = (purchaser = {}) => ({
   _id: null,
@@ -135,7 +162,6 @@ exports.quote = async (req, res, next) => {
       ticket_sales_enabled: true,
       status: { $nin: ['DRAFT', 'CANCELLED'] },
       ticket_sales_closed_at: null,
-      ticket_scanning_closed_at: null,
     }).lean();
     if (!event) throw buildError('Ticket sales are unavailable', 404);
     const gaQuantity = Number(req.body.ga_quantity || 0);
@@ -583,6 +609,7 @@ exports.validateTicket = async (req, res, next) => {
     if (
       !isScannerAvailable({
         eventDate: event.event_date,
+        eventTime: event.event_time,
         timeZone: event.event_timezone,
         closedAt: event.ticket_scanning_closed_at,
       })
@@ -620,6 +647,11 @@ exports.validateTicket = async (req, res, next) => {
         409
       );
     }
+
+    await closeTicketSalesAfterFinalCheckIn({
+      eventId: event.event_id,
+      checkedInAt,
+    });
 
     return res.data(
       {
@@ -766,7 +798,7 @@ exports.closeTicketSales = async (req, res, next) => {
         ticket_sales_closed_at: null,
         status: { $ne: 'CANCELLED' },
       },
-      { $set: { ticket_sales_closed_at: now, status: 'CLOSED', closed_at: now } },
+      { $set: { ticket_sales_closed_at: now } },
       { new: true }
     );
     if (!event) throw buildError('Event not found or ticket sales already closed', 404);
@@ -783,7 +815,7 @@ exports.createTicketShareLink = async (req, res, next) => {
       customer_user_id: req.user._id,
       ticket_sales_enabled: true,
       ticket_sales_closed_at: null,
-      status: { $nin: ['DRAFT', 'CANCELLED', 'CLOSED'] },
+      status: { $nin: ['DRAFT', 'CANCELLED'] },
     });
     if (!event) throw buildError('Ticket sales are unavailable', 404);
     const { token, tokenHash } = createTicketToken();
@@ -866,11 +898,12 @@ exports.createScannerSession = async (req, res, next) => {
     if (
       !isScannerAvailable({
         eventDate: event.event_date,
+        eventTime: event.event_time,
         timeZone: event.event_timezone,
         closedAt: event.ticket_scanning_closed_at,
       })
     ) {
-      throw buildError('Scanner opens at 6:00 a.m. on the event day', 403);
+      throw buildError('Ticket scanning is not currently available', 403);
     }
     const { token, tokenHash } = createTicketToken();
     await MarketplaceScannerSessionModel.create({
@@ -969,6 +1002,7 @@ exports.publicValidateTicket = async (req, res, next) => {
       !event ||
       !isScannerAvailable({
         eventDate: event.event_date,
+        eventTime: event.event_time,
         timeZone: event.event_timezone,
         closedAt: event.ticket_scanning_closed_at,
       })
@@ -1001,6 +1035,10 @@ exports.publicValidateTicket = async (req, res, next) => {
         409
       );
     }
+    await closeTicketSalesAfterFinalCheckIn({
+      eventId: event.event_id,
+      checkedInAt,
+    });
     return res.data(
       {
         valid: true,

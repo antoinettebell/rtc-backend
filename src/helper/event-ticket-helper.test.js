@@ -43,6 +43,7 @@ assert.strictEqual(
 assert.strictEqual(
   isScannerAvailable({
     eventDate: '2026-08-10',
+    eventTime: '8:00 PM',
     timeZone: 'America/New_York',
     now: new Date('2026-08-10T09:59:00Z'),
   }),
@@ -51,6 +52,7 @@ assert.strictEqual(
 assert.strictEqual(
   isScannerAvailable({
     eventDate: '2026-08-10',
+    eventTime: '8:00 PM',
     timeZone: 'America/New_York',
     now: new Date('2026-08-10T10:00:00Z'),
   }),
@@ -59,6 +61,7 @@ assert.strictEqual(
 assert.strictEqual(
   isScannerAvailable({
     eventDate: '2026-08-10',
+    eventTime: '8:00 PM',
     timeZone: 'America/New_York',
     now: new Date('2026-08-11T05:00:00Z'),
   }),
@@ -67,6 +70,25 @@ assert.strictEqual(
 assert.strictEqual(
   isScannerAvailable({
     eventDate: '2026-08-10',
+    eventTime: '8:00 PM',
+    timeZone: 'America/New_York',
+    now: new Date('2026-08-11T23:59:59Z'),
+  }),
+  true
+);
+assert.strictEqual(
+  isScannerAvailable({
+    eventDate: '2026-08-10',
+    eventTime: '8:00 PM',
+    timeZone: 'America/New_York',
+    now: new Date('2026-08-12T00:00:00Z'),
+  }),
+  false
+);
+assert.strictEqual(
+  isScannerAvailable({
+    eventDate: '2026-08-10',
+    eventTime: '8:00 PM',
     now: new Date('2026-08-10T12:00:00Z'),
     closedAt: new Date(),
   }),

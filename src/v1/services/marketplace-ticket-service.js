@@ -31,7 +31,6 @@ const reserveEventInventory = async ({ eventId, gaQuantity = 0, vipQuantity = 0 
       ticket_sales_enabled: true,
       status: { $nin: ['DRAFT', 'CANCELLED'] },
       ticket_sales_closed_at: null,
-      ticket_scanning_closed_at: null,
       $and: [
         { $expr: inventoryExpression('ga', gaQuantity) },
         { $expr: inventoryExpression('vip', vipQuantity) },
