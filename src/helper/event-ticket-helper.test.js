@@ -45,7 +45,7 @@ assert.strictEqual(
     eventDate: '2026-08-10',
     eventTime: '8:00 PM',
     timeZone: 'America/New_York',
-    now: new Date('2026-08-10T09:59:00Z'),
+    now: new Date('2026-08-10T03:59:59Z'),
   }),
   false
 );
@@ -54,7 +54,16 @@ assert.strictEqual(
     eventDate: '2026-08-10',
     eventTime: '8:00 PM',
     timeZone: 'America/New_York',
-    now: new Date('2026-08-10T10:00:00Z'),
+    now: new Date('2026-08-10T04:00:00Z'),
+  }),
+  true
+);
+assert.strictEqual(
+  isScannerAvailable({
+    eventDate: '2026-08-18',
+    eventTime: '1:15 AM',
+    timeZone: 'America/New_York',
+    now: new Date('2026-08-18T04:53:00Z'),
   }),
   true
 );

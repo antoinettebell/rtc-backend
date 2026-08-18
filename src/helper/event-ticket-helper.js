@@ -126,7 +126,6 @@ const isScannerAvailable = ({
   const eventDay = String(eventDate instanceof Date ? eventDate.toISOString() : eventDate).slice(0, 10);
   const todayKey = `${today.year}-${String(today.month).padStart(2, '0')}-${String(today.day).padStart(2, '0')}`;
   if (todayKey < eventDay) return false;
-  if (todayKey === eventDay && today.hour < 6) return false;
 
   const scanningDeadline = new Date(
     eventStartUtc({ eventDate, eventTime, timeZone }).getTime() + 24 * 60 * 60 * 1000
