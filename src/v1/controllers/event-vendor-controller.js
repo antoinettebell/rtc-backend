@@ -75,6 +75,10 @@ const {
   applyMarketplaceEventLocationPrivacy,
 } = require('../../helper/marketplace-event-location-privacy');
 const {
+  formatMarketplaceCalendarDate,
+  formatMarketplaceClockTime,
+} = require('../../helper/marketplace-event-close-helper');
+const {
   isEventVendorApplicationUnlocked,
 } = require('../../helper/marketplace-vendor-access-policy');
 
@@ -893,7 +897,8 @@ exports.awardApplication = async (req, res, next) => {
           `
             <p>Your Marketplace Vendor selection has been recorded.</p>
             <p><strong>Event:</strong> ${event.event_name || event.event_id}</p>
-            <p><strong>Event date:</strong> ${event.event_date || 'Not provided'}</p>
+            <p><strong>Event date:</strong> ${formatMarketplaceCalendarDate(event.event_date)}</p>
+            <p><strong>Event time:</strong> ${formatMarketplaceClockTime(event.event_time)}</p>
             <p>The vendor must complete the attendance-fee checkout before the award is confirmed.</p>
           `
         );

@@ -72,7 +72,10 @@ const {
 const {
   buildVendorEventCloseState,
   combineMarketplaceDateAndTime,
+  formatMarketplaceCalendarDate,
+  formatMarketplaceClockTime,
   getMarketplaceEventTiming,
+  isMarketplaceCloseBeforeEvent,
   isFinalPaymentAvailable,
 } = require('../../helper/marketplace-event-close-helper');
 const {
@@ -641,6 +644,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     ['event_type', 'Event type is required.'],
     ['primary_service_style', 'Primary service style is required.'],
     ['event_date', 'Event date is required.'],
+    ['event_time', 'Event time is required.'],
     ['event_address', 'Event address is required.'],
     ['event_city', 'Event city is required.'],
     ['event_state', 'Event state is required.'],
@@ -652,6 +656,16 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
       throw buildError(message, 400);
     }
   });
+  if (
+    !isMarketplaceCloseBeforeEvent({
+      eventDate: normalized.event_date,
+      eventTime: normalized.event_time,
+      eventCloseAt: normalized.event_close_date,
+      timeZone: normalized.event_timezone || 'America/New_York',
+    })
+  ) {
+    throw buildError('Close date/time must be before the event date/time.', 400);
+  }
   if (
     Number(normalized.event_duration_minutes || 0) <= 0
   ) {
@@ -3002,8 +3016,8 @@ const getUserName = (user, fallback = 'there') =>
 
 const formatEventSummaryHtml = (event) => `
   <p><strong>Event:</strong> ${event?.event_name || event?.event_id || 'Marketplace event'}</p>
-  <p><strong>Date:</strong> ${event?.event_date || 'Not set'}</p>
-  <p><strong>Time:</strong> ${event?.event_time || 'Not set'}</p>
+  <p><strong>Date:</strong> ${formatMarketplaceCalendarDate(event?.event_date)}</p>
+  <p><strong>Time:</strong> ${formatMarketplaceClockTime(event?.event_time)}</p>
   <p><strong>Location:</strong> ${
     event?.formatted_address || event?.event_address || 'Not provided'
   }</p>
@@ -3936,7 +3950,8 @@ const applyEventVendorApplicationSelections = async (
           `
             <p>Your Marketplace Vendor selection has been recorded.</p>
             <p><strong>Event:</strong> ${event.event_name || event.event_id}</p>
-            <p><strong>Event date:</strong> ${event.event_date || 'Not provided'}</p>
+            <p><strong>Event date:</strong> ${formatMarketplaceCalendarDate(event.event_date)}</p>
+            <p><strong>Event time:</strong> ${formatMarketplaceClockTime(event.event_time)}</p>
             <p>The vendor must complete the attendance-fee checkout before the award is confirmed.</p>
           `
         );

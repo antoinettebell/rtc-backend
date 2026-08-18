@@ -70,6 +70,43 @@ const combineMarketplaceDateAndTime = ({
   }
 };
 
+const formatMarketplaceCalendarDate = (value) => {
+  if (!value) return 'Not set';
+  const isoDate = value instanceof Date
+    ? Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10)
+    : String(value).trim().match(/^(\d{4})-(\d{2})-(\d{2})/)?.[0];
+  if (!isoDate) return 'Not set';
+  const [year, month, day] = isoDate.split('-');
+  return `${month}/${day}/${year}`;
+};
+
+const formatMarketplaceClockTime = (value) => {
+  const time = parseEventTime(value);
+  if (!time) return 'Not set';
+  const meridiem = time.hour >= 12 ? 'PM' : 'AM';
+  const displayHour = time.hour % 12 || 12;
+  return `${displayHour}:${String(time.minute).padStart(2, '0')} ${meridiem}`;
+};
+
+const isMarketplaceCloseBeforeEvent = ({
+  eventDate,
+  eventTime,
+  eventCloseAt,
+  timeZone = 'America/New_York',
+}) => {
+  const eventStartAt = combineMarketplaceDateAndTime({
+    dateValue: eventDate,
+    timeValue: eventTime,
+    timeZone,
+  });
+  const closeAt = new Date(eventCloseAt);
+  return Boolean(
+    eventStartAt &&
+    !Number.isNaN(closeAt.getTime()) &&
+    closeAt.getTime() < eventStartAt.getTime()
+  );
+};
+
 const getMarketplaceEventTiming = (event = {}) => {
   const date = new Date(event.event_date);
   const time = parseEventTime(event.event_time);
@@ -142,6 +179,9 @@ const buildVendorEventCloseState = (event = {}, now = new Date()) => {
 module.exports = {
   buildVendorEventCloseState,
   combineMarketplaceDateAndTime,
+  formatMarketplaceCalendarDate,
+  formatMarketplaceClockTime,
   getMarketplaceEventTiming,
+  isMarketplaceCloseBeforeEvent,
   isFinalPaymentAvailable,
 };
