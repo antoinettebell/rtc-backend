@@ -47,6 +47,29 @@ const zonedDateTimeToUtc = ({ year, month, day, hour, minute, timeZone }) => {
   return candidate;
 };
 
+const combineMarketplaceDateAndTime = ({
+  dateValue,
+  timeValue,
+  timeZone = 'America/New_York',
+}) => {
+  const date = new Date(dateValue);
+  const time = parseEventTime(timeValue || '23:59');
+  if (Number.isNaN(date.getTime()) || !time) return null;
+
+  try {
+    return zonedDateTimeToUtc({
+      year: date.getUTCFullYear(),
+      month: date.getUTCMonth() + 1,
+      day: date.getUTCDate(),
+      hour: time.hour,
+      minute: time.minute,
+      timeZone,
+    });
+  } catch (error) {
+    return null;
+  }
+};
+
 const getMarketplaceEventTiming = (event = {}) => {
   const date = new Date(event.event_date);
   const time = parseEventTime(event.event_time);
@@ -118,6 +141,7 @@ const buildVendorEventCloseState = (event = {}, now = new Date()) => {
 
 module.exports = {
   buildVendorEventCloseState,
+  combineMarketplaceDateAndTime,
   getMarketplaceEventTiming,
   isFinalPaymentAvailable,
 };

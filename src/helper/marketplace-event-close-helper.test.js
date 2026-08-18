@@ -1,9 +1,34 @@
 const assert = require('assert');
 const {
   buildVendorEventCloseState,
+  combineMarketplaceDateAndTime,
   getMarketplaceEventTiming,
   isFinalPaymentAvailable,
 } = require('./marketplace-event-close-helper');
+
+assert.strictEqual(
+  combineMarketplaceDateAndTime({
+    dateValue: '2026-08-17T00:00:00.000Z',
+    timeValue: '21:30',
+    timeZone: 'America/New_York',
+  }).toISOString(),
+  '2026-08-18T01:30:00.000Z'
+);
+const easternSubmissionDeadline = combineMarketplaceDateAndTime({
+  dateValue: '2026-08-17',
+  timeValue: '21:30',
+  timeZone: 'America/New_York',
+});
+assert.strictEqual(new Date('2026-08-18T01:29:59.999Z') < easternSubmissionDeadline, true);
+assert.strictEqual(new Date('2026-08-18T01:30:00.000Z') >= easternSubmissionDeadline, true);
+assert.strictEqual(
+  combineMarketplaceDateAndTime({
+    dateValue: '2026-08-17',
+    timeValue: '21:30',
+    timeZone: 'America/Los_Angeles',
+  }).toISOString(),
+  '2026-08-18T04:30:00.000Z'
+);
 
 const event = {
   event_date: new Date('2026-08-04T00:00:00.000Z'),

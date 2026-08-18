@@ -71,6 +71,7 @@ const {
 } = require('../../helper/marketplace-vendor-access-policy');
 const {
   buildVendorEventCloseState,
+  combineMarketplaceDateAndTime,
   getMarketplaceEventTiming,
   isFinalPaymentAvailable,
 } = require('../../helper/marketplace-event-close-helper');
@@ -429,20 +430,6 @@ const normalizeTime = (value) => {
   throw buildError('Time must use HH:mm AM/PM format', 400);
 };
 
-const combineDateAndTime = (dateValue, timeValue) => {
-  if (!dateValue) {
-    return null;
-  }
-  const date = new Date(dateValue);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-  const normalizedTime = normalizeTime(timeValue) || '23:59';
-  const [hours, minutes] = normalizedTime.split(':').map(Number);
-  date.setHours(hours, minutes, 0, 0);
-  return date;
-};
-
 const normalizeMarketplaceEventLocation = (body) => {
   const latitude =
     body.latitude === '' || body.latitude == null ? null : Number(body.latitude);
@@ -546,7 +533,11 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
 
   const normalizedEventTime = normalizeTime(body.event_time);
   const normalizedCloseTime = normalizeTime(body.event_close_time);
-  const eventCloseDate = combineDateAndTime(body.event_close_date, normalizedCloseTime);
+  const eventCloseDate = combineMarketplaceDateAndTime({
+    dateValue: body.event_close_date,
+    timeValue: normalizedCloseTime,
+    timeZone: body.event_timezone || existingEvent?.event_timezone || 'America/New_York',
+  });
   const freeFoodOffered =
     body.free_food_offered === true || body.free_food_offered === false
       ? body.free_food_offered
@@ -598,6 +589,12 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     event_duration_minutes: totalEventDurationMinutes,
     event_close_time: normalizedCloseTime,
     event_close_date: eventCloseDate,
+    vendor_applications_closed_at:
+      ACTIVE_EVENT_STATUSES.includes(status) &&
+      eventCloseDate &&
+      eventCloseDate > new Date()
+        ? null
+        : body.vendor_applications_closed_at || null,
     free_food_offered: freeFoodOffered,
     free_food_provider: freeFoodProvider,
 	    vendors_required_to_giveaway_food: vendorsRequiredToGiveawayFood,
