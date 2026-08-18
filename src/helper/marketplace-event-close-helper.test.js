@@ -14,6 +14,11 @@ assert.strictEqual(formatMarketplaceCalendarDate(new Date('2026-08-18T00:00:00.0
 assert.strictEqual(formatMarketplaceClockTime('01:15'), '1:15 AM');
 assert.strictEqual(formatMarketplaceClockTime('13:15'), '1:15 PM');
 assert.strictEqual(formatMarketplaceClockTime('9:05 PM'), '9:05 PM');
+assert.doesNotMatch(
+  `${formatMarketplaceCalendarDate('2026-08-18T00:00:00.000Z')} ${formatMarketplaceClockTime('01:15')}`,
+  /GMT|UTC|\b\d{2}:\d{2}\b/,
+  'marketplace summaries use US date and 12-hour clock output without raw timezone text'
+);
 
 assert.strictEqual(
   combineMarketplaceDateAndTime({
