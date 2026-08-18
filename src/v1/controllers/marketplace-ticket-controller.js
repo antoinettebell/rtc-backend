@@ -404,7 +404,7 @@ exports.checkout = async (req, res, next) => {
       }),
       MailHelper.sendMail(
         order.purchaser_email,
-        `Your tickets for ${event.event_name}`,
+        event.event_name,
         `<h2>Your event tickets</h2>${emailTickets
           .map(
             ({ ticket, url, qr }) =>

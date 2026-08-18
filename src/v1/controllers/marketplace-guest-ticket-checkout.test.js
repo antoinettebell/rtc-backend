@@ -195,7 +195,7 @@ const requestBody = {
   assert.equal(chargedPayment.email, 'guest@example.com');
   assert.equal(smsPayload.to, '+15555550123');
   assert.equal(emailDelivery.recipient, 'guest@example.com');
-  assert.equal(emailDelivery.subject, 'Your tickets for Public Festival');
+  assert.equal(emailDelivery.subject, 'Public Festival');
   assert.match(emailDelivery.html, /cid:rtc-ticket-ticket-1/);
   assert.match(emailDelivery.html, /Open secure ticket/);
   assert.equal(emailDelivery.options.attachments.length, 1);
