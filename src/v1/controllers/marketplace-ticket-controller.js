@@ -114,33 +114,6 @@ const getPublicGuestTicketEvent = async (eventId) => {
     : null;
 };
 
-const closeTicketSalesAfterFinalCheckIn = async ({ eventId, checkedInAt }) => {
-  try {
-    const remainingActiveTickets = await MarketplaceTicketModel.countDocuments({
-      event_id: eventId,
-      status: 'ACTIVE',
-    });
-    if (remainingActiveTickets > 0) return false;
-
-    const result = await MarketplaceEventModel.updateOne(
-      {
-        event_id: eventId,
-        ticket_sales_enabled: true,
-        ticket_sales_closed_at: null,
-        status: { $ne: 'CANCELLED' },
-      },
-      { $set: { ticket_sales_closed_at: checkedInAt } }
-    );
-    return Boolean(result?.modifiedCount || result?.nModified);
-  } catch (error) {
-    console.error('Unable to close ticket sales after final check-in', {
-      eventId,
-      message: error?.message || 'Unknown error',
-    });
-    return false;
-  }
-};
-
 const getGuestPurchaser = (purchaser = {}) => ({
   _id: null,
   firstName: purchaser.first_name,
@@ -732,11 +705,6 @@ exports.validateTicket = async (req, res, next) => {
       );
     }
 
-    await closeTicketSalesAfterFinalCheckIn({
-      eventId: event.event_id,
-      checkedInAt,
-    });
-
     return res.data(
       {
         valid: true,
@@ -1146,10 +1114,6 @@ exports.publicValidateTicket = async (req, res, next) => {
         409
       );
     }
-    await closeTicketSalesAfterFinalCheckIn({
-      eventId: event.event_id,
-      checkedInAt,
-    });
     return res.data(
       {
         valid: true,

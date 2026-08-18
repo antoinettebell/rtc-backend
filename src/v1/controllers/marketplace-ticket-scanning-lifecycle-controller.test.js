@@ -12,10 +12,8 @@ const loadController = (state) => {
         return {
           MarketplaceEventModel: {
             findOne: () => ({ lean: async () => state.event }),
-            updateOne: async (query, update) => {
-              if (query.event_id !== state.event.event_id) return { modifiedCount: 0 };
-              if (state.event.ticket_sales_closed_at) return { modifiedCount: 0 };
-              Object.assign(state.event, update.$set);
+            updateOne: async () => {
+              state.salesCloseMutationAttempts += 1;
               return { modifiedCount: 1 };
             },
           },
@@ -34,14 +32,22 @@ const loadController = (state) => {
               },
             }),
             countDocuments: async (query) => {
-              if (state.failSalesCloseCheck) throw new Error('temporary database failure');
+              state.salesCloseCountAttempts += 1;
               return state.tickets.filter(
                 (ticket) => ticket.event_id === query.event_id && ticket.status === query.status
               ).length;
             },
           },
           MarketplaceTicketOrderModel: {},
-          MarketplaceScannerSessionModel: {},
+          MarketplaceScannerSessionModel: {
+            findOneAndUpdate: () => ({
+              select: async () => ({
+                _id: 'scanner-session-1',
+                event_id: state.event.event_id,
+                coordinator_user_id: state.event.customer_user_id,
+              }),
+            }),
+          },
           MarketplaceAttachmentModel: {},
           UserModel: {},
         };
@@ -67,6 +73,8 @@ const loadController = (state) => {
 };
 
 const createState = (ticketCount) => ({
+  salesCloseCountAttempts: 0,
+  salesCloseMutationAttempts: 0,
   event: {
     event_id: 'event-1',
     customer_user_id: 'coordinator-1',
@@ -103,6 +111,24 @@ const scan = async (state, token) => {
   return { response, error };
 };
 
+const publicScan = async (state, token) => {
+  const controller = loadController(state);
+  let response;
+  let error;
+  await controller.publicValidateTicket(
+    {
+      body: {
+        event_id: 'event-1',
+        scanner_session_token: 'scanner-session-token',
+        ticket_token: token,
+      },
+    },
+    { data: (payload, message) => { response = { payload, message }; } },
+    (nextError) => { error = nextError; }
+  );
+  return { response, error };
+};
+
 (async () => {
   let state = createState(2);
   let result = await scan(state, 'ticket-1');
@@ -112,26 +138,28 @@ const scan = async (state, token) => {
 
   result = await scan(state, 'ticket-2');
   assert.equal(result.error, undefined);
-  assert.ok(state.event.ticket_sales_closed_at);
+  assert.equal(state.event.ticket_sales_closed_at, null);
+  assert.equal(state.salesCloseCountAttempts, 0);
+  assert.equal(state.salesCloseMutationAttempts, 0);
   assert.equal(state.event.status, 'AWARDED');
   assert.equal(state.event.ticket_scanning_closed_at, null);
 
   state = createState(1);
   result = await scan(state, 'ticket-1');
   assert.equal(result.error, undefined);
-  assert.ok(state.event.ticket_sales_closed_at);
+  assert.equal(state.event.ticket_sales_closed_at, null);
+  assert.equal(state.salesCloseCountAttempts, 0);
+  assert.equal(state.salesCloseMutationAttempts, 0);
   assert.equal(state.event.status, 'AWARDED');
   assert.equal(state.event.ticket_scanning_closed_at, null);
 
   state = createState(1);
-  state.failSalesCloseCheck = true;
-  const originalConsoleError = console.error;
-  console.error = () => undefined;
-  result = await scan(state, 'ticket-1');
-  console.error = originalConsoleError;
+  result = await publicScan(state, 'ticket-1');
   assert.equal(result.error, undefined);
   assert.equal(result.response.payload.valid, true);
   assert.equal(state.event.ticket_sales_closed_at, null);
+  assert.equal(state.salesCloseCountAttempts, 0);
+  assert.equal(state.salesCloseMutationAttempts, 0);
 
   console.log('marketplace ticket scanning lifecycle controller tests passed');
 })().catch((error) => {
