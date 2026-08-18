@@ -6,6 +6,7 @@ const {
   formatMarketplaceClockTime,
   getMarketplaceEventTiming,
   isMarketplaceCloseBeforeEvent,
+  isMarketplaceSourcingClosed,
   isFinalPaymentAvailable,
 } = require('./marketplace-event-close-helper');
 
@@ -123,5 +124,32 @@ const crossMidnightTiming = getMarketplaceEventTiming({
 });
 assert.strictEqual(crossMidnightTiming.start_at.toISOString(), '2026-08-05T03:30:00.000Z');
 assert.strictEqual(crossMidnightTiming.end_at.toISOString(), '2026-08-05T05:30:00.000Z');
+
+assert.strictEqual(
+  isMarketplaceSourcingClosed(
+    { ...event, event_close_date: new Date('2026-08-04T21:00:00.000Z') },
+    new Date('2026-08-04T21:00:00.000Z')
+  ),
+  true,
+  'the application deadline closes sourcing'
+);
+assert.strictEqual(
+  isMarketplaceSourcingClosed(event, new Date('2026-08-05T00:29:59.999Z')),
+  false,
+  'sourcing remains open before the calculated event end when no earlier deadline applies'
+);
+assert.strictEqual(
+  isMarketplaceSourcingClosed(event, new Date('2026-08-05T00:30:00.000Z')),
+  true,
+  'the calculated event end closes sourcing'
+);
+assert.strictEqual(
+  isMarketplaceSourcingClosed(
+    { ...event, vendor_applications_closed_at: new Date('2026-08-03T12:00:00.000Z') },
+    new Date('2026-08-03T12:00:00.000Z')
+  ),
+  true,
+  'an explicitly closed sourcing window remains closed'
+);
 
 console.log('marketplace event close helper tests passed');

@@ -145,6 +145,21 @@ const isFinalPaymentAvailable = (event = {}, now = new Date()) => {
   );
 };
 
+const isMarketplaceSourcingClosed = (event = {}, now = new Date()) => {
+  if (event.vendor_applications_closed_at) return true;
+
+  const currentTime = new Date(now).getTime();
+  const applicationCloseTime = event.event_close_date
+    ? new Date(event.event_close_date).getTime()
+    : NaN;
+  if (Number.isFinite(applicationCloseTime) && applicationCloseTime <= currentTime) {
+    return true;
+  }
+
+  const timing = getMarketplaceEventTiming(event);
+  return Boolean(timing && timing.end_at.getTime() <= currentTime);
+};
+
 const buildVendorEventCloseState = (event = {}, now = new Date()) => {
   const timing = getMarketplaceEventTiming(event);
   const paymentStatus = event.final_payment_status || 'NOT_REQUIRED';
@@ -183,5 +198,6 @@ module.exports = {
   formatMarketplaceClockTime,
   getMarketplaceEventTiming,
   isMarketplaceCloseBeforeEvent,
+  isMarketplaceSourcingClosed,
   isFinalPaymentAvailable,
 };

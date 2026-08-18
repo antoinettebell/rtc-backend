@@ -76,6 +76,7 @@ const {
   formatMarketplaceClockTime,
   getMarketplaceEventTiming,
   isMarketplaceCloseBeforeEvent,
+  isMarketplaceSourcingClosed,
   isFinalPaymentAvailable,
 } = require('../../helper/marketplace-event-close-helper');
 const {
@@ -858,19 +859,24 @@ const notifyMissedVendorFeePayments = async () => {
 const closeExpiredMarketplaceEvents = async () => {
   await notifyMissedVendorFeePayments();
   const now = new Date();
-  const expiredEvents = await MarketplaceEventService.getByData(
+  const openSourcingEvents = await MarketplaceEventService.getByData(
     {
       status: { $in: ACTIVE_EVENT_STATUSES },
-      event_close_date: { $lte: now },
       vendor_applications_closed_at: null,
     },
     { lean: true }
+  );
+  const expiredEvents = openSourcingEvents.filter((event) =>
+    isMarketplaceSourcingClosed(event, now)
   );
   if (!expiredEvents.length) {
     return [];
   }
   await MarketplaceEventService.getModel().updateMany(
-    { event_id: { $in: expiredEvents.map((event) => event.event_id) } },
+    {
+      event_id: { $in: expiredEvents.map((event) => event.event_id) },
+      vendor_applications_closed_at: null,
+    },
     { $set: { vendor_applications_closed_at: now } }
   );
   for (const event of expiredEvents) {
@@ -904,7 +910,7 @@ const assertEventOpenForSubmission = async (event) => {
   if (!event || !ACTIVE_EVENT_STATUSES.includes(event.status)) {
     throw buildError('This event is closed to new submissions.', 410);
   }
-  if (event.vendor_applications_closed_at || (event.event_close_date && new Date(event.event_close_date) <= new Date())) {
+  if (isMarketplaceSourcingClosed(event)) {
     await closeExpiredMarketplaceEvents();
     throw buildError('This event is closed to new submissions.', 410);
   }
@@ -4652,6 +4658,13 @@ exports.reopenEvent = async (req, res, next) => {
 	    }
 	    if (event.status !== 'CLOSED') {
 	      throw buildError('Only closed events can be reopened.', 400);
+	    }
+	    const existingEventTiming = getMarketplaceEventTiming(event);
+	    if (
+	      existingEventTiming &&
+	      existingEventTiming.end_at.getTime() <= Date.now()
+	    ) {
+	      throw buildError('Events that have ended cannot be reopened.', 400);
 	    }
 	    if (event.status === 'AWARDED' || await hasMarketplaceAwards(event.event_id)) {
 	      throw buildError('Events with awarded vendors cannot be reopened.', 400);
