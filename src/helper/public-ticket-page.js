@@ -38,15 +38,15 @@ const renderScannerPage = ({ event, sessionToken }) =>
     title: `${event.event_name} Check-In`,
     body: `<main class="wrap"><div class="brand">ROUND DA' CORNER</div><h1>${escapeHtml(
       event.event_name
-    )}</h1><p>Ticket Check-In</p><div id="reader" class="reader"></div><div id="result" class="result"></div><button id="toggle" class="button">Start Scanner</button></main>`,
+    )}</h1><p>Ticket Check-In</p><div id="result" class="result"></div><div id="reader" class="reader"></div><button id="toggle" class="button">Start Scanner</button></main>`,
     scripts: `<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script><script>
 const session=${JSON.stringify(sessionToken)},eventId=${JSON.stringify(event.event_id)};let scanner=null,running=false,busy=false;
 const result=document.getElementById('result'),button=document.getElementById('toggle');
 function show(type,text){result.className='result '+type;result.textContent=text}
-async function stop(){if(scanner&&running){await scanner.stop().catch(()=>{});running=false;button.textContent='Start Scanner'}}
-async function start(){if(running||busy)return;scanner=scanner||new Html5Qrcode('reader');await scanner.start({facingMode:'environment'},{fps:12,qrbox:{width:250,height:250}},scan).then(()=>{running=true;button.textContent='Stop Scanner'}).catch(()=>show('error','Camera permission is required.'))}
-function rearm(){busy=false;if(scanner&&running){try{scanner.resume()}catch(error){stop().then(start)}}}
-async function scan(decoded){if(busy)return;busy=true;if(scanner&&running){try{scanner.pause(true)}catch(error){}}show('processing','Validating ticket…');if(navigator.vibrate)navigator.vibrate(100);try{const token=new URL(decoded).pathname.split('/').filter(Boolean).pop();const response=await fetch('/api/v1/public/marketplace/tickets/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_id:eventId,scanner_session_token:session,ticket_token:token})});const data=await response.json();if(!response.ok||!data.success)throw new Error(data.message||'Ticket is invalid');const value=data.data||data;if(navigator.vibrate)navigator.vibrate([100,50,100]);show('success','CHECKED IN: '+value.attendeeName+' ('+value.ticketType+')')}catch(error){if(navigator.vibrate)navigator.vibrate(400);show('error',error.message)}setTimeout(rearm,2500)}
+async function closeCamera(){if(scanner&&running)await scanner.stop().catch(()=>{});if(scanner)await scanner.clear().catch(()=>{});scanner=null;running=false}
+async function stop(){await closeCamera();button.textContent='Start Scanner'}
+async function start(){if(running||busy)return;result.className='result';result.textContent='';scanner=new Html5Qrcode('reader');await scanner.start({facingMode:'environment'},{fps:12,qrbox:{width:250,height:250}},scan).then(()=>{running=true;button.textContent='Stop Scanner'}).catch(()=>{scanner=null;show('error','Camera permission is required.')})}
+async function scan(decoded){if(busy)return;busy=true;show('processing','Validating ticket…');if(navigator.vibrate)navigator.vibrate(100);await closeCamera();try{const token=new URL(decoded).pathname.split('/').filter(Boolean).pop();const response=await fetch('/api/v1/public/marketplace/tickets/validate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_id:eventId,scanner_session_token:session,ticket_token:token})});const data=await response.json();if(!response.ok||!data.success)throw new Error(data.message||'Ticket is invalid');const value=data.data||data;if(navigator.vibrate)navigator.vibrate([100,50,100]);show('success','CHECKED IN: '+value.attendeeName+' ('+value.ticketType+')')}catch(error){if(navigator.vibrate)navigator.vibrate(400);show('error',error.message)}finally{busy=false;button.textContent='Scan Next Ticket'}}
 button.addEventListener('click',()=>running?stop():start());
 </script>`,
   });

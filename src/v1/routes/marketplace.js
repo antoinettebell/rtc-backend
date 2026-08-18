@@ -270,7 +270,7 @@ router.post(
 
 router.patch(
   '/payments/:paymentId/tip',
-  allowedTo(['VENDOR']),
+  allowedTo(['CUSTOMER', 'VENDOR']),
   validate(Validation.updateFinalPaymentTip),
   Controller.updateFinalPaymentTip
 );

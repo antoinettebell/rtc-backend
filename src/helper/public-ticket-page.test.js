@@ -22,9 +22,13 @@ assert.doesNotMatch(ticketHtml, /qrcodejs|new QRCode/);
 const scannerHtml = renderScannerPage({ event, sessionToken: 'scanner-secret' });
 assert.match(scannerHtml, /html5-qrcode@2\.3\.8/);
 assert.match(scannerHtml, /facingMode:'environment'/);
-assert.match(scannerHtml, /scanner\.pause\(true\)/);
-assert.match(scannerHtml, /scanner\.resume\(\)/);
-assert.doesNotMatch(scannerHtml, /async function scan\(decoded\).*await stop\(\)/s);
+assert.doesNotMatch(scannerHtml, /scanner\.pause\(true\)/);
+assert.doesNotMatch(scannerHtml, /scanner\.resume\(\)/);
+assert.doesNotMatch(scannerHtml, /setTimeout\(rearm/);
+assert(
+  scannerHtml.indexOf('id="result"') < scannerHtml.indexOf('id="reader"'),
+  'the scan result must appear above the camera preview'
+);
 assert.match(scannerHtml, /success:before\{content:"✓"\}/);
 assert.match(scannerHtml, /error:before\{content:"✕"\}/);
 
@@ -36,8 +40,7 @@ const elements = {
     addEventListener(_event, handler) { this.handler = handler; },
   },
 };
-const timers = [];
-const scannerCalls = { start: 0, stop: 0, pause: 0, resume: 0 };
+const scannerCalls = { start: 0, stop: 0, clear: 0 };
 let scanHandler;
 class FakeScanner {
   async start(_camera, _options, handler) {
@@ -45,8 +48,7 @@ class FakeScanner {
     scanHandler = handler;
   }
   async stop() { scannerCalls.stop += 1; }
-  pause() { scannerCalls.pause += 1; }
-  resume() { scannerCalls.resume += 1; }
+  async clear() { scannerCalls.clear += 1; }
 }
 const responses = [
   { ok: true, body: { success: true, data: { attendeeName: 'Guest 1', ticketType: 'GA' } } },
@@ -61,7 +63,6 @@ const context = {
     const response = responses.shift();
     return { ok: response.ok, json: async () => response.body };
   },
-  setTimeout: (handler) => timers.push(handler),
 };
 vm.runInNewContext(script, context);
 
@@ -70,18 +71,19 @@ vm.runInNewContext(script, context);
   assert.equal(scannerCalls.start, 1);
 
   await scanHandler('https://tickets.roundthecornerapp.com/tickets/first-ticket');
-  assert.equal(scannerCalls.pause, 1);
+  assert.equal(scannerCalls.stop, 1);
+  assert.equal(scannerCalls.clear, 1);
   assert.match(elements.result.textContent, /CHECKED IN: Guest 1/);
-  timers.shift()();
-  assert.equal(scannerCalls.resume, 1);
+  assert.equal(elements.toggle.textContent, 'Scan Next Ticket');
+
+  await elements.toggle.handler();
+  assert.equal(scannerCalls.start, 2, 'Scan Next Ticket must start a fresh camera session');
 
   await scanHandler('https://tickets.roundthecornerapp.com/tickets/used-ticket');
-  assert.equal(scannerCalls.pause, 2);
+  assert.equal(scannerCalls.stop, 2);
+  assert.equal(scannerCalls.clear, 2);
   assert.equal(elements.result.textContent, 'Ticket already used');
-  timers.shift()();
-  assert.equal(scannerCalls.resume, 2);
-  assert.equal(scannerCalls.start, 1, 'the same live camera session should scan the next ticket');
-  assert.equal(scannerCalls.stop, 0, 'validation should not tear down the live camera session');
+  assert.equal(elements.toggle.textContent, 'Scan Next Ticket');
 
   console.log('public ticket page tests passed');
 })().catch((error) => {
