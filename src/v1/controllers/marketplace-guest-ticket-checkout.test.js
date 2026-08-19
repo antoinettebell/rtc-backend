@@ -253,7 +253,11 @@ const requestBody = {
     },
     (nextError) => { throw nextError; }
   );
-  assert.match(html, />Get Tickets<\/a>/);
+  assert.match(html, /Download on the App Store/);
+  assert.match(html, /Get it on Google Play/);
+  assert.match(html, /setTimeout\(\(\)=>window\.location\.assign\(target\),900\)/);
+  assert.match(html, /tap the original event link again/i);
+  assert.doesNotMatch(html, /rtc-customer:\/\//);
   assert.doesNotMatch(html, /sign in|create your customer profile/i);
 
   let shareResponse;
