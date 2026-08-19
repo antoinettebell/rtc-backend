@@ -59,6 +59,9 @@ const context = {
   Html5Qrcode: FakeScanner,
   navigator: { vibrate() {} },
   URL,
+  AbortController,
+  setTimeout,
+  clearTimeout,
   fetch: async () => {
     const response = responses.shift();
     return { ok: response.ok, json: async () => response.body };

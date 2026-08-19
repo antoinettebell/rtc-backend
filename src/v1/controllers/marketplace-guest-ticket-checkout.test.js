@@ -191,6 +191,12 @@ const requestBody = {
   assert.equal(createdOrderPayload.purchaser_email, 'guest@example.com');
 
   assert.equal(createdOrderPayload.purchaser_phone, '+15555550123');
+  assert.equal(createdOrderPayload.coordinator_processing_fee, 0);
+  assert.equal(
+    createdOrderPayload.net_coordinator_payout,
+    10,
+    'in-app ticket proceeds must not deduct external payout fees or collected tax'
+  );
   assert.equal(chargedPayment.userId, 'guest-order-1', 'processor reference uses the durable ticket order');
   assert.equal(chargedPayment.email, 'guest@example.com');
   assert.equal(smsPayload.to, '+15555550123');

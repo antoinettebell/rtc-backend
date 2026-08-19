@@ -175,7 +175,9 @@ const buildTicketQuote = async ({ event, customerReference, gaQuantity, vipQuant
     coordinatorProcessingFee,
     salesTax,
     totalAmount: money(ticketSubtotal + customerProcessingFee + salesTax),
-    netCoordinatorPayout: money(ticketSubtotal - coordinatorProcessingFee - salesTax),
+    // Sales tax is paid by the purchaser on top of the ticket subtotal, and
+    // coordinator payout fees are settled outside this application.
+    netCoordinatorPayout: ticketSubtotal,
     entityUseCode,
     transactionCode,
   };
@@ -923,6 +925,10 @@ exports.coordinatorTicketSummary = async (req, res, next) => {
         rtc_processing_fee: { $sum: '$coordinator_processing_fee' },
         collected_sales_tax: { $sum: '$sales_tax' },
         estimated_net_payout: { $sum: '$net_coordinator_payout' },
+      } },
+      { $set: {
+        rtc_processing_fee: 0,
+        estimated_net_payout: '$gross_ticket_sales',
       } },
     ]);
     return res.data({

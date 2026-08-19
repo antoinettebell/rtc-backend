@@ -59,19 +59,17 @@ const calculateTicketAmounts = ({ unitPrice, quantity }) => {
 
   const ticketSubtotal = toMoney(safePrice * safeQuantity);
   const customerProcessingFee = getCustomerTicketProcessingFeeAmount(ticketSubtotal);
-  const coordinatorProcessingFee = toMoney(
-    ticketSubtotal * COORDINATOR_PROCESSING_RATE +
-      safeQuantity * COORDINATOR_PER_TICKET_FEE
-  );
+  // Coordinator payout fees are handled outside the application when the
+  // coordinator is paid. They are not part of ticket checkout or the in-app
+  // estimated proceeds calculation.
+  const coordinatorProcessingFee = 0;
 
   return {
     ticketSubtotal,
     customerProcessingFee,
     coordinatorProcessingFee,
     checkoutSubtotal: toMoney(ticketSubtotal + customerProcessingFee),
-    grossCoordinatorPayoutBeforeTax: toMoney(
-      ticketSubtotal - coordinatorProcessingFee
-    ),
+    grossCoordinatorPayoutBeforeTax: ticketSubtotal,
   };
 };
 
