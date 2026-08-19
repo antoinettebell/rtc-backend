@@ -114,6 +114,41 @@ const marketplaceEventBody = {
   ),
 };
 
+const adminSubmissionParams = Joi.object({
+  eventId: Joi.string().trim().required(),
+  submissionType: Joi.string()
+    .valid('FOOD_BID', 'FOOD_APPLICATION', 'MARKETPLACE_APPLICATION')
+    .required(),
+  submissionId: Joi.string().trim().required(),
+});
+
+const adminSubmissionEditableBody = {
+  price_per_guest: Joi.number().min(0).allow(null),
+  average_price_per_meal: Joi.number().min(0).allow(null),
+  full_bid_amount: Joi.number().min(0).allow(null),
+  guest_coverage: Joi.string().valid('REGULAR', 'VIP', 'BOTH').allow(null, ''),
+  regular_guest_amount: Joi.number().min(0).allow(null),
+  vip_catering_amount: Joi.number().min(0).allow(null),
+  business_name: Joi.string().trim().max(250).allow(null, ''),
+  contact_name: Joi.string().trim().max(250).allow(null, ''),
+  phone: Joi.string().trim().max(50).allow(null, ''),
+  contact_number: Joi.string().trim().max(50).allow(null, ''),
+  email: Joi.string().trim().email().allow(null, ''),
+  food_type_cuisine: Joi.string().trim().max(1000).allow(null, ''),
+  menu_description: Joi.string().max(5000).allow(null, ''),
+  notes: Joi.string().max(5000).allow(null, ''),
+  additional_notes: Joi.string().max(5000).allow(null, ''),
+  insurance_confirmed: Joi.boolean(),
+  permits_confirmed: Joi.boolean(),
+  liquor_license_confirmed: Joi.boolean(),
+  vendor_types: Joi.array()
+    .items(Joi.string().valid('MERCHANDISE', 'SERVICE', 'OTHER')),
+  offering_bullets: Joi.array().items(Joi.string().trim().max(500)),
+  average_price: Joi.number().min(0).allow(null),
+  electricity_required: Joi.boolean(),
+  admin_reason: Joi.string().trim().max(1000).required(),
+};
+
 module.exports = {
   createEvent: {
     body: Joi.object(marketplaceEventBody),
@@ -121,9 +156,11 @@ module.exports = {
 
   adminCreateEvent: {
     body: Joi.object({
-      customer_user_id: Joi.string().required(),
+      customer_user_id: Joi.string().allow(null, ''),
+      admin_reason: Joi.string().trim().max(1000).required(),
+      save_mode: Joi.string().valid('DRAFT', 'PUBLISH').default('PUBLISH'),
       ...marketplaceEventBody,
-    }),
+    }).prefs({ noDefaults: true }),
   },
 
   updateEvent: {
@@ -371,14 +408,40 @@ module.exports = {
   },
 
   adminUpdateEvent: {
-    body: Joi.object(marketplaceEventBody).min(1).prefs({ noDefaults: true }),
+    body: Joi.object({
+      ...marketplaceEventBody,
+      admin_reason: Joi.string().trim().max(1000).required(),
+      save_mode: Joi.string().valid('DRAFT', 'PUBLISH').default('PUBLISH'),
+    }).min(1).prefs({ noDefaults: true }),
   },
 
-  adminWithdrawSubmission: {
+  adminMarketplaceSubmission: {
+    params: adminSubmissionParams,
+  },
+
+  adminUpdateMarketplaceSubmission: {
+    params: adminSubmissionParams,
     body: Joi.object({
-      submission_type: Joi.string().valid('BID', 'APPLICATION').required(),
-      submission_id: Joi.string().trim().required(),
-      reason: Joi.string().trim().max(500).allow(null, ''),
+      ...adminSubmissionEditableBody,
+      admin_reason: Joi.string().trim().max(1000).required(),
+      save_mode: Joi.string().valid('DRAFT', 'PUBLISH').default('PUBLISH'),
+    }).min(1).prefs({ noDefaults: true }),
+  },
+
+  adminMarketplaceSubmissionAction: {
+    params: adminSubmissionParams,
+    body: Joi.object({
+      action: Joi.string().valid('WITHDRAW', 'ARCHIVE', 'DELETE', 'REVOKE').required(),
+      reason: Joi.string().trim().max(1000).required(),
+    }),
+  },
+
+  adminReplaceMarketplaceSubmissionAttachment: {
+    params: adminSubmissionParams.append({
+      attachmentId: Joi.string().trim().required(),
+    }),
+    body: Joi.object({
+      admin_reason: Joi.string().trim().max(1000).required(),
     }),
   },
 

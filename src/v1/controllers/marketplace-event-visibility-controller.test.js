@@ -9,6 +9,7 @@ const originalLoad = Module._load;
 const actualLifecycle = require('../../helper/marketplace-submission-lifecycle');
 const actualParticipation = require('../../helper/marketplace-participation-helper');
 const actualEventVendorParticipation = require('../../helper/event-vendor-participation-helper');
+const actualEventClose = require('../../helper/marketplace-event-close-helper');
 
 const futureDate = () => new Date(Date.now() + 24 * 60 * 60 * 1000);
 const pastDate = () => new Date(Date.now() - 24 * 60 * 60 * 1000);
@@ -226,7 +227,7 @@ const loadMarketplaceController = (state) => {
 			deriveMarketplaceVendorContact: () => ({ contact_name: 'Vendor', phone: '5555555555', email: 'vendor@example.com' }),
 			sanitizeMarketplaceContactForCoordinator: (value) => value,
 		},
-		'../../helper/marketplace-event-close-helper': { buildVendorEventCloseState: () => ({}), getMarketplaceEventTiming: () => ({}) },
+		'../../helper/marketplace-event-close-helper': actualEventClose,
 		'../../helper/public-marketplace-event-helper': {},
 		'../../helper/marketplace-tax-exemption-helper': {},
 		'../../helper/marketplace-payment-policy-helper': { isMarketplacePaymentMethodAllowed: () => true },

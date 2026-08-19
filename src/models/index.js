@@ -109,6 +109,8 @@ exports.MarketplaceEventQuestionModel = require('./marketplace-event-question');
 
 /** Define marketplace attachment model */
 exports.MarketplaceAttachmentModel = require('./marketplace-attachment');
+exports.MarketplaceAdminAuditModel = require('./marketplace-admin-audit');
+exports.MarketplaceAdminDraftModel = require('./marketplace-admin-draft');
 
 /** Define marketplace file audit model */
 exports.MarketplaceFileAuditModel = require('./marketplace-file-audit');

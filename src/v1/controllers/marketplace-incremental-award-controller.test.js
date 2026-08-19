@@ -6,6 +6,7 @@ const controllerPath = path.join(__dirname, 'marketplace-controller.js');
 const originalLoad = Module._load;
 const actualParticipation = require('../../helper/marketplace-participation-helper');
 const actualAwardBatch = require('../../helper/marketplace-award-batch');
+const actualEventClose = require('../../helper/marketplace-event-close-helper');
 
 const matchesStatus = (value, condition) => {
   if (typeof condition === 'string') return value === condition;
@@ -159,7 +160,8 @@ const loadController = (state) => {
       if (request === '../../helper/marketplace-agreement-email-attachments') return { buildAgreementEmailAttachments: async () => [], excludeAgreementDocuments: (items) => items };
       if (request === '../../helper/marketplace-vendor-agreement-reconciliation' || request === '../../helper/marketplace-agreement-document-verification' || request === '../../helper/marketplace-agreement-vendor-context') return {};
       if (request === '../../helper/marketplace-coordinator-details-email') return {};
-      if (request === '../../helper/marketplace-vendor-contact-helper' || request === '../../helper/marketplace-event-close-helper' || request === '../../helper/marketplace-award-revocation' || request === '../../helper/marketplace-vendor-fee-refund') return {};
+      if (request === '../../helper/marketplace-event-close-helper') return actualEventClose;
+      if (request === '../../helper/marketplace-vendor-contact-helper' || request === '../../helper/marketplace-award-revocation' || request === '../../helper/marketplace-vendor-fee-refund') return {};
       if (request === '../../helper/marketplace-payment-policy-helper') return {
         isMarketplacePaymentMethodAllowed: () => true,
       };

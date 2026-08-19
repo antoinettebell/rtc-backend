@@ -188,6 +188,12 @@ router.get(
 );
 
 router.get(
+  '/repository/events/new-draft',
+  allowedTo(['SUPER_ADMIN']),
+  Controller.adminNewEventDraft
+);
+
+router.get(
   '/repository/tax-exemptions',
   allowedTo(['SUPER_ADMIN']),
   TicketController.adminListTaxExemptions
@@ -207,11 +213,33 @@ router.patch(
   Controller.adminUpdateEvent
 );
 
-router.patch(
-  '/repository/events/:eventId/submissions/withdraw',
+router.get(
+  '/repository/events/:eventId/submissions/:submissionType/:submissionId',
   allowedTo(['SUPER_ADMIN']),
-  validate(Validation.adminWithdrawSubmission),
-  Controller.adminWithdrawSubmission
+  validate(Validation.adminMarketplaceSubmission),
+  Controller.adminMarketplaceSubmission
+);
+
+router.patch(
+  '/repository/events/:eventId/submissions/:submissionType/:submissionId',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.adminUpdateMarketplaceSubmission),
+  Controller.adminUpdateMarketplaceSubmission
+);
+
+router.post(
+  '/repository/events/:eventId/submissions/:submissionType/:submissionId/actions',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.adminMarketplaceSubmissionAction),
+  Controller.adminMarketplaceSubmissionAction
+);
+
+router.post(
+  '/repository/events/:eventId/submissions/:submissionType/:submissionId/attachments/:attachmentId/replace',
+  allowedTo(['SUPER_ADMIN']),
+  MarketplaceUpload.single(),
+  validate(Validation.adminReplaceMarketplaceSubmissionAttachment),
+  Controller.adminReplaceMarketplaceSubmissionAttachment
 );
 
 router.post(

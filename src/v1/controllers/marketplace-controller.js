@@ -1,4 +1,5 @@
 const fs = require('fs');
+const mongoose = require('mongoose');
 const {
   FoodTruckService,
   MarketplaceApplicationService,
@@ -108,8 +109,33 @@ const { docusign } = require('../../config');
 const {
   EventVendorApplicationModel,
   EventVendorProfileModel,
+  MarketplaceAdminAuditModel,
+  MarketplaceAdminDraftModel,
+  MarketplaceApplicationModel,
+  MarketplaceAttachmentModel,
+  MarketplaceBidModel,
+  MarketplacePaymentModel,
   OperationalNotificationModel,
 } = require('../../models');
+const {
+  SUBMISSION_TYPES,
+  applyAdminSubmissionAttachmentReplacement,
+  applyMarketplaceApplicationPhotoReplacement,
+  buildMarketplaceApplicationPhotoAttachments,
+  buildSubmissionSummary,
+  getSubmissionConfig,
+  getSubmissionAdministrativeState,
+  getLockedSubmissionFields,
+  getSubmissionStatus,
+  isSubmissionActionAlreadyApplied,
+  isAdminSubmissionAttachmentReplaceable,
+  isSubmissionLifecycleLocked,
+  pickEditableSubmissionFields,
+  validateAdminSubmissionPublish,
+} = require('../../helper/marketplace-admin-submission');
+const {
+  validateAdminEventPublish,
+} = require('../../helper/marketplace-admin-event-policy');
 const {
   buildEventVendorRequirementSummary,
   getCoordinatorNotSelectTransition,
@@ -4480,21 +4506,84 @@ exports.adminCreateEvent = async (req, res, next) => {
       throw buildError('Only admins can create marketplace events', 403);
     }
 
-    const customerUserId = req.body.customer_user_id;
-    if (!customerUserId) {
-      throw buildError('Select an existing event coordinator.', 400);
-    }
-    await assertCustomerEventCoordinator(customerUserId);
-
-    const { customer_user_id, ...eventPayload } = req.body;
-    const normalizedEvent = normalizeMarketplaceEventPayload(eventPayload);
-    const marketplaceEvent = await MarketplaceEventService.create({
-      ...normalizedEvent,
+    const {
       customer_user_id: customerUserId,
+      admin_reason: adminReason,
+      save_mode: saveMode = 'PUBLISH',
+      ...incomingPayload
+    } = req.body;
+    const draftKey = getAdminDraftKey({
+      adminUserId: req.user._id,
+      eventId: ADMIN_NEW_EVENT_DRAFT_ID,
     });
+    const existingDraft = await MarketplaceAdminDraftModel.findOne({ draft_key: draftKey }).lean();
+    const eventPayload = { ...(existingDraft?.payload || {}), ...incomingPayload };
+    if (customerUserId !== undefined) eventPayload.customer_user_id = customerUserId;
+    const draft = await saveAdminDraft({
+      adminUserId: req.user._id,
+      eventId: ADMIN_NEW_EVENT_DRAFT_ID,
+      payload: eventPayload,
+      reason: adminReason,
+    });
+    if (saveMode === 'DRAFT') {
+      return res.data({ adminDraft: draft }, 'Marketplace event draft saved');
+    }
+    if (!eventPayload.customer_user_id) {
+      throwAdminValidationError([{
+        field: 'customer_user_id',
+        message: 'Select an existing event coordinator.',
+      }]);
+    }
+    if (!String(eventPayload.event_name || '').trim()) {
+      throwAdminValidationError([{
+        field: 'event_name',
+        message: 'Enter an event name.',
+      }]);
+    }
+    await assertCustomerEventCoordinator(eventPayload.customer_user_id);
+    const { customer_user_id, ...publishPayload } = eventPayload;
+    const normalizedEvent = normalizeMarketplaceEventPayload(publishPayload);
+    const session = await mongoose.startSession();
+    let marketplaceEvent;
+    try {
+      await session.withTransaction(async () => {
+        [marketplaceEvent] = await MarketplaceEventService.getModel().create([{
+          ...normalizedEvent,
+          customer_user_id,
+        }], { session });
+        await MarketplaceAdminAuditModel.create([{
+          action: 'CREATE_EVENT',
+          event_id: marketplaceEvent.event_id,
+          admin_user_id: req.user._id,
+          reason: adminReason || null,
+          before: null,
+          after: toPlainObject(marketplaceEvent),
+        }], { session });
+        await MarketplaceAdminDraftModel.deleteOne({ draft_key: draftKey }).session(session);
+      });
+    } finally {
+      await session.endSession();
+    }
 
     return res.data({ marketplaceEvent }, 'Marketplace event created');
   } catch (e) {
+    const validationErrors = getAdminValidationErrors(e);
+    if (validationErrors.length && req.user?.userType === 'SUPER_ADMIN') {
+      const draftKey = getAdminDraftKey({
+        adminUserId: req.user._id,
+        eventId: ADMIN_NEW_EVENT_DRAFT_ID,
+      });
+      const existing = await MarketplaceAdminDraftModel.findOne({ draft_key: draftKey }).lean();
+      if (existing) {
+        await saveAdminDraft({
+          adminUserId: req.user._id,
+          eventId: ADMIN_NEW_EVENT_DRAFT_ID,
+          payload: existing.payload,
+          reason: existing.reason,
+          validationErrors,
+        });
+      }
+    }
     return next(e);
   }
 };
@@ -7734,11 +7823,11 @@ exports.adminMarketplaceEvents = async (req, res, next) => {
     ]);
 
     const eventIds = events.map((event) => event.event_id).filter(Boolean);
-    const [eventsWithImages, bids, applications] = await Promise.all([
+    const [eventsWithImages, bids, applications, eventVendorApplications, adminDrafts] = await Promise.all([
       MarketplaceEventService.attachImages(events),
       eventIds.length
         ? MarketplaceBidService.getModel()
-            .find({ event_id: { $in: eventIds }, archived_at: null })
+            .find({ event_id: { $in: eventIds }, archived_at: null, deleted_at: null })
             .populate('vendor_user_id', 'firstName lastName email')
             .populate('food_truck_id', 'name logo')
             .sort({ created_at: -1 })
@@ -7746,13 +7835,31 @@ exports.adminMarketplaceEvents = async (req, res, next) => {
         : [],
       eventIds.length
         ? MarketplaceApplicationService.getModel()
-            .find({ event_id: { $in: eventIds }, archived_at: null })
+            .find({ event_id: { $in: eventIds }, archived_at: null, deleted_at: null })
             .populate('vendor_user_id', 'firstName lastName email')
             .populate('food_truck_id', 'name logo')
             .sort({ created_at: -1 })
             .lean()
         : [],
+      eventIds.length
+        ? EventVendorApplicationModel.find({
+            event_id: { $in: eventIds },
+            archived_at: null,
+            deleted_at: null,
+          })
+            .populate('vendor_user_id', 'firstName lastName email')
+            .sort({ created_at: -1 })
+            .lean()
+        : [],
+      eventIds.length
+        ? MarketplaceAdminDraftModel.find({
+            draft_type: 'EVENT',
+            event_id: { $in: eventIds },
+            admin_user_id: req.user._id,
+          }).lean()
+        : [],
     ]);
+    const adminDraftsByEventId = new Map(adminDrafts.map((draft) => [draft.event_id, draft]));
 
     const bidsByEventId = bids.reduce((acc, bid) => {
       acc[bid.event_id] = acc[bid.event_id] || [];
@@ -7764,14 +7871,37 @@ exports.adminMarketplaceEvents = async (req, res, next) => {
       acc[application.event_id].push(application);
       return acc;
     }, {});
+    const eventVendorApplicationsByEventId = eventVendorApplications.reduce((acc, application) => {
+      acc[application.event_id] = acc[application.event_id] || [];
+      acc[application.event_id].push(application);
+      return acc;
+    }, {});
 
-    const marketplaceEventList = eventsWithImages.map((event) => ({
-      ...event,
-      bids: bidsByEventId[event.event_id] || [],
-      applications: applicationsByEventId[event.event_id] || [],
-      bid_count: (bidsByEventId[event.event_id] || []).length,
-      application_count: (applicationsByEventId[event.event_id] || []).length,
-    }));
+    const marketplaceEventList = eventsWithImages.map((event) => {
+      const eventBids = bidsByEventId[event.event_id] || [];
+      const foodApplications = applicationsByEventId[event.event_id] || [];
+      const marketplaceApplications =
+        eventVendorApplicationsByEventId[event.event_id] || [];
+      return {
+        ...event,
+        admin_draft: adminDraftsByEventId.get(event.event_id) || null,
+        submission_summaries: [
+          ...eventBids.map((submission) => buildSubmissionSummary('FOOD_BID', submission)),
+          ...foodApplications.map((submission) =>
+            buildSubmissionSummary('FOOD_APPLICATION', submission)
+          ),
+          ...marketplaceApplications.map((submission) =>
+            buildSubmissionSummary('MARKETPLACE_APPLICATION', submission)
+          ),
+        ],
+        bid_count: eventBids.length,
+        food_application_count: foodApplications.length,
+        marketplace_application_count: marketplaceApplications.length,
+        application_count: foodApplications.length + marketplaceApplications.length,
+        submission_count:
+          eventBids.length + foodApplications.length + marketplaceApplications.length,
+      };
+    });
 
     return res.data(
       {
@@ -7784,6 +7914,615 @@ exports.adminMarketplaceEvents = async (req, res, next) => {
     );
   } catch (e) {
     return next(e);
+  }
+};
+
+const getAdminSubmissionRecord = async ({ eventId, submissionType, submissionId }) => {
+  const { type, config } = getSubmissionConfig(submissionType);
+  if (!config) throw buildError('Select a valid marketplace submission type.', 400);
+
+  const query = { event_id: eventId, [config.idField]: submissionId };
+  let record;
+  if (type === 'FOOD_BID') {
+    record = await MarketplaceBidModel.findOne(query)
+      .populate('vendor_user_id', 'firstName lastName email countryCode mobileNumber')
+      .populate('food_truck_id', 'name logo')
+      .exec();
+  } else if (type === 'FOOD_APPLICATION') {
+    record = await MarketplaceApplicationModel.findOne(query)
+      .populate('vendor_user_id', 'firstName lastName email countryCode mobileNumber')
+      .populate('food_truck_id', 'name logo')
+      .exec();
+  } else {
+    record = await EventVendorApplicationModel.findOne(query)
+      .populate('vendor_user_id', 'firstName lastName email countryCode mobileNumber')
+      .exec();
+  }
+  if (!record) throw buildError('Marketplace submission not found', 404);
+  return { type, config, record };
+};
+
+const getAdminSubmissionAttachments = ({ eventId, type, submissionId, session = null }) => {
+  const query = MarketplaceAttachmentModel.find({
+    event_id: eventId,
+    ...(type === 'FOOD_BID' ? { bid_id: submissionId } : { application_id: submissionId }),
+    status: { $ne: 'DELETED' },
+  });
+  if (session) query.session(session);
+  return query.sort({ created_at: -1 }).lean();
+};
+
+const getAdminDraftKey = ({ adminUserId, eventId, submissionType, submissionId }) =>
+  [adminUserId, eventId, submissionType || 'EVENT', submissionId || 'EVENT'].join(':');
+
+const saveAdminDraft = async ({
+  adminUserId,
+  eventId,
+  submissionType = null,
+  submissionId = null,
+  payload,
+  reason,
+  validationErrors = [],
+}) => MarketplaceAdminDraftModel.findOneAndUpdate(
+  { draft_key: getAdminDraftKey({ adminUserId, eventId, submissionType, submissionId }) },
+  {
+    $set: {
+      draft_type: submissionType ? 'SUBMISSION' : 'EVENT',
+      event_id: eventId,
+      submission_type: submissionType,
+      submission_id: submissionId,
+      admin_user_id: adminUserId,
+      payload,
+      reason: reason || null,
+      validation_errors: validationErrors,
+    },
+  },
+  { upsert: true, new: true, setDefaultsOnInsert: true }
+);
+
+const ADMIN_NEW_EVENT_DRAFT_ID = 'ADMIN_NEW_EVENT';
+
+const throwAdminValidationError = (errors) => {
+  const error = buildError(errors[0]?.message || 'The proposed changes are invalid.', 409);
+  error.validation_errors = errors;
+  error.data = { validation_errors: errors };
+  throw error;
+};
+
+const getAdminValidationErrors = (error) => {
+  if (Array.isArray(error?.validation_errors)) return error.validation_errors;
+  if (error?.name !== 'ValidationError' || !error.errors) return [];
+  return Object.entries(error.errors).map(([field, detail]) => ({
+    field,
+    message: detail?.message || `${field.replace(/_/g, ' ')} is invalid.`,
+  }));
+};
+
+const IMMUTABLE_ADMIN_EVENT_FIELDS = new Set([
+  '_id', '__v', 'event_id', 'customer_user_id', 'created_at', 'updated_at',
+]);
+
+const getAdminEventUpdateFields = (event) => {
+  const Model = MarketplaceEventService.getModel();
+  return Object.fromEntries(Object.entries(toPlainObject(event)).filter(([field]) => (
+    !IMMUTABLE_ADMIN_EVENT_FIELDS.has(field) && Boolean(Model.schema.path(field))
+  )));
+};
+
+exports.adminNewEventDraft = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'SUPER_ADMIN') {
+      throw buildError('Only admins can view marketplace event drafts', 403);
+    }
+    const adminDraft = await MarketplaceAdminDraftModel.findOne({
+      draft_key: getAdminDraftKey({
+        adminUserId: req.user._id,
+        eventId: ADMIN_NEW_EVENT_DRAFT_ID,
+      }),
+    }).lean();
+    return res.data({ adminDraft }, 'Marketplace event draft');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+const getAdminSubmissionModel = (type) => {
+  if (type === 'FOOD_BID') return MarketplaceBidModel;
+  if (type === 'FOOD_APPLICATION') return MarketplaceApplicationModel;
+  return EventVendorApplicationModel;
+};
+
+exports.adminMarketplaceSubmission = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'SUPER_ADMIN') {
+      throw buildError('Only admins can view marketplace submissions', 403);
+    }
+    const { type, config, record } = await getAdminSubmissionRecord({
+      eventId: req.params.eventId,
+      submissionType: req.params.submissionType,
+      submissionId: req.params.submissionId,
+    });
+    const [event, attachments, profile, adminDraft, finalPayment] = await Promise.all([
+      MarketplaceEventService.getModel()
+        .findOne({ event_id: req.params.eventId })
+        .populate('customer_user_id', 'firstName lastName email mobileNumber countryCode')
+        .lean(),
+      getAdminSubmissionAttachments({
+        eventId: req.params.eventId,
+        type,
+        submissionId: req.params.submissionId,
+      }),
+      type === 'MARKETPLACE_APPLICATION'
+        ? EventVendorProfileModel.findOne({ profile_id: record.profile_id }).lean()
+        : null,
+      MarketplaceAdminDraftModel.findOne({
+        draft_key: getAdminDraftKey({
+          adminUserId: req.user._id,
+          eventId: req.params.eventId,
+          submissionType: type,
+          submissionId: req.params.submissionId,
+        }),
+      }).lean(),
+      MarketplacePaymentModel.findOne({
+        event_id: req.params.eventId,
+        payment_type: 'FINAL_EVENT_PAYMENT',
+        ...(type === 'FOOD_BID'
+          ? { bid_id: req.params.submissionId }
+          : { application_id: req.params.submissionId }),
+        payment_status: { $in: ['PROCESSING', 'PAID'] },
+      }).lean(),
+    ]);
+    if (!event) throw buildError('Marketplace event not found', 404);
+    const visibleAttachments = type === 'MARKETPLACE_APPLICATION'
+      ? [...attachments, ...buildMarketplaceApplicationPhotoAttachments(record)]
+      : attachments;
+    return res.data({
+      marketplaceEvent: event,
+      submission_type: type,
+      submission_id: record[config.idField],
+      status: getSubmissionStatus(type, record),
+      submission: record,
+      profile,
+      attachments: visibleAttachments,
+      editable_fields: config.editableFields,
+      locked_fields: getLockedSubmissionFields(type, record),
+      admin_draft: adminDraft,
+      revoke_allowed:
+        ['AWARDED', 'ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'].includes(getSubmissionStatus(type, record)) &&
+        !finalPayment,
+      revoke_block_reason: finalPayment?.payment_status === 'PAID'
+        ? 'Final vendor payment is complete.'
+        : finalPayment?.payment_status === 'PROCESSING'
+          ? 'Final vendor payment is processing.'
+          : null,
+    }, 'Marketplace submission');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.adminUpdateMarketplaceSubmission = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'SUPER_ADMIN') {
+      throw buildError('Only admins can update marketplace submissions', 403);
+    }
+    const { type, record } = await getAdminSubmissionRecord({
+      eventId: req.params.eventId,
+      submissionType: req.params.submissionType,
+      submissionId: req.params.submissionId,
+    });
+    const administrativeState = getSubmissionAdministrativeState(record);
+    if (administrativeState) {
+      throw buildError(
+        `${administrativeState === 'DELETED' ? 'Deleted' : 'Archived'} submissions are read-only.`,
+        409
+      );
+    }
+    const { admin_reason, save_mode: saveMode = 'PUBLISH' } = req.body;
+    const existingDraft = await MarketplaceAdminDraftModel.findOne({
+      draft_key: getAdminDraftKey({
+        adminUserId: req.user._id,
+        eventId: req.params.eventId,
+        submissionType: type,
+        submissionId: req.params.submissionId,
+      }),
+    }).lean();
+    const updates = {
+      ...(existingDraft?.payload || {}),
+      ...pickEditableSubmissionFields(type, req.body),
+    };
+    if (!Object.keys(updates).length) {
+      throw buildError('No supported marketplace submission updates provided', 400);
+    }
+    const draft = await saveAdminDraft({
+      adminUserId: req.user._id,
+      eventId: req.params.eventId,
+      submissionType: type,
+      submissionId: req.params.submissionId,
+      payload: updates,
+      reason: admin_reason,
+    });
+    if (saveMode === 'DRAFT') {
+      return res.data({ marketplaceSubmission: record, adminDraft: draft }, 'Marketplace submission draft saved');
+    }
+
+    const session = await mongoose.startSession();
+    let published;
+    try {
+      await session.withTransaction(async () => {
+        const Model = getAdminSubmissionModel(type);
+        const current = await Model.findOne({
+          event_id: req.params.eventId,
+          [SUBMISSION_TYPES[type].idField]: req.params.submissionId,
+        }).session(session);
+        if (!current) throw buildError('Marketplace submission not found', 404);
+        const policyErrors = validateAdminSubmissionPublish({ type, current, updates });
+        if (policyErrors.length) throwAdminValidationError(policyErrors);
+        const attachmentErrors = (await getAdminSubmissionAttachments({
+          eventId: req.params.eventId,
+          type,
+          submissionId: req.params.submissionId,
+          session,
+        }))
+          .filter((attachment) => attachment.status === 'FLAGGED' || !attachment.file_url)
+          .map((attachment) => ({
+            field: `attachments.${attachment.attachment_id}`,
+            message: `${attachment.original_name || 'An attachment'} must be replaced before publishing.`,
+          }));
+        if (attachmentErrors.length) throwAdminValidationError(attachmentErrors);
+        const before = current.toObject();
+        Object.assign(current, updates);
+        await current.save({ session, validateBeforeSave: true });
+        published = current;
+        await MarketplaceAdminAuditModel.create([{
+          action: 'UPDATE_SUBMISSION',
+          event_id: req.params.eventId,
+          submission_type: type,
+          submission_id: req.params.submissionId,
+          admin_user_id: req.user._id,
+          reason: admin_reason,
+          before,
+          after: current.toObject(),
+        }], { session });
+        await MarketplaceAdminDraftModel.deleteOne({ draft_key: draft.draft_key }).session(session);
+      });
+    } finally {
+      await session.endSession();
+    }
+    return res.data({ marketplaceSubmission: published }, 'Marketplace submission changes published');
+  } catch (e) {
+    const validationErrors = getAdminValidationErrors(e);
+    if (validationErrors.length && req.user?.userType === 'SUPER_ADMIN') {
+      const type = String(req.params.submissionType || '').trim().toUpperCase();
+      const existing = await MarketplaceAdminDraftModel.findOne({
+        draft_key: getAdminDraftKey({
+          adminUserId: req.user._id,
+          eventId: req.params.eventId,
+          submissionType: type,
+          submissionId: req.params.submissionId,
+        }),
+      }).lean();
+      if (existing) {
+        await saveAdminDraft({
+          adminUserId: req.user._id,
+          eventId: req.params.eventId,
+          submissionType: type,
+          submissionId: req.params.submissionId,
+          payload: existing.payload,
+          reason: existing.reason,
+          validationErrors,
+        });
+      }
+    }
+    return next(e);
+  }
+};
+
+exports.adminMarketplaceSubmissionAction = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'SUPER_ADMIN') {
+      throw buildError('Only admins can manage marketplace submissions', 403);
+    }
+    const action = String(req.body.action || '').trim().toUpperCase();
+    const reason = String(req.body.reason || '').trim();
+    if (!['WITHDRAW', 'ARCHIVE', 'DELETE', 'REVOKE'].includes(action) || !reason) {
+      throw buildError('Select a valid action and provide a reason.', 400);
+    }
+    const { type, config, record } = await getAdminSubmissionRecord({
+      eventId: req.params.eventId,
+      submissionType: req.params.submissionType,
+      submissionId: req.params.submissionId,
+    });
+    if (isSubmissionActionAlreadyApplied(action, type, record)) {
+      return res.data(
+        { marketplaceSubmission: record },
+        `Marketplace submission already ${action.toLowerCase()}${action === 'WITHDRAW' ? 'n' : 'd'}`
+      );
+    }
+    const administrativeState = getSubmissionAdministrativeState(record);
+    if (administrativeState) {
+      throw buildError(
+        `${administrativeState === 'DELETED' ? 'Deleted' : 'Archived'} submissions cannot be changed.`,
+        409
+      );
+    }
+    if (action !== 'REVOKE' && isSubmissionLifecycleLocked(type, record)) {
+      throw buildError(
+        'Awarded submissions must use Revoke.',
+        409
+      );
+    }
+    if (action === 'REVOKE' && !['AWARDED', 'ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'].includes(getSubmissionStatus(type, record))) {
+      throw buildError('Only an awarded submission can be revoked.', 409);
+    }
+    const now = new Date();
+    const session = await mongoose.startSession();
+    let updatedRecord;
+    try {
+      await session.withTransaction(async () => {
+        const Model = getAdminSubmissionModel(type);
+        const current = await Model.findOne({
+          event_id: req.params.eventId,
+          [config.idField]: req.params.submissionId,
+        }).session(session);
+        if (!current) throw buildError('Marketplace submission not found', 404);
+        if (isSubmissionActionAlreadyApplied(action, type, current)) {
+          updatedRecord = current;
+          return;
+        }
+        const currentAdministrativeState = getSubmissionAdministrativeState(current);
+        if (currentAdministrativeState) {
+          throw buildError('Archived or deleted submissions cannot be changed.', 409);
+        }
+        if (action !== 'REVOKE' && isSubmissionLifecycleLocked(type, current)) {
+          throw buildError('Awarded submissions must use Revoke.', 409);
+        }
+        if (action === 'REVOKE') {
+          if (!['AWARDED', 'ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'].includes(getSubmissionStatus(type, current))) {
+            throw buildError('Only an awarded submission can be revoked.', 409);
+          }
+          const finalPayment = await MarketplacePaymentModel.findOne({
+            event_id: req.params.eventId,
+            payment_type: 'FINAL_EVENT_PAYMENT',
+            ...(type === 'FOOD_BID'
+              ? { bid_id: req.params.submissionId }
+              : { application_id: req.params.submissionId }),
+            payment_status: { $in: ['PROCESSING', 'PAID'] },
+          }).session(session).lean();
+          if (finalPayment?.payment_status === 'PAID') {
+            throw buildError('This award cannot be revoked because final vendor payment is complete.', 409);
+          }
+          if (finalPayment?.payment_status === 'PROCESSING') {
+            throw buildError('This award cannot be revoked while final vendor payment is processing.', 409);
+          }
+        }
+        const before = current.toObject();
+        if (action === 'REVOKE') {
+          current[config.statusField] = 'REVOKED';
+          current.award_revoked_at = now;
+          current.award_revoked_reason = reason;
+          current.award_revoked_by_user_id = req.user._id;
+        } else if (action === 'WITHDRAW') {
+          current[config.statusField] = 'WITHDRAWN';
+          current.withdrawn_at = now;
+          current.withdrawn_by_user_id = req.user._id;
+        } else if (action === 'ARCHIVE') {
+          current.archived_at = now;
+          current.archived_reason = reason;
+        } else {
+          current.deleted_at = now;
+          current.deleted_reason = reason;
+        }
+        await current.save({ session });
+        updatedRecord = current;
+        if (action === 'REVOKE') {
+          await MarketplacePaymentModel.updateMany({
+            event_id: req.params.eventId,
+            payment_type: 'FINAL_EVENT_PAYMENT',
+            ...(type === 'FOOD_BID'
+              ? { bid_id: req.params.submissionId }
+              : { application_id: req.params.submissionId }),
+            payment_status: { $in: ['PENDING', 'FAILED'] },
+          }, {
+            $set: { payment_status: 'CANCELLED', cancelled_at: now },
+          }, { session });
+        }
+        if (action !== 'WITHDRAW' && action !== 'REVOKE') {
+          await MarketplaceAttachmentModel.updateMany(
+            {
+              event_id: req.params.eventId,
+              ...(type === 'FOOD_BID'
+                ? { bid_id: req.params.submissionId }
+                : { application_id: req.params.submissionId }),
+              status: { $ne: 'DELETED' },
+            },
+            {
+              status: action === 'DELETE' ? 'DELETED' : 'ARCHIVED',
+              status_reason: reason,
+              status_updated_at: now,
+              status_updated_by_user_id: req.user._id,
+              ...(action === 'DELETE'
+                ? { deleted_at: now, deleted_by_user_id: req.user._id }
+                : {}),
+            },
+            { session }
+          );
+        }
+        await MarketplaceAdminAuditModel.create([{
+          action: `${action}_SUBMISSION`,
+          event_id: req.params.eventId,
+          submission_type: type,
+          submission_id: req.params.submissionId,
+          admin_user_id: req.user._id,
+          reason,
+          before,
+          after: current.toObject(),
+        }], { session });
+      });
+    } finally {
+      await session.endSession();
+    }
+    const actionMessages = {
+      WITHDRAW: 'Marketplace submission withdrawn',
+      ARCHIVE: 'Marketplace submission archived',
+      DELETE: 'Marketplace submission deleted',
+      REVOKE: 'Marketplace award revoked; payment actions are disabled and capacity is available',
+    };
+    return res.data({ marketplaceSubmission: updatedRecord || record }, actionMessages[action]);
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.adminReplaceMarketplaceSubmissionAttachment = async (req, res, next) => {
+  let uploadedKey = null;
+  try {
+    if (req.user.userType !== 'SUPER_ADMIN') {
+      throw buildError('Only admins can replace marketplace submission attachments', 403);
+    }
+    const reason = String(req.body.admin_reason || '').trim();
+    if (!reason) throw buildError('Provide a reason for replacing this attachment.', 400);
+    const { type, config, record } = await getAdminSubmissionRecord({
+      eventId: req.params.eventId,
+      submissionType: req.params.submissionType,
+      submissionId: req.params.submissionId,
+    });
+    if (getSubmissionAdministrativeState(record)) {
+      throw buildError('Archived or deleted submissions are read-only.', 409);
+    }
+    const linkage = type === 'FOOD_BID'
+      ? { bid_id: req.params.submissionId }
+      : { application_id: req.params.submissionId };
+    let existingAttachment = await MarketplaceAttachmentModel.findOne({
+      attachment_id: req.params.attachmentId,
+      event_id: req.params.eventId,
+      ...linkage,
+    }).lean();
+    const snapshotPhoto = type === 'MARKETPLACE_APPLICATION' && !existingAttachment
+      ? (Array.isArray(record.photos) ? record.photos : []).find(
+        (photo) => String(photo?.photo_id) === String(req.params.attachmentId)
+      )
+      : null;
+    if (snapshotPhoto) {
+      existingAttachment = {
+        attachment_id: snapshotPhoto.photo_id,
+        attachment_type: 'APPLICATION_IMAGE',
+        source: 'APPLICATION_SNAPSHOT',
+        file_url: snapshotPhoto.file_url,
+        file_key: snapshotPhoto.file_key || null,
+        original_name: snapshotPhoto.original_name || 'Application photo',
+        mime_type: snapshotPhoto.mime_type || null,
+        status: 'ACTIVE',
+      };
+    }
+    if (!existingAttachment) throw buildError('Marketplace submission attachment not found', 404);
+    if (!isAdminSubmissionAttachmentReplaceable(existingAttachment)) {
+      const message = existingAttachment.attachment_type === 'AGREEMENT_DOCUMENT'
+        ? 'Signed agreement documents cannot be replaced. Create a new signing workflow instead.'
+        : 'This marketplace attachment cannot be replaced.';
+      throw buildError(message, 409);
+    }
+    const uploadConfig = validateAttachmentFile(req.file, existingAttachment.attachment_type);
+    if (['BID_IMAGE', 'APPLICATION_IMAGE'].includes(existingAttachment.attachment_type)) {
+      await assertMarketplaceEventImageHasNoContactInfo(req.file);
+    }
+    const uploaded = await addObjectWithKey(req.file, uploadConfig.folder);
+    uploadedKey = uploaded.key;
+    const replacementPayload = {
+      event_id: req.params.eventId,
+      ...linkage,
+      attachment_type: existingAttachment.attachment_type,
+      requirement_label: existingAttachment.requirement_label || null,
+      requirement_key: existingAttachment.requirement_key || null,
+      file_url: uploaded.url,
+      file_key: uploaded.key,
+      original_name: req.file.originalname,
+      mime_type: req.file.mimetype,
+      size_bytes: req.file.size,
+      uploaded_by_user_id: req.user._id,
+      status: 'ACTIVE',
+    };
+    const session = await mongoose.startSession();
+    let replacementAttachment;
+    let updatedSubmission;
+    try {
+      await session.withTransaction(async () => {
+        const Model = getAdminSubmissionModel(type);
+        const [currentAttachment, currentSubmission] = await Promise.all([
+          MarketplaceAttachmentModel.findOne({
+            attachment_id: req.params.attachmentId,
+            event_id: req.params.eventId,
+            ...linkage,
+          }).session(session),
+          Model.findOne({
+            event_id: req.params.eventId,
+            [config.idField]: req.params.submissionId,
+          }).session(session),
+        ]);
+        if (!currentSubmission || (!currentAttachment && !snapshotPhoto)) {
+          throw buildError('Marketplace submission or attachment no longer exists.', 409);
+        }
+        if (currentAttachment && !isAdminSubmissionAttachmentReplaceable(currentAttachment)) {
+          throw buildError('This marketplace attachment can no longer be replaced.', 409);
+        }
+        const before = currentAttachment ? currentAttachment.toObject() : snapshotPhoto;
+        let created;
+        if (snapshotPhoto) {
+          created = {
+            ...replacementPayload,
+            attachment_id: req.params.attachmentId,
+            source: 'APPLICATION_SNAPSHOT',
+          };
+          const replaced = applyMarketplaceApplicationPhotoReplacement(
+            currentSubmission,
+            req.params.attachmentId,
+            created
+          );
+          if (!replaced) throw buildError('Marketplace application photo no longer exists.', 409);
+        } else {
+          [created] = await MarketplaceAttachmentModel.create([replacementPayload], { session });
+          applyAdminSubmissionAttachmentReplacement(
+            currentSubmission,
+            currentAttachment,
+            created
+          );
+        }
+        await currentSubmission.save({ session, validateBeforeSave: true });
+        if (currentAttachment) {
+          currentAttachment.status = 'ARCHIVED';
+          currentAttachment.status_reason = reason;
+          currentAttachment.status_updated_at = new Date();
+          currentAttachment.status_updated_by_user_id = req.user._id;
+          await currentAttachment.save({ session });
+        }
+        await MarketplaceAdminAuditModel.create([{
+          action: 'REPLACE_SUBMISSION_ATTACHMENT',
+          event_id: req.params.eventId,
+          submission_type: type,
+          submission_id: req.params.submissionId,
+          admin_user_id: req.user._id,
+          reason,
+          before,
+          after: typeof created.toObject === 'function' ? created.toObject() : created,
+        }], { session });
+        replacementAttachment = typeof created.toObject === 'function' ? created : created;
+        updatedSubmission = currentSubmission;
+      });
+    } finally {
+      await session.endSession();
+    }
+    uploadedKey = null;
+    return res.data({
+      marketplaceAttachment: replacementAttachment,
+      marketplaceSubmission: updatedSubmission,
+    }, 'Marketplace submission attachment replaced');
+  } catch (e) {
+    if (uploadedKey) {
+      try { await removeObject(uploadedKey); } catch (cleanupError) { console.error(cleanupError); }
+    }
+    return next(e);
+  } finally {
+    if (req.file?.path) fs.unlink(req.file.path, () => {});
   }
 };
 
@@ -7805,102 +8544,82 @@ exports.adminUpdateEvent = async (req, res, next) => {
       throw buildError('Marketplace event not found', 404);
     }
 
-    const updatePayload = preserveSavedMarketplaceLocationFields(
-      {
-        ...toPlainObject(event),
-        ...req.body,
-        status: req.body.status || event.status,
-      },
-      event
-    );
-    const normalizedEvent = normalizeMarketplaceEventPayload(updatePayload, {
-      existingEvent: event,
+    const { admin_reason, save_mode: saveMode = 'PUBLISH', ...requestedUpdates } = req.body;
+    const draftKey = getAdminDraftKey({ adminUserId: req.user._id, eventId: req.params.eventId });
+    const existingDraft = await MarketplaceAdminDraftModel.findOne({ draft_key: draftKey }).lean();
+    const proposedUpdates = { ...(existingDraft?.payload || {}), ...requestedUpdates };
+    const draft = await saveAdminDraft({
+      adminUserId: req.user._id,
+      eventId: req.params.eventId,
+      payload: proposedUpdates,
+      reason: admin_reason,
     });
-
-    const marketplaceEvent = await MarketplaceEventService.update(
-      { event_id: req.params.eventId },
-      normalizedEvent,
-      { getNew: true }
-    );
-
+    if (saveMode === 'DRAFT') {
+      return res.data({ marketplaceEvent: event, adminDraft: draft }, 'Marketplace event draft saved');
+    }
+    const session = await mongoose.startSession();
+    let marketplaceEvent;
+    try {
+      await session.withTransaction(async () => {
+        const Model = MarketplaceEventService.getModel();
+        const current = await Model.findOne({ event_id: req.params.eventId }).session(session);
+        if (!current) throw buildError('Marketplace event not found', 404);
+        const before = current.toObject();
+        const updatePayload = preserveSavedMarketplaceLocationFields(
+          {
+            ...before,
+            ...proposedUpdates,
+            status: proposedUpdates.status || current.status,
+          },
+          current
+        );
+        const normalizedEvent = normalizeMarketplaceEventPayload(updatePayload, {
+          existingEvent: current,
+        });
+        const [bidCount, foodApplicationCount, marketplaceApplicationCount, paymentCount] = await Promise.all([
+          MarketplaceBidModel.countDocuments({ event_id: req.params.eventId }).session(session),
+          MarketplaceApplicationModel.countDocuments({ event_id: req.params.eventId }).session(session),
+          EventVendorApplicationModel.countDocuments({ event_id: req.params.eventId }).session(session),
+          MarketplacePaymentModel.countDocuments({ event_id: req.params.eventId }).session(session),
+        ]);
+        const validationErrors = validateAdminEventPublish({
+          current: before,
+          proposed: normalizedEvent,
+          hasActivity: bidCount + foodApplicationCount + marketplaceApplicationCount + paymentCount > 0,
+        });
+        if (validationErrors.length) throwAdminValidationError(validationErrors);
+        Object.assign(current, getAdminEventUpdateFields(normalizedEvent));
+        await current.save({ session, validateBeforeSave: true });
+        marketplaceEvent = current;
+        await MarketplaceAdminAuditModel.create([{
+          action: 'UPDATE_EVENT',
+          event_id: req.params.eventId,
+          admin_user_id: req.user._id,
+          reason: admin_reason,
+          before,
+          after: current.toObject(),
+        }], { session });
+        await MarketplaceAdminDraftModel.deleteOne({ draft_key: draftKey }).session(session);
+      });
+    } finally {
+      await session.endSession();
+    }
     return res.data({ marketplaceEvent }, 'Marketplace event updated');
   } catch (e) {
-    return next(e);
-  }
-};
-
-exports.adminWithdrawSubmission = async (req, res, next) => {
-  try {
-    if (req.user.userType !== 'SUPER_ADMIN') {
-      throw buildError('Only admins can withdraw marketplace submissions', 403);
-    }
-
-    const submissionType = String(req.body.submission_type || '').toUpperCase();
-    const submissionId = String(req.body.submission_id || '').trim();
-    const reason = String(req.body.reason || '').trim();
-
-    if (!['BID', 'APPLICATION'].includes(submissionType) || !submissionId) {
-      throw buildError('Select a valid bid or application to withdraw.', 400);
-    }
-
-    const now = new Date();
-    if (submissionType === 'BID') {
-      const bid = await MarketplaceBidService.getByData(
-        {
-          event_id: req.params.eventId,
-          bid_id: submissionId,
-          archived_at: null,
-        },
-        { singleResult: true }
-      );
-      if (!bid) {
-        throw buildError('Marketplace bid not found', 404);
+    const validationErrors = getAdminValidationErrors(e);
+    if (validationErrors.length && req.user?.userType === 'SUPER_ADMIN') {
+      const draftKey = getAdminDraftKey({ adminUserId: req.user._id, eventId: req.params.eventId });
+      const existing = await MarketplaceAdminDraftModel.findOne({ draft_key: draftKey }).lean();
+      if (existing) {
+        await saveAdminDraft({
+          adminUserId: req.user._id,
+          eventId: req.params.eventId,
+          payload: existing.payload,
+          reason: existing.reason,
+          validationErrors,
+        });
       }
-      if (['AWARDED', 'WITHDRAWN'].includes(bid.bid_status)) {
-        throw buildError('This bid can no longer be withdrawn.', 400);
-      }
-      bid.bid_status = 'WITHDRAWN';
-      bid.withdrawn_at = now;
-      bid.withdrawn_by_user_id = req.user._id;
-      bid.revision_requested_fields = [
-        ...(bid.revision_requested_fields || []),
-        reason ? `Admin withdrawal: ${reason}` : 'Admin withdrawal',
-      ];
-      await bid.save();
-      return res.data({ marketplaceBid: bid }, 'Marketplace bid withdrawn');
     }
-
-    const application = await MarketplaceApplicationService.getByData(
-      {
-        event_id: req.params.eventId,
-        application_id: submissionId,
-        archived_at: null,
-      },
-      { singleResult: true }
-    );
-    if (!application) {
-      throw buildError('Marketplace application not found', 404);
-    }
-    if (
-      ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED', 'WITHDRAWN'].includes(
-        application.application_status
-      )
-    ) {
-      throw buildError('This application can no longer be withdrawn.', 400);
-    }
-    application.application_status = 'WITHDRAWN';
-    application.withdrawn_at = now;
-    application.withdrawn_by_user_id = req.user._id;
-    application.revision_requested_fields = [
-      ...(application.revision_requested_fields || []),
-      reason ? `Admin withdrawal: ${reason}` : 'Admin withdrawal',
-    ];
-    await application.save();
-    return res.data(
-      { marketplaceApplication: application },
-      'Marketplace application withdrawn'
-    );
-  } catch (e) {
     return next(e);
   }
 };
