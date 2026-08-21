@@ -859,8 +859,8 @@ exports.awardApplication = async (req, res, next) => {
     if (!application) throw error('Marketplace Vendor application not found', 404);
     const event = await MarketplaceEventModel.findOne({ event_id: application.event_id, customer_user_id: req.user._id });
     if (!event) throw error('Event not found', 404);
-    if (!['OPEN', 'REOPENED'].includes(event.status) || event.vendor_applications_closed_at || (event.event_close_date && new Date(event.event_close_date) <= new Date())) {
-      throw error('This event is no longer open for vendor submission decisions.', 409);
+    if (!['OPEN', 'REOPENED', 'CLOSED', 'AWARDED'].includes(event.status)) {
+      throw error('This event is no longer available for vendor awards.', 409);
     }
     if (!['SUBMITTED', 'UNDER_REVIEW'].includes(application.status)) throw error('Application cannot be awarded in its current status', 409);
     for (const type of application.vendor_types) {

@@ -291,6 +291,15 @@ const awardApplication = async (controller, applicationId) => {
   assert.equal(batch.error, undefined, 'multiple selected bids can still be awarded in one checkout batch');
   assert.equal(batchState.event.status, 'AWARDED');
 
+  const closedState = createState();
+  closedState.event.status = 'CLOSED';
+  closedState.event.vendor_applications_closed_at = new Date();
+  closedState.event.event_close_date = new Date('2020-01-01');
+  const closedController = loadController(closedState);
+  const closedAward = await award(closedController, ['bid-1']);
+  assert.equal(closedAward.error, undefined, 'existing Food Vendor bids remain awardable after bidding closes');
+  assert.equal(closedState.bids[0].bid_status, 'AWARDED');
+
   const legacyState = createState();
   legacyState.bids[0].bid_status = 'AWARDED';
   legacyState.event.status = 'AWARDED';

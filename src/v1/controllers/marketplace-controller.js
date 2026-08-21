@@ -272,14 +272,13 @@ const COORDINATOR_AWARD_FEE_RATE = 0.015;
 const VENDOR_EVENT_PROCESSING_RATE = 0.02;
 const roundMoney = (value) => Number((Number(value || 0)).toFixed(2));
 const ACTIVE_EVENT_STATUSES = ['OPEN', 'REOPENED'];
+const AWARD_EVENT_STATUSES = [...ACTIVE_EVENT_STATUSES, 'CLOSED', 'AWARDED'];
 const REJECTION_EVENT_STATUSES = [...ACTIVE_EVENT_STATUSES, 'AWARDED'];
-const assertEventOpenForSubmissionDecision = (event) => {
+const assertEventOpenForAwardDecision = (event) => {
   if (
-    !ACTIVE_EVENT_STATUSES.includes(String(event?.status || '').toUpperCase()) ||
-    event?.vendor_applications_closed_at ||
-    (event?.event_close_date && new Date(event.event_close_date) <= new Date())
+    !AWARD_EVENT_STATUSES.includes(String(event?.status || '').toUpperCase())
   ) {
-    throw buildError('This event is no longer open for vendor submission decisions.', 409);
+    throw buildError('This event is no longer available for vendor awards.', 409);
   }
 };
 const assertEventOpenForRejectionDecision = (event) => {
@@ -770,22 +769,16 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   ) {
     throw buildError('Last Date to Accept Payments is required when vendors pay a fee.', 400);
   }
-  if (
-    normalized.vendor_fee_payment_deadline &&
-    normalized.event_date &&
-    new Date(normalized.vendor_fee_payment_deadline) >= new Date(normalized.event_date)
-  ) {
-    throw buildError('Last Date to Accept Payments must be before the event date.', 400);
-  }
-  if (
-    normalized.vendor_fee_payment_deadline &&
-    normalized.event_close_date &&
-    new Date(normalized.vendor_fee_payment_deadline) <= new Date(normalized.event_close_date)
-  ) {
-    throw buildError(
-      'Last Date to Accept Payments must be after the application/bid deadline.',
-      400
-    );
+  if (normalized.vendor_fee_payment_deadline) {
+    const eventTiming = getMarketplaceEventTiming(normalized);
+    const paymentDeadline = new Date(normalized.vendor_fee_payment_deadline);
+    if (
+      eventTiming &&
+      !Number.isNaN(paymentDeadline.getTime()) &&
+      paymentDeadline.getTime() >= eventTiming.start_at.getTime()
+    ) {
+      throw buildError('Last Date to Accept Payments must be before the event start time.', 400);
+    }
   }
   if (
     paymentResponsibility === 'BOTH' &&
@@ -7150,7 +7143,7 @@ exports.awardBids = async (req, res, next) => {
   try {
     const event = await getOwnedEvent(req.params.eventId, req.user._id);
     await reconcilePartiallyAwardedFoodEvent(event);
-    assertEventOpenForSubmissionDecision(event);
+    assertEventOpenForAwardDecision(event);
     const batch = await loadAwardBatchSelections(event, req.body);
     const {
       selectedBidIds,
@@ -7258,7 +7251,7 @@ exports.acceptApplication = async (req, res, next) => {
   try {
     const event = await getOwnedEvent(req.params.eventId, req.user._id);
     await reconcilePartiallyAwardedFoodEvent(event);
-    assertEventOpenForSubmissionDecision(event);
+    assertEventOpenForAwardDecision(event);
     const application = await MarketplaceApplicationService.getByData(
       {
         event_id: event.event_id,
@@ -9000,6 +8993,28 @@ exports.checkoutPayment = async (req, res, next) => {
     }
     if (!['PENDING', 'FAILED'].includes(authorizedPayment.payment_status)) {
       throw buildError('Payment is already processing and cannot be started again.', 409);
+    }
+    if (authorizedPayment.payment_type === 'VENDOR_EVENT_FEE') {
+      const event = await MarketplaceEventService.getByData(
+        { event_id: authorizedPayment.event_id },
+        { singleResult: true, lean: true }
+      );
+      const timing = getMarketplaceEventTiming(event || {});
+      if (!timing) {
+        throw buildError('A valid event date, time, duration, and timezone are required before paying the vendor fee.', 409);
+      }
+      if (new Date().getTime() >= timing.start_at.getTime()) {
+        throw buildError('Vendor fee payments are no longer accepted once the event has started.', 410);
+      }
+      if (
+        event?.vendor_fee_payment_deadline &&
+        new Date(event.vendor_fee_payment_deadline).getTime() < Date.now()
+      ) {
+        throw buildError(
+          `The vendor payment deadline has passed. Contact the coordinator or RTC support at ${MARKETPLACE_PHONE_NUMBER}.`,
+          410
+        );
+      }
     }
 
     let marketplacePayment = await MarketplacePaymentService.getModel().findOneAndUpdate(

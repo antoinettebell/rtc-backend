@@ -117,10 +117,7 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 
 (async () => {
 	for (const blocked of [
-		{ eventStatus: 'CLOSED' },
 		{ eventStatus: 'CANCELLED' },
-		{ closedAt: new Date() },
-		{ closeDate: new Date('2020-01-01') },
 	]) {
 		const state = createState(blocked);
 		const controller = loadController(state);
@@ -130,6 +127,18 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 		assert.equal(state.counters.paymentCreates, 0);
 		assert.equal(state.counters.emails, 0);
 		assert.equal(state.counters.notifications, 0);
+	}
+
+	for (const closed of [
+		{ eventStatus: 'CLOSED' },
+		{ closedAt: new Date() },
+		{ closeDate: new Date('2020-01-01') },
+	]) {
+		const state = createState(closed);
+		const controller = loadController(state);
+		const result = await run(controller.awardApplication);
+		assert.equal(result.error, undefined, 'existing Marketplace Vendor applications remain awardable after bidding closes');
+		assert.equal(state.application.status, 'PAYMENT_DUE');
 	}
 
 	{
