@@ -7801,12 +7801,60 @@ exports.adminMarketplaceEvents = async (req, res, next) => {
       query.status = req.query.status;
     }
     if (search) {
+      const [foodTrucks, eventVendorProfiles] = await Promise.all([
+        FoodTruckService.getModel().find({
+          $expr: {
+            $regexMatch: {
+              input: { $toString: '$_id' },
+              regex: search,
+              options: 'i',
+            },
+          },
+        }).select('_id').lean(),
+        EventVendorProfileModel.find({
+          profile_id: { $regex: search, $options: 'i' },
+        }).select('profile_id').lean(),
+      ]);
+      const foodTruckIds = foodTrucks.map((foodTruck) => foodTruck._id);
+      const eventVendorProfileIds = eventVendorProfiles.map((profile) => profile.profile_id);
+      const [matchingBidEventIds, matchingFoodApplicationEventIds, matchingMarketplaceApplicationEventIds] = await Promise.all([
+        MarketplaceBidService.getModel()
+          .find({
+            $or: [
+              { bid_id: { $regex: search, $options: 'i' } },
+              ...(foodTruckIds.length ? [{ food_truck_id: { $in: foodTruckIds } }] : []),
+            ],
+            archived_at: null,
+            deleted_at: null,
+          })
+          .distinct('event_id'),
+        MarketplaceApplicationService.getModel()
+          .find({
+            ...(foodTruckIds.length ? { food_truck_id: { $in: foodTruckIds } } : { _id: null }),
+            archived_at: null,
+            deleted_at: null,
+          })
+          .distinct('event_id'),
+        EventVendorApplicationModel.find({
+          ...(eventVendorProfileIds.length ? { profile_id: { $in: eventVendorProfileIds } } : { _id: null }),
+          archived_at: null,
+          deleted_at: null,
+        }).distinct('event_id'),
+      ]);
+      const matchingSubmissionEventIds = [
+        ...new Set([
+          ...matchingBidEventIds,
+          ...matchingFoodApplicationEventIds,
+          ...matchingMarketplaceApplicationEventIds,
+        ]),
+      ];
       query.$or = [
         { event_id: { $regex: search, $options: 'i' } },
         { event_name: { $regex: search, $options: 'i' } },
         { event_description: { $regex: search, $options: 'i' } },
         { event_city: { $regex: search, $options: 'i' } },
         { event_state: { $regex: search, $options: 'i' } },
+        ...(matchingSubmissionEventIds.length ? [{ event_id: { $in: matchingSubmissionEventIds } }] : []),
       ];
     }
 
@@ -8080,6 +8128,9 @@ exports.adminMarketplaceSubmission = async (req, res, next) => {
       marketplaceEvent: event,
       submission_type: type,
       submission_id: record[config.idField],
+      vendor_profile_id: type === 'MARKETPLACE_APPLICATION'
+        ? record.profile_id
+        : record.food_truck_id?._id || record.food_truck_id || null,
       status: getSubmissionStatus(type, record),
       submission: record,
       profile,
