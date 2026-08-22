@@ -377,6 +377,32 @@ const isMarketplaceEventClosedForSubmissionEdits = (event = {}) => {
   return false;
 };
 
+const marketplaceVendorNeedSnapshot = (needs = []) =>
+  (Array.isArray(needs) ? needs : [])
+    .map((need) => ({
+      vendor_type: String(need?.vendor_type || '').trim().toUpperCase(),
+      quantity: Number(need?.quantity || 0),
+      type_description: String(need?.type_description || '').trim(),
+      fee: Number(need?.fee || 0),
+    }))
+    .sort((left, right) => left.vendor_type.localeCompare(right.vendor_type));
+
+const marketplaceVendorNeedsChanged = (currentNeeds, proposedNeeds) =>
+  JSON.stringify(marketplaceVendorNeedSnapshot(currentNeeds)) !==
+  JSON.stringify(marketplaceVendorNeedSnapshot(proposedNeeds));
+
+const marketplaceVendorCapacityAdded = (currentNeeds, proposedNeeds) => {
+  const currentByType = new Map(
+    marketplaceVendorNeedSnapshot(currentNeeds).map((need) => [
+      need.vendor_type,
+      need.quantity,
+    ]),
+  );
+  return marketplaceVendorNeedSnapshot(proposedNeeds).some(
+    (need) => need.quantity > Number(currentByType.get(need.vendor_type) || 0),
+  );
+};
+
 const assertMarketplaceSubmissionEditable = async (eventId) => {
   const event = await MarketplaceEventService.getByData(
     { event_id: eventId },
@@ -4601,6 +4627,9 @@ exports.updateEvent = async (req, res, next) => {
     if (req.body.vip_section_enabled === false && vipCommitted > 0) {
       throw buildError('The VIP section cannot be disabled after VIP tickets have been sold or reserved.', 409);
     }
+    const marketplaceVendorNeedsChangedByCoordinator =
+      req.body.event_vendor_needs !== undefined &&
+      marketplaceVendorNeedsChanged(event.event_vendor_needs, req.body.event_vendor_needs);
     const protectedParticipationFields = [
       'fully_catered_event',
       'catered_vip_section_enabled',
@@ -4614,13 +4643,23 @@ exports.updateEvent = async (req, res, next) => {
       (field) => req.body[field] !== undefined &&
         String(req.body[field] ?? '') !== String(event[field] ?? '')
     );
-    if (req.body.vip_section_enabled === false || participationChanged) {
+    if (
+      req.body.vip_section_enabled === false ||
+      participationChanged ||
+      marketplaceVendorNeedsChangedByCoordinator
+    ) {
       const [existingBids, existingApplications, existingPayments] = await Promise.all([
         MarketplaceBidService.getByData({ event_id: event.event_id, archived_at: null }, { lean: true }),
         MarketplaceApplicationService.getByData({ event_id: event.event_id, archived_at: null }, { lean: true }),
         MarketplacePaymentService.getByData({ event_id: event.event_id }, { lean: true }),
       ]);
       if (existingBids.length || existingApplications.length || existingPayments.length) {
+        if (marketplaceVendorNeedsChangedByCoordinator) {
+          throw buildError(
+            'Please reach out to admin support to add additional vendors to this event.',
+            409
+          );
+        }
         throw buildError(
           `Participation and payment rules cannot be changed after marketplace activity begins. Contact support at ${MARKETPLACE_PHONE_NUMBER}.`,
           409
@@ -8632,6 +8671,17 @@ exports.adminUpdateEvent = async (req, res, next) => {
           hasActivity: bidCount + foodApplicationCount + marketplaceApplicationCount + paymentCount > 0,
         });
         if (validationErrors.length) throwAdminValidationError(validationErrors);
+        if (
+          marketplaceVendorCapacityAdded(
+            before.event_vendor_needs,
+            normalizedEvent.event_vendor_needs
+          ) &&
+          String(current.status || '').toUpperCase() === 'AWARDED' &&
+          !current.vendor_applications_closed_at &&
+          (!current.event_close_date || new Date(current.event_close_date) > new Date())
+        ) {
+          normalizedEvent.status = 'REOPENED';
+        }
         Object.assign(current, getAdminEventUpdateFields(normalizedEvent));
         await current.save({ session, validateBeforeSave: true });
         marketplaceEvent = current;

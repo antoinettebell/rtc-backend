@@ -40,10 +40,18 @@ const baseEvent = {
   event_city: 'Columbia',
   event_state: 'SC',
   number_of_guests: 100,
+  vip_section_enabled: false,
+  vip_guest_count: 0,
   number_of_vendors_needed: 2,
   free_food_offered: false,
   fully_catered_event: true,
+  catered_vip_section_enabled: false,
+  ga_food_sales_allowed: false,
+  separate_vip_vendor_required: false,
+  waive_vendor_fee_for_combined_award: false,
   budgeted_amount: 2500,
+  vendor_fee: 0,
+  vendor_fee_payment_deadline: null,
   payment_responsibility: 'COORDINATOR',
   ga_ticket_quantity: 100,
   vip_ticket_quantity: 0,
@@ -279,6 +287,24 @@ const execute = async (method, body, options = {}) => {
   assert.equal(lockedEvent.saveCalls, 0);
   assert.equal(lockedPublish.audits.length, 0);
   assert.ok(lockedPublish.getDraft().validation_errors.some(({ field }) => field === 'budgeted_amount'));
+
+  const activityEvent = createEvent({ status: 'AWARDED' });
+  const addedVendorNeed = await execute('adminUpdateEvent', {
+    event_vendor_needs: [
+      { vendor_type: 'MERCHANDISE', quantity: 2, fee: 10 },
+      {
+        vendor_type: 'SERVICE',
+        type_description: 'Event photography',
+        quantity: 1,
+        fee: 25,
+      },
+    ],
+    admin_reason: 'Add service vendor after applications',
+    save_mode: 'PUBLISH',
+  }, { event: activityEvent, activityCount: 1 });
+  assert.equal(addedVendorNeed.error, undefined);
+  assert.equal(activityEvent.status, 'REOPENED');
+  assert.equal(activityEvent.event_vendor_needs.length, 2);
 
   console.log('marketplace admin event controller tests passed');
 })().catch((error) => {
