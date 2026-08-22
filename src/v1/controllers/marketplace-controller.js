@@ -1005,23 +1005,6 @@ const assertVendorCanSubmitRound = async (event, vendorUserId) => {
   }
 };
 
-const hasMarketplaceAwards = async (eventId) => {
-  const [awardedBid, awardedApplication] = await Promise.all([
-    MarketplaceBidService.getByData(
-      { event_id: eventId, bid_status: 'AWARDED' },
-      { singleResult: true, lean: true }
-    ),
-    MarketplaceApplicationService.getByData(
-      {
-        event_id: eventId,
-        application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
-      },
-      { singleResult: true, lean: true }
-    ),
-  ]);
-  return !!(awardedBid || awardedApplication);
-};
-
 const normalizeOpaquePaymentData = (paymentData) => {
   if (!paymentData || typeof paymentData !== 'object') {
     return {
@@ -3273,7 +3256,7 @@ const notifyVendorsOfEventCancellation = async (event) => {
   );
 };
 
-const notifyVendorsOfEventReopen = async (event) => {
+const notifyVendorsOfEventReopen = async (event, reopenMode = 'ARCHIVE') => {
   const vendorIds = await getEventParticipantVendorIds(event.event_id);
   if (!vendorIds.length) {
     return;
@@ -3283,7 +3266,9 @@ const notifyVendorsOfEventReopen = async (event) => {
     vendorIds.map((userId) => ({
       userId,
       title: 'Marketplace event reopened',
-      body: `${event.event_name || 'An event'} was reopened for new vendor submissions. Your previous submission remains visible to the coordinator, but previous submitters cannot submit again.`,
+      body: reopenMode === 'KEEP'
+        ? `${event.event_name || 'An event'} was reopened for new vendor submissions. Your existing submission remains under coordinator review.`
+        : `${event.event_name || 'An event'} was reopened for new vendor submissions. Outstanding previous submissions were archived, and previous submitters cannot submit again.`,
       data: {
         notificationType: 'MARKETPLACE_EVENT_REOPENED',
         eventId: event.event_id,
@@ -3299,7 +3284,8 @@ const archiveMarketplaceSubmissionsForReopen = async (eventId, now = new Date())
     MarketplaceBidService.getModel().updateMany(
       {
         event_id: eventId,
-        bid_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+        bid_status: { $nin: ['DRAFT', 'WITHDRAWN', 'AWARDED'] },
+        payment_status: { $ne: 'PAID' },
         archived_at: null,
       },
       {
@@ -3312,7 +3298,22 @@ const archiveMarketplaceSubmissionsForReopen = async (eventId, now = new Date())
     MarketplaceApplicationService.getModel().updateMany(
       {
         event_id: eventId,
-        application_status: { $nin: ['DRAFT', 'WITHDRAWN'] },
+        application_status: {
+          $nin: ['DRAFT', 'WITHDRAWN', 'ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'],
+        },
+        archived_at: null,
+      },
+      {
+        $set: {
+          archived_at: now,
+          archived_reason: 'Event reopened after close window',
+        },
+      }
+    ),
+    EventVendorApplicationModel.updateMany(
+      {
+        event_id: eventId,
+        status: { $nin: ['DRAFT', 'WITHDRAWN', 'AWARDED', 'PAYMENT_DUE', 'PAID'] },
         archived_at: null,
       },
       {
@@ -4768,86 +4769,75 @@ exports.deleteDraftEvent = async (req, res, next) => {
   }
 };
 
+const reopenMarketplaceEvent = async ({ event, payload, eventId, updateFilter }) => {
+  const now = new Date();
+  const isClosedForSubmissions =
+    event.status === 'CLOSED' ||
+    !!event.vendor_applications_closed_at ||
+    (event.event_close_date && new Date(event.event_close_date) <= now);
+  if (!isClosedForSubmissions) {
+    throw buildError('Only closed events can be reopened.', 400);
+  }
+  const existingEventTiming = getMarketplaceEventTiming(event);
+  if (existingEventTiming && existingEventTiming.end_at.getTime() <= now) {
+    throw buildError('Events that have ended cannot be reopened.', 400);
+  }
+  const reopenMode = String(payload.reopen_mode || 'ARCHIVE').toUpperCase();
+  if (!['ARCHIVE', 'KEEP'].includes(reopenMode)) {
+    throw buildError('Choose whether to archive or keep existing bids.', 400);
+  }
+  const normalizedEvent = normalizeMarketplaceEventPayload(
+    { ...toPlainObject(event), ...payload, status: 'REOPENED' },
+    { existingEvent: event }
+  );
+  if (!normalizedEvent.event_close_date || new Date(normalizedEvent.event_close_date) <= now) {
+    throw buildError('Enter a new future Close Date and Close Time before reopening.', 400);
+  }
+  const reopenableEventFields = { ...normalizedEvent };
+  [
+    '_id', '__v', 'event_id', 'customer_user_id', 'reopen_count',
+    'current_submission_round', 'created_at', 'updated_at', 'reopen_mode',
+  ].forEach((field) => delete reopenableEventFields[field]);
+  if (reopenMode === 'ARCHIVE') {
+    await archiveMarketplaceSubmissionsForReopen(event.event_id, now);
+  }
+  const marketplaceEvent = await MarketplaceEventService.update(
+    updateFilter,
+    {
+      $set: {
+        ...reopenableEventFields,
+        status: 'REOPENED',
+        closed_at: null,
+        archived_at: null,
+        close_notification_sent_at: null,
+        submissions_seen_at: null,
+        vendor_applications_closed_at: null,
+        current_submission_round: (event.current_submission_round || 1) + 1,
+      },
+      $inc: { reopen_count: 1 },
+    },
+    { getNew: true, directApply: true }
+  );
+  await notifyVendorsOfEventReopen(marketplaceEvent, reopenMode);
+  return marketplaceEvent;
+};
+
 exports.reopenEvent = async (req, res, next) => {
   try {
     if (req.user.userType !== 'CUSTOMER') {
       throw buildError('Only customers can reopen marketplace events', 403);
     }
     const event = await getOwnedEvent(req.params.eventId, req.user._id);
-	    if ((event.reopen_count || 0) >= 2) {
-	      throw buildError('This event has already been reopened two times.', 400);
-	    }
-	    if (event.status !== 'CLOSED') {
-	      throw buildError('Only closed events can be reopened.', 400);
-	    }
-	    const existingEventTiming = getMarketplaceEventTiming(event);
-	    if (
-	      existingEventTiming &&
-	      existingEventTiming.end_at.getTime() <= Date.now()
-	    ) {
-	      throw buildError('Events that have ended cannot be reopened.', 400);
-	    }
-	    if (event.status === 'AWARDED' || await hasMarketplaceAwards(event.event_id)) {
-	      throw buildError('Events with awarded vendors cannot be reopened.', 400);
-	    }
-	    const eventStartDate = event.event_date ? new Date(event.event_date) : null;
-	    const requestedEventDate = req.body.event_date ? new Date(req.body.event_date) : null;
-	    if (
-	      eventStartDate &&
-	      eventStartDate <= new Date() &&
-	      (!requestedEventDate || requestedEventDate <= new Date())
-	    ) {
-	      throw buildError(
-	        'The event date has passed. Update the event to a future date before reopening.',
-	        400
-	      );
-	    }
-	    const normalizedEvent = normalizeMarketplaceEventPayload(
-	      {
-	        ...toPlainObject(event),
-	        ...req.body,
-        status: 'REOPENED',
-      },
-      { existingEvent: event }
+    const marketplaceEvent = await reopenMarketplaceEvent({
+      event,
+      payload: req.body,
+      eventId: req.params.eventId,
+      updateFilter: { event_id: req.params.eventId, customer_user_id: req.user._id },
+    });
+    const marketplaceEventWithImages = await MarketplaceEventService.getWithImages(
+      marketplaceEvent.event_id
     );
-	    const reopenableEventFields = { ...normalizedEvent };
-	    [
-	      '_id',
-	      '__v',
-	      'event_id',
-	      'customer_user_id',
-	      'reopen_count',
-	      'current_submission_round',
-	      'created_at',
-	      'updated_at',
-	    ].forEach((field) => delete reopenableEventFields[field]);
-	    const reopenedAt = new Date();
-	    await archiveMarketplaceSubmissionsForReopen(event.event_id, reopenedAt);
-	    const marketplaceEvent = await MarketplaceEventService.update(
-	      { event_id: req.params.eventId, customer_user_id: req.user._id },
-	      {
-	        $set: {
-	          ...reopenableEventFields,
-	          status: 'REOPENED',
-	          closed_at: null,
-	          archived_at: null,
-	          close_notification_sent_at: null,
-	          submissions_seen_at: null,
-	          current_submission_round: (event.current_submission_round || 1) + 1,
-	        },
-	        $inc: { reopen_count: 1 },
-      },
-	      { getNew: true, directApply: true }
-	    );
-	    await notifyVendorsOfEventReopen(marketplaceEvent);
-	    const marketplaceEventWithImages = await MarketplaceEventService.getWithImages(
-	      marketplaceEvent.event_id
-	    );
-
-	    return res.data(
-	      { marketplaceEvent: marketplaceEventWithImages },
-	      'Marketplace event reopened'
-	    );
+    return res.data({ marketplaceEvent: marketplaceEventWithImages }, 'Marketplace event reopened');
   } catch (e) {
     return next(e);
   }
@@ -4896,6 +4886,87 @@ exports.closeEvent = async (req, res, next) => {
     await notifyClosedWithoutAward(marketplaceEvent);
 
     return res.data({ marketplaceEvent }, 'Marketplace vendor applications closed');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.adminCloseEvent = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'SUPER_ADMIN') {
+      throw buildError('Only admins can close marketplace events', 403);
+    }
+    const event = await MarketplaceEventService.getByData(
+      { event_id: req.params.eventId },
+      { singleResult: true }
+    );
+    if (!event) throw buildError('Marketplace event not found', 404);
+    if (![...ACTIVE_EVENT_STATUSES, 'AWARDED'].includes(event.status)) {
+      throw buildError('Only open events can be closed.', 400);
+    }
+    const completion = await getCoordinatorPaymentCompletionForEvent(event.event_id);
+    if (completion.outstandingBidIds.length) {
+      throw buildError('Complete all coordinator vendor payments before closing this event.', 409);
+    }
+    const now = new Date();
+    const marketplaceEvent = await MarketplaceEventService.update(
+      { event_id: req.params.eventId },
+      {
+        status: 'CLOSED',
+        closed_at: now,
+        vendor_applications_closed_at: now,
+        close_comment: req.body.close_comment || 'Closed early by admin.',
+        closed_by_user_id: req.user._id,
+      },
+      { getNew: true }
+    );
+    await MarketplaceEventQuestionService.updateMany(
+      { event_id: req.params.eventId, status: { $in: ['PENDING', 'PUBLISHED'] } },
+      { status: 'ARCHIVED', archived_at: now }
+    );
+    await MarketplaceAdminAuditModel.create([{
+      action: 'CLOSE_EVENT',
+      event_id: req.params.eventId,
+      admin_user_id: req.user._id,
+      reason: req.body.close_comment || 'Closed early by admin.',
+      before: toPlainObject(event),
+      after: toPlainObject(marketplaceEvent),
+    }]);
+    await notifyClosedWithoutAward(marketplaceEvent);
+    return res.data({ marketplaceEvent }, 'Marketplace vendor applications closed');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.adminReopenEvent = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'SUPER_ADMIN') {
+      throw buildError('Only admins can reopen marketplace events', 403);
+    }
+    const event = await MarketplaceEventService.getByData(
+      { event_id: req.params.eventId },
+      { singleResult: true }
+    );
+    if (!event) throw buildError('Marketplace event not found', 404);
+    const marketplaceEvent = await reopenMarketplaceEvent({
+      event,
+      payload: req.body,
+      eventId: req.params.eventId,
+      updateFilter: { event_id: req.params.eventId },
+    });
+    await MarketplaceAdminAuditModel.create([{
+      action: 'REOPEN_EVENT',
+      event_id: req.params.eventId,
+      admin_user_id: req.user._id,
+      reason: `Reopened with ${String(req.body.reopen_mode || 'ARCHIVE').toUpperCase()} existing bids.`,
+      before: toPlainObject(event),
+      after: toPlainObject(marketplaceEvent),
+    }]);
+    const marketplaceEventWithImages = await MarketplaceEventService.getWithImages(
+      marketplaceEvent.event_id
+    );
+    return res.data({ marketplaceEvent: marketplaceEventWithImages }, 'Marketplace event reopened');
   } catch (e) {
     return next(e);
   }

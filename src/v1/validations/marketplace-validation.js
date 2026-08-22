@@ -168,12 +168,15 @@ module.exports = {
   },
 
   reopenEvent: {
-    body: Joi.object(marketplaceEventBody),
+    body: Joi.object({
+      ...marketplaceEventBody,
+      reopen_mode: Joi.string().valid('ARCHIVE', 'KEEP').default('ARCHIVE'),
+    }),
   },
 
   closeEvent: {
     body: Joi.object({
-      close_comment: Joi.string().trim().max(1000).required(),
+      close_comment: Joi.string().trim().max(1000).allow('').default(''),
     }),
   },
 

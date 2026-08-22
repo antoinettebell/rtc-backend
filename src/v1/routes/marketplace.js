@@ -77,6 +77,20 @@ router.post(
   Controller.closeEvent
 );
 
+router.post(
+  '/repository/events/:eventId/close',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.closeEvent),
+  Controller.adminCloseEvent
+);
+
+router.post(
+  '/repository/events/:eventId/reopen',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.reopenEvent),
+  Controller.adminReopenEvent
+);
+
 router.get(
   '/events/my',
   allowedTo(['CUSTOMER']),
