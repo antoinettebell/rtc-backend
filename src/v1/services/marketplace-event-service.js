@@ -11,6 +11,7 @@ const {
 const { BaseService } = require('../../common-services');
 const {
   getMarketplaceFilledSlotSummary,
+  getMarketplaceServiceRequirements,
 } = require('../../helper/marketplace-participation-helper');
 const {
   getMarketplaceApplicationCounts,
@@ -155,10 +156,15 @@ class MarketplaceEventService extends BaseService {
       application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
       archived_at: null,
     }).lean();
+    const serviceRequirements = getMarketplaceServiceRequirements(
+      event,
+      event.number_of_vendors_needed,
+    );
     const filledSlots = getMarketplaceFilledSlotSummary({
       bids: activeAwardedBids,
       applications: activeAwardedApplications,
       separateVipVendorRequired: event.separate_vip_vendor_required,
+      ...serviceRequirements,
     });
     const uniqueVendorIds = new Set(
       [...activeAwardedBids, ...activeAwardedApplications]
@@ -179,8 +185,10 @@ class MarketplaceEventService extends BaseService {
           Number(event.ga_tickets_sold || 0) + Number(event.vip_tickets_sold || 0),
         vip_vendors_selected: filledSlots.vipSlotsFilled,
         vendor_ga_slots_filled: filledSlots.gaSlotsFilled,
+        dessert_vendors_selected: filledSlots.dessertSlotsFilled || 0,
+        drinks_vendors_selected: filledSlots.drinksSlotsFilled || 0,
         combined_vendors_selected: filledSlots.combinedVendors,
-        unique_vendors_selected: uniqueVendorIds.size,
+        unique_vendors_selected: filledSlots.minimumUniqueVendors || uniqueVendorIds.size,
       },
     };
   }
