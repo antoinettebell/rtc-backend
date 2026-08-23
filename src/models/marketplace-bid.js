@@ -61,6 +61,11 @@ const mSchema = mongoose.Schema(
       enum: ['DESSERTS', 'DRINKS'],
       default: [],
     },
+    dessert_bid_amount: { type: Number, default: null, min: 0 },
+    dessert_price_per_guest: { type: Number, default: null, min: 0 },
+    drinks_bid_amount: { type: Number, default: null, min: 0 },
+    drinks_price_per_guest: { type: Number, default: null, min: 0 },
+    specialty_update_available_at: { type: Date, default: null },
     awarded_specialty_services: {
       type: [String],
       enum: ['DESSERTS', 'DRINKS'],

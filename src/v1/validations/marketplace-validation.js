@@ -191,15 +191,17 @@ module.exports = {
 
   submitBid: {
     body: Joi.object({
-      price_per_guest: Joi.when('bid_status', {
-        is: Joi.valid('PENDING_SIGNATURE', 'SUBMITTED'),
-        then: Joi.number().greater(0).required(),
-        otherwise: Joi.number().min(0).allow(null),
-      }),
+      // A Drinks + Desserts-only bid has its own two required price fields.
+      // Submission-specific validation lives with the event requirement rules.
+      price_per_guest: Joi.number().min(0).allow(null),
       average_price_per_meal: Joi.number().min(0).allow(null),
       full_bid_amount: Joi.number().min(0).allow(null),
       guest_coverage: Joi.string().valid('REGULAR', 'VIP', 'BOTH', 'SPECIALTY').default('REGULAR'),
       specialty_services: Joi.array().items(Joi.string().valid('DESSERTS', 'DRINKS')).unique().default([]),
+      dessert_bid_amount: Joi.number().min(0).allow(null),
+      dessert_price_per_guest: Joi.number().min(0).allow(null),
+      drinks_bid_amount: Joi.number().min(0).allow(null),
+      drinks_price_per_guest: Joi.number().min(0).allow(null),
       regular_guest_amount: Joi.number().min(0).allow(null),
       vip_catering_amount: Joi.number().min(0).allow(null),
       menu_description: Joi.string().allow(null, ''),

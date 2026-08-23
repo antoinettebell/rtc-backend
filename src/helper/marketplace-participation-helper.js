@@ -82,12 +82,12 @@ const getMarketplaceServiceRequirements = (event = {}, selectedRequirement) => {
       ...(capacity.drinksRequirement ? { drinksRequirement: capacity.drinksRequirement } : {}),
     };
   }
-  const vipRequirement = event.catered_vip_section_enabled
-    ? capacity.vipRequirement
-    : 0;
+  // Category requirements stay intact when Admin intentionally keeps the
+  // overall target lower because one vendor can fulfill multiple categories.
+  const vipRequirement = event.catered_vip_section_enabled ? capacity.vipRequirement : 0;
   const dessertRequirement = capacity.dessertRequirement || 0;
   const drinksRequirement = capacity.drinksRequirement || 0;
-  const gaRequirement = Math.max(0, selected - vipRequirement - dessertRequirement - drinksRequirement);
+  const gaRequirement = capacity.gaMaximum || 0;
   return {
     gaRequirement,
     vipRequirement,
@@ -139,7 +139,13 @@ const getMarketplaceFilledSlotSummary = ({
   const combinedCount = combinedVendors.size;
   const dessertSlotsFilled = dessertVendors.size;
   const drinksSlotsFilled = drinksVendors.size;
-  const minimumUniqueVendors = gaSlotsFilled + vipSlotsFilled - combinedCount;
+  const activeVendorIds = new Set([
+    ...gaVendors,
+    ...vipVendors,
+    ...dessertVendors,
+    ...drinksVendors,
+  ]);
+  const minimumUniqueVendors = activeVendorIds.size;
   const remainingGaSlots = Math.max(0, Number(gaRequirement || 0) - gaSlotsFilled);
   const remainingVipSlots = Math.max(0, Number(vipRequirement || 0) - vipSlotsFilled);
   const remainingDessertSlots = Math.max(0, Number(dessertRequirement || 0) - dessertSlotsFilled);
@@ -147,7 +153,12 @@ const getMarketplaceFilledSlotSummary = ({
   const totalServiceSlotsRequired = Number(gaRequirement || 0) + Number(vipRequirement || 0) + Number(dessertRequirement || 0) + Number(drinksRequirement || 0);
   const totalServiceSlotsFilled = gaSlotsFilled + vipSlotsFilled + dessertSlotsFilled + drinksSlotsFilled;
   const remainingTotalServiceSlots = remainingGaSlots + remainingVipSlots + remainingDessertSlots + remainingDrinksSlots;
-  const remainingUniqueVendors = Math.max(remainingGaSlots, remainingVipSlots, remainingDessertSlots, remainingDrinksSlots);
+  const remainingUniqueVendors = Math.max(
+    remainingGaSlots,
+    remainingVipSlots,
+    remainingDessertSlots,
+    remainingDrinksSlots,
+  );
   return {
     gaSlotsFilled,
     vipSlotsFilled,

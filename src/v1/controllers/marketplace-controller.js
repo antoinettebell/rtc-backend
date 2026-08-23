@@ -576,11 +576,12 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   const separateVipVendorRequired = cateredVipSectionEnabled;
   const dessertCatererRequired = cateredVipSectionEnabled && Boolean(body.dessert_caterer_required);
   const drinksCatererRequired = cateredVipSectionEnabled && Boolean(body.drinks_caterer_required);
+  // VIP events retain both established paths: a coordinator-paid VIP bid and
+  // a vendor-paid GA application. The answer below only governs the combined
+  // VIP + GA option inside a bid.
   const paymentResponsibility = fullyCateredEvent
     ? 'COORDINATOR'
-    : cateredVipSectionEnabled
-      ? gaFoodSalesAllowed ? 'BOTH' : 'COORDINATOR'
-      : 'VENDOR';
+    : cateredVipSectionEnabled ? 'BOTH' : 'VENDOR';
   let vendorFee = roundMoney(body.vendor_fee || 0);
   let budgetedAmount = roundMoney(body.budgeted_amount || 0);
   if (paymentResponsibility === 'COORDINATOR') {
@@ -2786,6 +2787,11 @@ const BID_REVISION_EVENT_CHANGE_FIELDS = new Set([
   'vendors_required_to_giveaway_food',
 ]);
 
+const SPECIALTY_EVENT_CHANGE_FIELDS = new Set([
+  'dessert_caterer_required',
+  'drinks_caterer_required',
+]);
+
 const normalizeCompareValue = (value) => {
   if (value instanceof Date) {
     return value.toISOString();
@@ -2881,6 +2887,23 @@ const requestBidRevisionsForEventChanges = async (event, changes = []) => {
         revision_requested_fields: revisionFields,
       },
     }
+  );
+};
+
+// A specialty addition is an opportunity, not a forced revision. The existing
+// bid remains awardable; this timestamp exposes a voluntary update in Vendor.
+const notifyBidsOfNewSpecialtyRequirements = async (event, beforeEvent) => {
+  const added = [...SPECIALTY_EVENT_CHANGE_FIELDS].some(
+    (field) => event[field] === true && beforeEvent?.[field] !== true
+  );
+  if (!added) return;
+  await MarketplaceBidService.getModel().updateMany(
+    {
+      event_id: event.event_id,
+      bid_status: { $in: ['SUBMITTED', 'UNDER_REVIEW'] },
+      archived_at: null,
+    },
+    { $set: { specialty_update_available_at: new Date() } }
   );
 };
 
@@ -3870,6 +3893,9 @@ const resolveAwardSelections = (event, selectedBids, requestedSelections = []) =
     }
     const offeredSpecialties = new Set((bid.specialty_services || []).map((value) => String(value).toUpperCase()));
     const specialtyServices = requested.specialtyServices || [];
+    if (awardCoverage === 'SPECIALTY' && !specialtyServices.length) {
+      throw buildError(`Select the specialty service awarded to vendor ${bid.bid_id}.`, 400);
+    }
     if (specialtyServices.some((value) => !offeredSpecialties.has(value))) {
       throw buildError(`Vendor ${bid.bid_id} did not offer the selected specialty service.`, 400);
     }
@@ -4653,6 +4679,8 @@ exports.updateEvent = async (req, res, next) => {
       'catered_vip_section_enabled',
       'ga_food_sales_allowed',
       'separate_vip_vendor_required',
+      'dessert_caterer_required',
+      'drinks_caterer_required',
       'waive_vendor_fee_for_combined_award',
       'vendor_fee_payment_deadline',
       'payment_responsibility',
@@ -5861,19 +5889,21 @@ exports.submitBid = async (req, res, next) => {
       { singleResult: true }
     );
     const isBidRevision = existingBid && hasOpenBidRevisionRequest(existingBid);
+    const isSpecialtyUpdate = existingBid && !!existingBid.specialty_update_available_at;
 
-    if (requestedStatus !== 'DRAFT' && !isBidRevision) {
+    if (requestedStatus !== 'DRAFT' && !isBidRevision && !isSpecialtyUpdate) {
       await assertVendorCanSubmitRound(event, req.user._id);
     }
 
     if (
       existingBid &&
       !['DRAFT', 'PENDING_SIGNATURE'].includes(existingBid.bid_status) &&
-      !isBidRevision
+      !isBidRevision &&
+      !isSpecialtyUpdate
     ) {
       throw buildError('A bid has already been submitted for this event', 409);
     }
-    if (isBidRevision && requestedStatus !== 'SUBMITTED') {
+    if ((isBidRevision || isSpecialtyUpdate) && requestedStatus !== 'SUBMITTED') {
       throw buildError('Submit the revised bid to update your response.', 400);
     }
 
@@ -5896,8 +5926,15 @@ exports.submitBid = async (req, res, next) => {
     if (specialtyServices.some((value) => !allowedSpecialties.has(value))) {
       throw buildError('This event does not require one or more selected specialty services.', 400);
     }
+    if (guestCoverage === 'SPECIALTY' && !specialtyServices.length) {
+      throw buildError('Select Desserts or Drinks for a specialty bid.', 400);
+    }
     const regularGuestAmount = roundMoney(req.body.regular_guest_amount || 0);
     const vipCateringAmount = roundMoney(req.body.vip_catering_amount || 0);
+    const dessertBidAmount = req.body.dessert_bid_amount == null ? null : roundMoney(req.body.dessert_bid_amount);
+    const dessertPricePerGuest = req.body.dessert_price_per_guest == null ? null : roundMoney(req.body.dessert_price_per_guest);
+    const drinksBidAmount = req.body.drinks_bid_amount == null ? null : roundMoney(req.body.drinks_bid_amount);
+    const drinksPricePerGuest = req.body.drinks_price_per_guest == null ? null : roundMoney(req.body.drinks_price_per_guest);
     const normalizedFullBidAmount = guestCoverage === 'BOTH'
       ? event.fully_catered_event
         ? roundMoney(regularGuestAmount + vipCateringAmount)
@@ -5905,9 +5942,13 @@ exports.submitBid = async (req, res, next) => {
       : roundMoney(req.body.full_bid_amount || 0);
 
     if (requestedStatus !== 'DRAFT') {
-      assertRequiredMarketplaceFields({
-        'Full bid amount': normalizedFullBidAmount,
-      });
+      const specialtyOnlyTwoServices = guestCoverage === 'SPECIALTY' && specialtyServices.length === 2;
+      if (!specialtyOnlyTwoServices) {
+        assertRequiredMarketplaceFields({
+          'Full bid amount': normalizedFullBidAmount,
+          'Price per guest': req.body.price_per_guest,
+        });
+      }
       if (
         guestCoverage === 'BOTH' &&
         ((event.fully_catered_event && regularGuestAmount <= 0) ||
@@ -5919,6 +5960,19 @@ exports.submitBid = async (req, res, next) => {
             : 'Enter the VIP Catering amount for a combined VIP Catering and GA Sales offer.',
           400
         );
+      }
+      const multipleServices = specialtyServices.length + (guestCoverage === 'SPECIALTY' ? 0 : 1) > 1;
+      if (multipleServices && specialtyServices.includes('DESSERTS') && (dessertBidAmount == null || dessertBidAmount <= 0 || dessertPricePerGuest == null || dessertPricePerGuest <= 0)) {
+        throw buildError('Enter Desserts Bid Amount and Desserts Price Per Guest.', 400);
+      }
+      if (multipleServices && specialtyServices.includes('DRINKS') && (drinksBidAmount == null || drinksBidAmount <= 0 || drinksPricePerGuest == null || drinksPricePerGuest <= 0)) {
+        throw buildError('Enter Drinks Bid Amount and Drinks Price Per Guest.', 400);
+      }
+      if (guestCoverage === 'SPECIALTY' && specialtyServices.length === 2 && (
+        dessertBidAmount == null || dessertBidAmount <= 0 || dessertPricePerGuest == null || dessertPricePerGuest <= 0 ||
+        drinksBidAmount == null || drinksBidAmount <= 0 || drinksPricePerGuest == null || drinksPricePerGuest <= 0
+      )) {
+        throw buildError('Enter separate Desserts and Drinks bid amounts and prices.', 400);
       }
     }
     const liquorLicenseSatisfied = await hasSatisfiedLiquorLicenseRequirement({
@@ -5946,6 +6000,10 @@ exports.submitBid = async (req, res, next) => {
       ...req.body,
       guest_coverage: guestCoverage,
       specialty_services: specialtyServices,
+      dessert_bid_amount: dessertBidAmount,
+      dessert_price_per_guest: dessertPricePerGuest,
+      drinks_bid_amount: drinksBidAmount,
+      drinks_price_per_guest: drinksPricePerGuest,
       regular_guest_amount:
         guestCoverage === 'BOTH' && event.fully_catered_event
           ? regularGuestAmount
@@ -5967,8 +6025,8 @@ exports.submitBid = async (req, res, next) => {
         requestedStatus === 'SUBMITTED' && requiresPayment
           ? 'DRAFT'
           : requestedStatus,
-      payment_id: isBidRevision ? existingBid.payment_id : undefined,
-      payment_status: isBidRevision
+      payment_id: (isBidRevision || isSpecialtyUpdate) ? existingBid.payment_id : undefined,
+      payment_status: (isBidRevision || isSpecialtyUpdate)
         ? existingBid.payment_status
         : requiresPayment
           ? 'PENDING'
@@ -5977,6 +6035,7 @@ exports.submitBid = async (req, res, next) => {
       revision_submitted_at: isBidRevision ? submittedAt : existingBid?.revision_submitted_at || null,
       revision_requested_fields: isBidRevision ? [] : existingBid?.revision_requested_fields || [],
       revision_count: isBidRevision ? Number(existingBid.revision_count || 0) + 1 : existingBid?.revision_count || 0,
+      specialty_update_available_at: null,
     };
     const marketplaceBid = existingBid
       ? await MarketplaceBidService.update(
@@ -6314,6 +6373,18 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       })
       .filter(Boolean);
 
+    const specialtyUpdateNotifications = bids
+      .filter((bid) => bid.specialty_update_available_at)
+      .map((bid) => buildVendorSubmissionNotification({
+        id: `marketplace-specialty-update-${bid.bid_id}-${new Date(bid.specialty_update_available_at).getTime()}`,
+        type: 'MARKETPLACE_EVENT_UPDATE',
+        event: eventById[String(bid.event_id)] || {},
+        status: 'EVENT_UPDATED',
+        title: 'Event requirements updated',
+        subtitle: 'Coordinator has made some additional changes: Dessert and Drinks are now needed.',
+        bidId: bid.bid_id,
+      }));
+
     const applicationNotifications = applications
       .map((application) => {
         const displayStatus = application.award_revoked_at
@@ -6400,6 +6471,7 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       ...operationalNotificationList,
       ...messageNotifications,
       ...bidNotifications,
+      ...specialtyUpdateNotifications,
       ...applicationNotifications,
       ...closedBidNotifications,
       ...closedApplicationNotifications,
@@ -8761,6 +8833,20 @@ exports.adminUpdateEvent = async (req, res, next) => {
         const normalizedEvent = normalizeMarketplaceEventPayload(updatePayload, {
           existingEvent: current,
         });
+        // Admin additions raise the default total target. An explicitly
+        // supplied count is respected so Admin may keep the target unchanged
+        // when an existing vendor will cover the newly added specialty.
+        if (proposedUpdates.number_of_vendors_needed === undefined) {
+          const addedSpecialtyCount = ['dessert_caterer_required', 'drinks_caterer_required']
+            .filter((field) => normalizedEvent[field] === true && current[field] !== true)
+            .length;
+          if (addedSpecialtyCount) {
+            normalizedEvent.number_of_vendors_needed = Math.max(
+              1,
+              Number(current.number_of_vendors_needed || 1) + addedSpecialtyCount
+            );
+          }
+        }
         const [bidCount, foodApplicationCount, marketplaceApplicationCount, paymentCount] = await Promise.all([
           MarketplaceBidModel.countDocuments({ event_id: req.params.eventId }).session(session),
           MarketplaceApplicationModel.countDocuments({ event_id: req.params.eventId }).session(session),
@@ -8800,6 +8886,7 @@ exports.adminUpdateEvent = async (req, res, next) => {
     } finally {
       await session.endSession();
     }
+    await notifyBidsOfNewSpecialtyRequirements(marketplaceEvent, event);
     return res.data({ marketplaceEvent }, 'Marketplace event updated');
   } catch (e) {
     const validationErrors = getAdminValidationErrors(e);
