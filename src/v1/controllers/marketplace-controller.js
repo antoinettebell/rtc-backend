@@ -3633,6 +3633,37 @@ const getFoodVendorAwardState = async (event) => {
   });
 };
 
+const areFoodVendorServiceRequirementsFilled = async (event) => {
+  const [awardedBids, awardedApplications] = await Promise.all([
+    MarketplaceBidService.getByData(
+      { event_id: event.event_id, bid_status: 'AWARDED', archived_at: null },
+      { lean: true }
+    ),
+    MarketplaceApplicationService.getByData(
+      {
+        event_id: event.event_id,
+        application_status: { $in: ['ACCEPTED', 'PAYMENT_DUE', 'PAID', 'CONFIRMED'] },
+        archived_at: null,
+      },
+      { lean: true }
+    ),
+  ]);
+  const requirements = getMarketplaceServiceRequirements(
+    event,
+    Number(event.number_of_vendors_needed || 0)
+  );
+  const filled = getMarketplaceFilledSlotSummary({
+    bids: awardedBids,
+    applications: awardedApplications,
+    separateVipVendorRequired: event.separate_vip_vendor_required,
+    ...requirements,
+  });
+  return filled.remainingGaSlots === 0 &&
+    filled.remainingVipSlots === 0 &&
+    Number(filled.remainingDessertSlots || 0) === 0 &&
+    Number(filled.remainingDrinksSlots || 0) === 0;
+};
+
 const reconcilePartiallyAwardedFoodEvent = async (event) => {
   if (String(event?.status).toUpperCase() !== 'AWARDED') return event;
   const capacity = await getFoodVendorAwardState(event);
@@ -4077,7 +4108,9 @@ const finalizeFoodVendorAwardBatch = async ({
   );
 
   const capacity = await getFoodVendorAwardState(event);
-  const foodSelectionClosed = !isFoodVendorMarketplaceEvent(event) || capacity.remaining === 0;
+  const foodRequirementsFilled = await areFoodVendorServiceRequirementsFilled(event);
+  const foodSelectionClosed = !isFoodVendorMarketplaceEvent(event) ||
+    (capacity.remaining === 0 && foodRequirementsFilled);
 
   const marketplaceVendorNeedsFilled = await areMarketplaceVendorAwardNeedsFilled(event);
   const eventFullyAwarded = foodSelectionClosed && marketplaceVendorNeedsFilled;
@@ -7537,7 +7570,7 @@ exports.acceptApplication = async (req, res, next) => {
     }
 
     const updatedCapacity = await getFoodVendorAwardState(event);
-    if (updatedCapacity.remaining === 0) {
+    if (updatedCapacity.remaining === 0 && await areFoodVendorServiceRequirementsFilled(event)) {
       if (await areMarketplaceVendorAwardNeedsFilled(event)) {
         event.status = 'AWARDED';
         await event.save();
