@@ -66,7 +66,7 @@ const hasFoodVendorAwardCapacity = ({ event = {}, bids = [], applications = [] }
 	const requestedVendorCount = Math.max(0, Number(event.number_of_vendors_needed || 0));
 	if (!requestedVendorCount) return false;
 
-	const { gaRequirement, vipRequirement } = getMarketplaceServiceRequirements(
+	const { gaRequirement, vipRequirement, dessertRequirement, drinksRequirement } = getMarketplaceServiceRequirements(
 		event,
 		requestedVendorCount
 	);
@@ -76,6 +76,8 @@ const hasFoodVendorAwardCapacity = ({ event = {}, bids = [], applications = [] }
 		separateVipVendorRequired: event.separate_vip_vendor_required,
 		gaRequirement,
 		vipRequirement,
+		dessertRequirement,
+		drinksRequirement,
 	});
 	return filled.remainingTotalServiceSlots > 0;
 };

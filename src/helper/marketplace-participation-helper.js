@@ -9,17 +9,20 @@ const getMarketplaceBudgetGuestCount = (event = {}) => {
 };
 
 const getAllowedBidCoverages = (event = {}) => {
+  const specialtyOnly = event.dessert_caterer_required || event.drinks_caterer_required
+    ? ['SPECIALTY']
+    : [];
   if (event.fully_catered_event) {
     const hasRegularGuests = Number(event.number_of_guests || 0) > 0;
     const hasVipGuests = Number(event.vip_guest_count || 0) > 0;
-    if (hasRegularGuests && hasVipGuests) return ['REGULAR', 'VIP', 'BOTH'];
-    if (hasVipGuests) return ['VIP'];
-    return ['REGULAR'];
+    if (hasRegularGuests && hasVipGuests) return ['REGULAR', 'VIP', 'BOTH', ...specialtyOnly];
+    if (hasVipGuests) return ['VIP', ...specialtyOnly];
+    return ['REGULAR', ...specialtyOnly];
   }
   if (event.catered_vip_section_enabled) {
-    return event.ga_food_sales_allowed ? ['VIP', 'BOTH'] : ['VIP'];
+    return event.ga_food_sales_allowed ? ['VIP', 'BOTH', ...specialtyOnly] : ['VIP', ...specialtyOnly];
   }
-  return ['REGULAR'];
+  return ['REGULAR', ...specialtyOnly];
 };
 
 const getAllowedAwardCoverages = (event = {}, offeredCoverage = 'REGULAR') =>
@@ -48,17 +51,22 @@ const getMarketplaceVendorCapacity = (event = {}) => {
     };
   }
   if (event.catered_vip_section_enabled) {
-    const gaMaximum = event.ga_food_sales_allowed
-      ? ceilPerHundred(gaGuests)
-      : 0;
-    const vipRequirement = Math.max(1, ceilPerHundred(vipGuests));
-    const calculatedMaximum = event.separate_vip_vendor_required
-      ? gaMaximum + vipRequirement
-      : Math.max(gaMaximum, vipRequirement);
-    return { gaMaximum, vipRequirement, calculatedMaximum };
+    // GA capacity is operational capacity, not the vendor-fee decision.
+    // A coordinator can prohibit GA sales while still needing one vendor per 100 GA guests.
+    const gaMaximum = Math.max(1, ceilPerHundred(gaGuests));
+    const vipRequirement = 1;
+    const dessertRequirement = event.dessert_caterer_required ? 1 : 0;
+    const drinksRequirement = event.drinks_caterer_required ? 1 : 0;
+    return {
+      gaMaximum,
+      vipRequirement,
+      dessertRequirement,
+      drinksRequirement,
+      calculatedMaximum: gaMaximum + vipRequirement + dessertRequirement + drinksRequirement,
+    };
   }
   const gaMaximum = Math.max(1, ceilPerHundred(gaGuests));
-  return { gaMaximum, vipRequirement: 0, calculatedMaximum: gaMaximum };
+  return { gaMaximum, vipRequirement: 0, dessertRequirement: 0, drinksRequirement: 0, calculatedMaximum: gaMaximum };
 };
 
 const getMarketplaceServiceRequirements = (event = {}, selectedRequirement) => {
@@ -70,15 +78,22 @@ const getMarketplaceServiceRequirements = (event = {}, selectedRequirement) => {
     return {
       gaRequirement: capacity.gaMaximum,
       vipRequirement: capacity.vipRequirement,
+      ...(capacity.dessertRequirement ? { dessertRequirement: capacity.dessertRequirement } : {}),
+      ...(capacity.drinksRequirement ? { drinksRequirement: capacity.drinksRequirement } : {}),
     };
   }
   const vipRequirement = event.catered_vip_section_enabled
     ? capacity.vipRequirement
     : 0;
-  const gaRequirement = event.separate_vip_vendor_required
-    ? Math.max(0, selected - vipRequirement)
-    : Math.min(capacity.gaMaximum, selected);
-  return { gaRequirement, vipRequirement };
+  const dessertRequirement = capacity.dessertRequirement || 0;
+  const drinksRequirement = capacity.drinksRequirement || 0;
+  const gaRequirement = Math.max(0, selected - vipRequirement - dessertRequirement - drinksRequirement);
+  return {
+    gaRequirement,
+    vipRequirement,
+    ...(dessertRequirement ? { dessertRequirement } : {}),
+    ...(drinksRequirement ? { drinksRequirement } : {}),
+  };
 };
 
 const getMarketplaceFilledSlotSummary = ({
@@ -87,6 +102,8 @@ const getMarketplaceFilledSlotSummary = ({
   separateVipVendorRequired = false,
   gaRequirement = 0,
   vipRequirement = 0,
+  dessertRequirement = 0,
+  drinksRequirement = 0,
 } = {}) => {
   const activeBids = bids.filter((bid) =>
     bid && bid.archived_at == null && bid.bid_status === 'AWARDED'
@@ -99,6 +116,8 @@ const getMarketplaceFilledSlotSummary = ({
   const gaVendors = new Set();
   const vipVendors = new Set();
   const combinedVendors = new Set();
+  const dessertVendors = new Set();
+  const drinksVendors = new Set();
   activeApplications.forEach((record) => gaVendors.add(String(record.vendor_user_id || '')));
   activeBids.forEach((record) => {
     const vendorId = String(record.vendor_user_id || '');
@@ -106,23 +125,34 @@ const getMarketplaceFilledSlotSummary = ({
     if (['REGULAR', 'BOTH'].includes(coverage)) gaVendors.add(vendorId);
     if (['VIP', 'BOTH'].includes(coverage)) vipVendors.add(vendorId);
     if (coverage === 'BOTH') combinedVendors.add(vendorId);
+    const specialties = record.awarded_specialty_services || record.specialty_services || [];
+    if (specialties.includes('DESSERTS')) dessertVendors.add(vendorId);
+    if (specialties.includes('DRINKS')) drinksVendors.add(vendorId);
   });
   gaVendors.delete('');
   vipVendors.delete('');
   combinedVendors.delete('');
+  dessertVendors.delete('');
+  drinksVendors.delete('');
   const gaSlotsFilled = gaVendors.size;
   const vipSlotsFilled = vipVendors.size;
   const combinedCount = combinedVendors.size;
+  const dessertSlotsFilled = dessertVendors.size;
+  const drinksSlotsFilled = drinksVendors.size;
   const minimumUniqueVendors = gaSlotsFilled + vipSlotsFilled - combinedCount;
   const remainingGaSlots = Math.max(0, Number(gaRequirement || 0) - gaSlotsFilled);
   const remainingVipSlots = Math.max(0, Number(vipRequirement || 0) - vipSlotsFilled);
-  const totalServiceSlotsRequired = Number(gaRequirement || 0) + Number(vipRequirement || 0);
-  const totalServiceSlotsFilled = gaSlotsFilled + vipSlotsFilled;
-  const remainingTotalServiceSlots = remainingGaSlots + remainingVipSlots;
-  const remainingUniqueVendors = Math.max(remainingGaSlots, remainingVipSlots);
+  const remainingDessertSlots = Math.max(0, Number(dessertRequirement || 0) - dessertSlotsFilled);
+  const remainingDrinksSlots = Math.max(0, Number(drinksRequirement || 0) - drinksSlotsFilled);
+  const totalServiceSlotsRequired = Number(gaRequirement || 0) + Number(vipRequirement || 0) + Number(dessertRequirement || 0) + Number(drinksRequirement || 0);
+  const totalServiceSlotsFilled = gaSlotsFilled + vipSlotsFilled + dessertSlotsFilled + drinksSlotsFilled;
+  const remainingTotalServiceSlots = remainingGaSlots + remainingVipSlots + remainingDessertSlots + remainingDrinksSlots;
+  const remainingUniqueVendors = Math.max(remainingGaSlots, remainingVipSlots, remainingDessertSlots, remainingDrinksSlots);
   return {
     gaSlotsFilled,
     vipSlotsFilled,
+    ...(dessertRequirement || dessertSlotsFilled ? { dessertSlotsFilled } : {}),
+    ...(drinksRequirement || drinksSlotsFilled ? { drinksSlotsFilled } : {}),
     combinedVendors: combinedCount,
     separateVipVendorRequired: Boolean(separateVipVendorRequired),
     minimumUniqueVendors,
@@ -130,6 +160,8 @@ const getMarketplaceFilledSlotSummary = ({
     totalServiceSlotsFilled,
     remainingGaSlots,
     remainingVipSlots,
+    ...(dessertRequirement || dessertSlotsFilled ? { remainingDessertSlots } : {}),
+    ...(drinksRequirement || drinksSlotsFilled ? { remainingDrinksSlots } : {}),
     remainingTotalServiceSlots,
     remainingUniqueVendors,
   };
@@ -139,11 +171,15 @@ const isMarketplaceVendorReductionBlocked = ({
   selectedRequirement = 0,
   gaRequirement = 0,
   vipRequirement = 0,
+  dessertRequirement = 0,
+  drinksRequirement = 0,
   filled = {},
 } = {}) =>
   Number(selectedRequirement) < Number(filled.minimumUniqueVendors || 0) ||
   Number(gaRequirement) < Number(filled.gaSlotsFilled || 0) ||
-  Number(vipRequirement) < Number(filled.vipSlotsFilled || 0);
+  Number(vipRequirement) < Number(filled.vipSlotsFilled || 0) ||
+  Number(dessertRequirement) < Number(filled.dessertSlotsFilled || 0) ||
+  Number(drinksRequirement) < Number(filled.drinksSlotsFilled || 0);
 
 module.exports = {
   getAllowedBidCoverages,

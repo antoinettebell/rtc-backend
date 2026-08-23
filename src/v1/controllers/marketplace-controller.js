@@ -571,8 +571,11 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     cateredVipSectionEnabled && Boolean(body.ga_food_sales_allowed);
   const waiveVendorFeeForCombinedAward =
     gaFoodSalesAllowed && Boolean(body.waive_vendor_fee_for_combined_award);
-  const separateVipVendorRequired =
-    cateredVipSectionEnabled && Boolean(body.separate_vip_vendor_required);
+  // VIP catering always creates its own awardable service slot. Keep the legacy
+  // field true for existing consumers without asking coordinators to configure it.
+  const separateVipVendorRequired = cateredVipSectionEnabled;
+  const dessertCatererRequired = cateredVipSectionEnabled && Boolean(body.dessert_caterer_required);
+  const drinksCatererRequired = cateredVipSectionEnabled && Boolean(body.drinks_caterer_required);
   const paymentResponsibility = fullyCateredEvent
     ? 'COORDINATOR'
     : cateredVipSectionEnabled
@@ -663,6 +666,8 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     waive_vendor_fee_for_combined_award: waiveVendorFeeForCombinedAward,
     vendor_fee_payment_deadline: body.vendor_fee_payment_deadline || null,
     separate_vip_vendor_required: separateVipVendorRequired,
+    dessert_caterer_required: dessertCatererRequired,
+    drinks_caterer_required: drinksCatererRequired,
     vip_guest_count: vipGuestCount,
     ...taxExemptionUpdate,
 		    draft_expires_at:
@@ -3845,11 +3850,16 @@ const resolveAwardSelections = (event, selectedBids, requestedSelections = []) =
   const requestedByBidId = new Map(
     (requestedSelections || []).map((selection) => [
       selection.bid_id,
-      String(selection.award_coverage || '').toUpperCase(),
+      {
+        awardCoverage: String(selection.award_coverage || '').toUpperCase(),
+        specialtyServices: [...new Set((selection.award_specialty_services || [])
+          .map((value) => String(value).toUpperCase()))],
+      },
     ])
   );
   return selectedBids.map((bid) => {
-    const awardCoverage = requestedByBidId.get(bid.bid_id) || bid.guest_coverage;
+    const requested = requestedByBidId.get(bid.bid_id) || {};
+    const awardCoverage = requested.awardCoverage || bid.guest_coverage;
     const offeredCoverage = bid.guest_coverage || 'REGULAR';
     const allowedAwards = getAllowedAwardCoverages(event, offeredCoverage);
     if (!allowedAwards.includes(awardCoverage)) {
@@ -3858,19 +3868,26 @@ const resolveAwardSelections = (event, selectedBids, requestedSelections = []) =
         400
       );
     }
-    return { bid_id: bid.bid_id, award_coverage: awardCoverage };
+    const offeredSpecialties = new Set((bid.specialty_services || []).map((value) => String(value).toUpperCase()));
+    const specialtyServices = requested.specialtyServices || [];
+    if (specialtyServices.some((value) => !offeredSpecialties.has(value))) {
+      throw buildError(`Vendor ${bid.bid_id} did not offer the selected specialty service.`, 400);
+    }
+    return { bid_id: bid.bid_id, award_coverage: awardCoverage, award_specialty_services: specialtyServices };
   });
 };
 
 const applyAwardSelections = async (event, selectedBids, awardSelections) => {
   const coverageByBidId = new Map(
-    awardSelections.map((selection) => [selection.bid_id, selection.award_coverage])
+    awardSelections.map((selection) => [selection.bid_id, selection])
   );
   for (const bid of selectedBids) {
-    const awardCoverage = coverageByBidId.get(bid.bid_id) || bid.guest_coverage;
+    const selection = coverageByBidId.get(bid.bid_id) || {};
+    const awardCoverage = selection.award_coverage || bid.guest_coverage;
     const combinedFeeWaived =
       awardCoverage === 'BOTH' && event.waive_vendor_fee_for_combined_award === true;
     bid.awarded_coverage = awardCoverage;
+    bid.awarded_specialty_services = selection.award_specialty_services || [];
     bid.combined_vendor_fee_waived = combinedFeeWaived;
     bid.payment_status = combinedFeeWaived ? 'NOT_REQUIRED' :
       awardCoverage === 'BOTH' && event.ga_food_sales_allowed ? 'PENDING' : 'NOT_REQUIRED';
@@ -4684,7 +4701,7 @@ exports.updateEvent = async (req, res, next) => {
       ]);
       const proposedEvent = { ...toPlainObject(event), ...req.body };
       const selectedRequirement = Number(req.body.number_of_vendors_needed);
-      const { gaRequirement, vipRequirement } =
+      const { gaRequirement, vipRequirement, dessertRequirement, drinksRequirement } =
         getMarketplaceServiceRequirements(proposedEvent, selectedRequirement);
       const filled = getMarketplaceFilledSlotSummary({
         bids: filledBids,
@@ -4692,11 +4709,15 @@ exports.updateEvent = async (req, res, next) => {
         separateVipVendorRequired: proposedEvent.separate_vip_vendor_required,
         gaRequirement,
         vipRequirement,
+        dessertRequirement,
+        drinksRequirement,
       });
       if (isMarketplaceVendorReductionBlocked({
         selectedRequirement,
         gaRequirement,
         vipRequirement,
+        dessertRequirement,
+        drinksRequirement,
         filled,
       })) {
         throw buildError(
@@ -5866,6 +5887,15 @@ exports.submitBid = async (req, res, next) => {
         400
       );
     }
+    const specialtyServices = [...new Set((req.body.specialty_services || [])
+      .map((value) => String(value).toUpperCase()))];
+    const allowedSpecialties = new Set([
+      ...(event.dessert_caterer_required ? ['DESSERTS'] : []),
+      ...(event.drinks_caterer_required ? ['DRINKS'] : []),
+    ]);
+    if (specialtyServices.some((value) => !allowedSpecialties.has(value))) {
+      throw buildError('This event does not require one or more selected specialty services.', 400);
+    }
     const regularGuestAmount = roundMoney(req.body.regular_guest_amount || 0);
     const vipCateringAmount = roundMoney(req.body.vip_catering_amount || 0);
     const normalizedFullBidAmount = guestCoverage === 'BOTH'
@@ -5915,6 +5945,7 @@ exports.submitBid = async (req, res, next) => {
     const bidPayload = {
       ...req.body,
       guest_coverage: guestCoverage,
+      specialty_services: specialtyServices,
       regular_guest_amount:
         guestCoverage === 'BOTH' && event.fully_catered_event
           ? regularGuestAmount

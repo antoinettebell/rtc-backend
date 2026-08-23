@@ -93,6 +93,8 @@ const marketplaceEventBody = {
   waive_vendor_fee_for_combined_award: Joi.boolean().allow(null),
   vendor_fee_payment_deadline: Joi.date().allow(null, ''),
   separate_vip_vendor_required: Joi.boolean().default(false),
+  dessert_caterer_required: Joi.boolean().default(false),
+  drinks_caterer_required: Joi.boolean().default(false),
   vip_guest_count: Joi.number().integer().min(0).allow(null, ''),
   cuisine_preferences: Joi.array().items(Joi.string()).default([]),
   dietary_restrictions: Joi.array().items(Joi.string()).default([]),
@@ -196,7 +198,8 @@ module.exports = {
       }),
       average_price_per_meal: Joi.number().min(0).allow(null),
       full_bid_amount: Joi.number().min(0).allow(null),
-      guest_coverage: Joi.string().valid('REGULAR', 'VIP', 'BOTH').default('REGULAR'),
+      guest_coverage: Joi.string().valid('REGULAR', 'VIP', 'BOTH', 'SPECIALTY').default('REGULAR'),
+      specialty_services: Joi.array().items(Joi.string().valid('DESSERTS', 'DRINKS')).unique().default([]),
       regular_guest_amount: Joi.number().min(0).allow(null),
       vip_catering_amount: Joi.number().min(0).allow(null),
       menu_description: Joi.string().allow(null, ''),
@@ -291,7 +294,8 @@ module.exports = {
       event_vendor_application_ids: Joi.array().items(Joi.string()).default([]),
       award_selections: Joi.array().items(Joi.object({
         bid_id: Joi.string().required(),
-        award_coverage: Joi.string().valid('REGULAR', 'VIP', 'BOTH').required(),
+        award_coverage: Joi.string().valid('REGULAR', 'VIP', 'BOTH', 'SPECIALTY').required(),
+        award_specialty_services: Joi.array().items(Joi.string().valid('DESSERTS', 'DRINKS')).unique().default([]),
       })).default([]),
     }).custom((value, helpers) => {
       if (

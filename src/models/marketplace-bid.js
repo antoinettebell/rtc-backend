@@ -48,13 +48,23 @@ const mSchema = mongoose.Schema(
     },
     guest_coverage: {
       type: String,
-      enum: ['REGULAR', 'VIP', 'BOTH'],
+      enum: ['REGULAR', 'VIP', 'BOTH', 'SPECIALTY'],
       default: 'REGULAR',
     },
     awarded_coverage: {
       type: String,
-      enum: ['REGULAR', 'VIP', 'BOTH', null],
+      enum: ['REGULAR', 'VIP', 'BOTH', 'SPECIALTY', null],
       default: null,
+    },
+    specialty_services: {
+      type: [String],
+      enum: ['DESSERTS', 'DRINKS'],
+      default: [],
+    },
+    awarded_specialty_services: {
+      type: [String],
+      enum: ['DESSERTS', 'DRINKS'],
+      default: [],
     },
     combined_vendor_fee_waived: {
       type: Boolean,

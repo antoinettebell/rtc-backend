@@ -410,6 +410,14 @@ const mSchema = mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    dessert_caterer_required: {
+      type: Boolean,
+      default: false,
+    },
+    drinks_caterer_required: {
+      type: Boolean,
+      default: false,
+    },
     vip_guest_count: {
       type: Number,
       default: 0,

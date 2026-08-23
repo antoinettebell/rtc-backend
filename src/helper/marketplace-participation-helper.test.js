@@ -60,7 +60,9 @@ assert.deepStrictEqual(getAllowedAwardCoverages(vipWithGaSales, 'BOTH'), ['VIP',
 assert.deepStrictEqual(getMarketplaceVendorCapacity(vipWithGaSales), {
   gaMaximum: 2,
   vipRequirement: 1,
-  calculatedMaximum: 2,
+  dessertRequirement: 0,
+  drinksRequirement: 0,
+  calculatedMaximum: 3,
 });
 assert.strictEqual(
   getMarketplaceVendorCapacity({
@@ -68,6 +70,16 @@ assert.strictEqual(
     separate_vip_vendor_required: true,
   }).calculatedMaximum,
   3
+);
+assert.strictEqual(
+  getMarketplaceVendorCapacity({ ...vipWithGaSales, ga_food_sales_allowed: false }).calculatedMaximum,
+  3,
+  'GA capacity must not be removed when GA selling is not permitted'
+);
+assert.strictEqual(
+  getMarketplaceVendorCapacity({ ...vipWithGaSales, dessert_caterer_required: true, drinks_caterer_required: true }).calculatedMaximum,
+  5,
+  'Desserts and Drinks each add one specialty slot'
 );
 assert.deepStrictEqual(
   getAllowedBidCoverages({ ...vipWithGaSales, separate_vip_vendor_required: true }),
