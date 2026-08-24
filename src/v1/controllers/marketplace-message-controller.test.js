@@ -58,5 +58,10 @@ const notificationSource = source.slice(source.indexOf('exports.vendorNotificati
 assert.match(notificationSource, /\.\.\.questions\.map\(\(question\) => question\.event_id\)/);
 assert.match(notificationSource, /buildMarketplaceMessageNotification\(question, event, req\.user\)/);
 assert.match(notificationSource, /messageNotifications\.filter\(\(item\) => item\.unread\)\.length/);
+assert.match(
+  notificationSource,
+  /const specialtyUpdateNotifications = closedCandidateBids[\s\S]*?specialty_update_available_at/,
+  'submitted Food Vendor bids marked for specialty updates appear in the vendor bell feed'
+);
 
 console.log('marketplace coordinator message controller tests passed');

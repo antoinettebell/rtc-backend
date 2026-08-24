@@ -6433,7 +6433,10 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       })
       .filter(Boolean);
 
-    const specialtyUpdateNotifications = bids
+    // Specialty updates are offered to still-submitted Food Vendor bids. Those
+    // records are loaded in closedCandidateBids (not the terminal-status bids
+    // list above), so build the bell notification from that same collection.
+    const specialtyUpdateNotifications = closedCandidateBids
       .filter((bid) => bid.specialty_update_available_at)
       .map((bid) => buildVendorSubmissionNotification({
         id: `marketplace-specialty-update-${bid.bid_id}-${new Date(bid.specialty_update_available_at).getTime()}`,
