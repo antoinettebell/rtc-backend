@@ -32,6 +32,9 @@ const PaymentHelper = require('../../helper/payment-helper');
 const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
 const DocuSignHelper = require('../../helper/docusign-helper');
 const {
+  getFoodVendorDisplayIdsByProfileId,
+} = require('../../helper/marketplace-food-vendor-display-id-helper');
+const {
   buildAgreementEmailAttachments,
   excludeAgreementDocuments,
 } = require('../../helper/marketplace-agreement-email-attachments');
@@ -1933,7 +1936,7 @@ const redactLockedMarketplaceEvent = (event, unlockState, { fullAccess = false }
 const redactLockedMarketplaceRecord = (
   record,
   unlockState,
-  { fullAccess = false } = {}
+  { fullAccess = false, foodVendorDisplayId = null } = {}
 ) => {
   const plainRecord = toPlainObject(record);
   if (!plainRecord || fullAccess || unlockState?.details_unlocked) {
@@ -1989,12 +1992,8 @@ const redactLockedMarketplaceRecord = (
   }
 
   if (redacted.food_truck_id) {
-    redacted.vendor_display_id = getVendorDisplayId(redacted.food_truck_id);
+    redacted.vendor_display_id = foodVendorDisplayId || getVendorDisplayId(redacted.food_truck_id);
     redacted.food_truck_id = {
-      _id:
-        typeof redacted.food_truck_id === 'object'
-          ? redacted.food_truck_id._id
-          : redacted.food_truck_id,
       display_id: redacted.vendor_display_id,
     };
   }
@@ -5713,6 +5712,32 @@ exports.getEventBids = async (req, res, next) => {
       },
       {}
     );
+    // A Food Vendor's canonical support ID is the Food Vendor Profile `_id`.
+    // Resolve the profiles first rather than deriving a coordinator-facing code
+    // from a bid, application, event, user, or populated submission reference.
+    const foodVendorProfileIds = [...bids, ...applications]
+      .map((submission) =>
+        typeof submission.food_truck_id === 'object'
+          ? submission.food_truck_id?._id
+          : submission.food_truck_id
+      )
+      .filter(Boolean);
+    const foodVendorProfiles = foodVendorProfileIds.length
+      ? await FoodTruckService.getModel()
+          .find({ _id: { $in: foodVendorProfileIds } })
+          .select('_id')
+          .lean()
+      : [];
+    const foodVendorDisplayIdsByProfileId = getFoodVendorDisplayIdsByProfileId(
+      foodVendorProfiles
+    );
+    const getSubmissionFoodVendorDisplayId = (submission) => {
+      const profileId =
+        typeof submission.food_truck_id === 'object'
+          ? submission.food_truck_id?._id
+          : submission.food_truck_id;
+      return foodVendorDisplayIdsByProfileId.get(String(profileId)) || 'Vendor RTC - MASKED';
+    };
     const bidsWithUnlock = bids.map((bid) => {
       const unlockState = getMarketplaceUnlockState({ event, bid });
       const linkedVendorPayment = bid.linked_application_id
@@ -5721,6 +5746,7 @@ exports.getEventBids = async (req, res, next) => {
       return {
         ...redactLockedMarketplaceRecord(bid, unlockState, {
           fullAccess: false,
+          foodVendorDisplayId: getSubmissionFoodVendorDisplayId(bid),
         }),
         linked_vendor_payment_status: linkedVendorPayment?.payment_status || null,
         marketplace_unlock: unlockState,
@@ -5735,6 +5761,7 @@ exports.getEventBids = async (req, res, next) => {
         return {
           ...redactLockedMarketplaceRecord(application, unlockState, {
             fullAccess: false,
+            foodVendorDisplayId: getSubmissionFoodVendorDisplayId(application),
           }),
           marketplace_unlock: unlockState,
         };
