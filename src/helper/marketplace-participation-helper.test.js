@@ -147,6 +147,19 @@ assert.strictEqual(fullyCateredFilled.vipSlotsFilled, 1);
 assert.strictEqual(fullyCateredFilled.totalServiceSlotsFilled, 3);
 assert.strictEqual(fullyCateredFilled.minimumUniqueVendors, 2);
 assert.strictEqual(fullyCateredFilled.remainingTotalServiceSlots, 0);
+const existingSpecialtyAward = getMarketplaceFilledSlotSummary({
+  bids: [{
+    vendor_user_id: 'existing-specialty-vendor', bid_status: 'AWARDED',
+    awarded_coverage: 'VIP', awarded_specialty_services: [],
+    specialty_services: ['DESSERTS'], archived_at: null,
+  }],
+  dessertRequirement: 1,
+});
+assert.strictEqual(
+  existingSpecialtyAward.dessertSlotsFilled,
+  1,
+  'an existing award with an empty persisted specialty list falls back to its offered specialty'
+);
 assert.strictEqual(isMarketplaceVendorReductionBlocked({
   selectedRequirement: 1,
   ...getMarketplaceServiceRequirements(fullyCatered, 1),

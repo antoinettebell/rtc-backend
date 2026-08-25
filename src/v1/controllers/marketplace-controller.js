@@ -3922,14 +3922,17 @@ const resolveAwardSelections = (event, selectedBids, requestedSelections = []) =
       );
     }
     const offeredSpecialties = new Set((bid.specialty_services || []).map((value) => String(value).toUpperCase()));
-    const specialtyServices = requested.specialtyServices || [];
-    if (awardCoverage === 'SPECIALTY' && !specialtyServices.length) {
-      throw buildError(`Select the specialty service awarded to vendor ${bid.bid_id}.`, 400);
-    }
-    if (specialtyServices.some((value) => !offeredSpecialties.has(value))) {
+    const requestedSpecialtyServices = requested.specialtyServices || [];
+    if (requestedSpecialtyServices.some((value) => !offeredSpecialties.has(value))) {
       throw buildError(`Vendor ${bid.bid_id} did not offer the selected specialty service.`, 400);
     }
-    return { bid_id: bid.bid_id, award_coverage: awardCoverage, award_specialty_services: specialtyServices };
+    // Food Vendor bids are awarded as submitted: every offered specialty is included.
+    // A coordinator never needs to choose individual specialty services at award time.
+    return {
+      bid_id: bid.bid_id,
+      award_coverage: awardCoverage,
+      award_specialty_services: [...offeredSpecialties],
+    };
   });
 };
 

@@ -125,7 +125,10 @@ const getMarketplaceFilledSlotSummary = ({
     if (['REGULAR', 'BOTH'].includes(coverage)) gaVendors.add(vendorId);
     if (['VIP', 'BOTH'].includes(coverage)) vipVendors.add(vendorId);
     if (coverage === 'BOTH') combinedVendors.add(vendorId);
-    const specialties = record.awarded_specialty_services || record.specialty_services || [];
+    const specialties = Array.isArray(record.awarded_specialty_services) &&
+      record.awarded_specialty_services.length
+      ? record.awarded_specialty_services
+      : record.specialty_services || [];
     if (specialties.includes('DESSERTS')) dessertVendors.add(vendorId);
     if (specialties.includes('DRINKS')) drinksVendors.add(vendorId);
   });

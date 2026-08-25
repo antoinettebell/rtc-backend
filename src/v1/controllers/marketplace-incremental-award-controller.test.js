@@ -60,6 +60,15 @@ const loadController = (state) => {
         });
       },
     }),
+    create: async (payload) => {
+      const application = {
+        application_id: `application-${state.applications.length + 1}`,
+        ...payload,
+        save: async () => undefined,
+      };
+      state.applications.push(application);
+      return application;
+    },
   };
   const services = {
     FoodTruckService: {},
@@ -234,7 +243,7 @@ const award = async (controller, bidIds, overrides = {}) => {
         bid_ids: bidIds,
         food_application_ids: overrides.foodApplicationIds || [],
         event_vendor_application_ids: overrides.eventVendorApplicationIds || [],
-        award_selections: bidIds.map((bidId) => ({ bid_id: bidId, award_coverage: 'REGULAR' })),
+        award_selections: overrides.awardSelections || bidIds.map((bidId) => ({ bid_id: bidId, award_coverage: 'REGULAR' })),
       },
     },
     { data: (payload, message) => { response = { payload, message }; } },
@@ -281,6 +290,69 @@ const awardApplication = async (controller, applicationId) => {
   assert.equal(second.response.payload.remaining_food_vendor_awards, 0);
   assert.equal(state.questionArchives, 1);
   assert.equal(state.outcomes.filter((message) => message.title.includes('not selected')).length, 0);
+
+  const combinedSpecialtyState = createState();
+  combinedSpecialtyState.event.number_of_vendors_needed = 1;
+  combinedSpecialtyState.event.number_of_guests = 100;
+  combinedSpecialtyState.event.vip_section_enabled = true;
+  combinedSpecialtyState.event.catered_vip_section_enabled = true;
+  combinedSpecialtyState.event.ga_food_sales_allowed = true;
+  combinedSpecialtyState.event.dessert_caterer_required = true;
+  combinedSpecialtyState.event.drinks_caterer_required = true;
+  combinedSpecialtyState.bids = [{
+    ...createBid('bid-combined', 'vendor-combined'),
+    guest_coverage: 'BOTH',
+    specialty_services: ['DESSERTS', 'DRINKS'],
+  }];
+  const combinedSpecialtyController = loadController(combinedSpecialtyState);
+  const combinedSpecialtyAward = await award(
+    combinedSpecialtyController,
+    ['bid-combined'],
+    { awardSelections: [{ bid_id: 'bid-combined', award_coverage: 'BOTH' }] }
+  );
+  assert.equal(combinedSpecialtyAward.error, undefined);
+  assert.deepStrictEqual(
+    combinedSpecialtyState.bids[0].awarded_specialty_services,
+    ['DESSERTS', 'DRINKS'],
+    'a combined VIP + GA bid awards every offered specialty without customer specialty chips'
+  );
+  const combinedFilled = actualParticipation.getMarketplaceFilledSlotSummary({
+    bids: combinedSpecialtyState.bids,
+    gaRequirement: 1,
+    vipRequirement: 1,
+    dessertRequirement: 1,
+    drinksRequirement: 1,
+  });
+  assert.equal(combinedFilled.gaSlotsFilled, 1);
+  assert.equal(combinedFilled.vipSlotsFilled, 1);
+  assert.equal(combinedFilled.dessertSlotsFilled, 1);
+  assert.equal(combinedFilled.drinksSlotsFilled, 1);
+
+  for (const [name, offeredSpecialties, expectedSpecialties] of [
+    ['desserts only', ['DESSERTS'], ['DESSERTS']],
+    ['drinks only', ['DRINKS'], ['DRINKS']],
+    ['no specialties', [], []],
+  ]) {
+    const specialtyState = createState();
+    specialtyState.event.number_of_vendors_needed = 1;
+    specialtyState.bids = [{
+      ...createBid(`bid-${name.replace(/\\s/g, '-')}`, `vendor-${name.replace(/\\s/g, '-')}`),
+      guest_coverage: offeredSpecialties.length ? 'SPECIALTY' : 'REGULAR',
+      specialty_services: offeredSpecialties,
+    }];
+    const specialtyController = loadController(specialtyState);
+    const specialtyAward = await award(
+      specialtyController,
+      [specialtyState.bids[0].bid_id],
+      { awardSelections: [{ bid_id: specialtyState.bids[0].bid_id, award_coverage: specialtyState.bids[0].guest_coverage }] }
+    );
+    assert.equal(specialtyAward.error, undefined, `${name} bid awards successfully`);
+    assert.deepStrictEqual(
+      specialtyState.bids[0].awarded_specialty_services,
+      expectedSpecialties,
+      `${name} retains exactly the offered specialty services`
+    );
+  }
 
   const overCapacity = await award(controller, ['bid-3']);
   assert.equal(overCapacity.error?.code, 409, 'capacity-closed event cannot accept another award');
