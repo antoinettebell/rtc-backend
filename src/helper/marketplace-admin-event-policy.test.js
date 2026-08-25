@@ -44,7 +44,33 @@ const reductions = validateAdminEventPublish({
 });
 assert.ok(reductions.some(({ field }) => field === 'ga_ticket_quantity'));
 assert.ok(reductions.some(({ field }) => field === 'number_of_vendors_needed'));
-assert.ok(reductions.some(({ field }) => field === 'event_vendor_needs.MERCHANDISE.quantity'));
+assert.ok(!reductions.some(({ field }) => field === 'event_vendor_needs.MERCHANDISE.quantity'));
+
+const unawardedNeedMayChange = validateAdminEventPublish({
+  current: baseEvent,
+  proposed: {
+    ...baseEvent,
+    event_vendor_needs: [{ vendor_type: 'MERCHANDISE', type_description: 'Updated retail goods', quantity: 1, fee: 12 }],
+  },
+  hasActivity: true,
+  awardedMarketplaceVendorCounts: {},
+});
+assert.deepStrictEqual(unawardedNeedMayChange, []);
+
+const awardedNeedCannotBeReducedOrEdited = validateAdminEventPublish({
+  current: baseEvent,
+  proposed: {
+    ...baseEvent,
+    event_vendor_needs: [
+      { vendor_type: 'MERCHANDISE', type_description: 'Updated retail goods', quantity: 0, fee: 12 },
+      { vendor_type: 'SERVICE', type_description: 'Guest services', quantity: 1, fee: 15 },
+    ],
+  },
+  hasActivity: true,
+  awardedMarketplaceVendorCounts: { MERCHANDISE: 1 },
+});
+assert.ok(awardedNeedCannotBeReducedOrEdited.some(({ field }) => field === 'event_vendor_needs.MERCHANDISE.quantity'));
+assert.ok(awardedNeedCannotBeReducedOrEdited.some(({ field }) => field === 'event_vendor_needs'));
 
 const activityLocks = validateAdminEventPublish({
   current: baseEvent,
@@ -57,6 +83,7 @@ const activityLocks = validateAdminEventPublish({
     ],
   },
   hasActivity: true,
+  awardedMarketplaceVendorCounts: { MERCHANDISE: 2 },
 });
 assert.ok(activityLocks.some(({ field }) => field === 'vendor_fee'));
 assert.ok(activityLocks.some(({ field }) => field === 'event_vendor_needs'));
@@ -71,6 +98,7 @@ const descriptionLock = validateAdminEventPublish({
     ],
   },
   hasActivity: true,
+  awardedMarketplaceVendorCounts: { MERCHANDISE: 2 },
 });
 assert.ok(descriptionLock.some(({ field }) => field === 'event_vendor_needs'));
 

@@ -8927,16 +8927,34 @@ exports.adminUpdateEvent = async (req, res, next) => {
             );
           }
         }
-        const [bidCount, foodApplicationCount, marketplaceApplicationCount, paymentCount] = await Promise.all([
+        const [bidCount, foodApplicationCount, marketplaceApplicationCount, paymentCount, awardedMarketplaceVendorCounts] = await Promise.all([
           MarketplaceBidModel.countDocuments({ event_id: req.params.eventId }).session(session),
           MarketplaceApplicationModel.countDocuments({ event_id: req.params.eventId }).session(session),
           EventVendorApplicationModel.countDocuments({ event_id: req.params.eventId }).session(session),
           MarketplacePaymentModel.countDocuments({ event_id: req.params.eventId }).session(session),
+          EventVendorApplicationModel.aggregate([
+            {
+              $match: {
+                event_id: req.params.eventId,
+                status: { $in: ['AWARDED', 'PAYMENT_DUE', 'PAID'] },
+              },
+            },
+            { $unwind: '$vendor_types' },
+            { $group: { _id: '$vendor_types', count: { $sum: 1 } } },
+          ]).session(session),
         ]);
+        const awardedMarketplaceVendorCountsByType = awardedMarketplaceVendorCounts.reduce(
+          (counts, entry) => ({
+            ...counts,
+            [String(entry._id || '').toUpperCase()]: Number(entry.count || 0),
+          }),
+          {},
+        );
         const validationErrors = validateAdminEventPublish({
           current: before,
           proposed: normalizedEvent,
           hasActivity: bidCount + foodApplicationCount + marketplaceApplicationCount + paymentCount > 0,
+          awardedMarketplaceVendorCounts: awardedMarketplaceVendorCountsByType,
         });
         if (validationErrors.length) throwAdminValidationError(validationErrors);
         if (

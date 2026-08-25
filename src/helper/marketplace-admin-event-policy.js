@@ -37,7 +37,16 @@ const vendorNeedDetailsByType = (needs = []) => new Map(
   canonicalVendorNeeds(needs).map((need) => [need.vendor_type, stable(need)]),
 );
 
-const validateAdminEventPublish = ({ current = {}, proposed = {}, hasActivity = false }) => {
+const getAwardedNeedCount = (awardedMarketplaceVendorCounts, type) => Number(
+  awardedMarketplaceVendorCounts?.[String(type || '').toUpperCase()] || 0,
+);
+
+const validateAdminEventPublish = ({
+  current = {},
+  proposed = {},
+  hasActivity = false,
+  awardedMarketplaceVendorCounts = {},
+}) => {
   const errors = [];
   [
     ['ga_ticket_quantity', 'GA ticket capacity'],
@@ -56,10 +65,11 @@ const validateAdminEventPublish = ({ current = {}, proposed = {}, hasActivity = 
     String(need.vendor_type || '').toUpperCase(), Number(need.quantity || 0),
   ]));
   currentNeeds.forEach((quantity, type) => {
-    if ((proposedNeeds.get(type) || 0) < quantity) {
+    const awardedCount = getAwardedNeedCount(awardedMarketplaceVendorCounts, type);
+    if ((proposedNeeds.get(type) || 0) < awardedCount) {
       errors.push({
         field: `event_vendor_needs.${type}.quantity`,
-        message: `${type} vendor capacity can only stay the same or increase.`,
+        message: `${type} vendor capacity cannot be lower than its ${awardedCount} awarded vendor(s).`,
       });
     }
   });
@@ -76,12 +86,14 @@ const validateAdminEventPublish = ({ current = {}, proposed = {}, hasActivity = 
     const currentNeedDetails = vendorNeedDetailsByType(current.event_vendor_needs);
     const proposedNeedDetails = vendorNeedDetailsByType(proposed.event_vendor_needs);
     const changedExistingNeed = [...currentNeedDetails.entries()].some(
-      ([type, details]) => proposedNeedDetails.get(type) !== details,
+      ([type, details]) =>
+        getAwardedNeedCount(awardedMarketplaceVendorCounts, type) > 0 &&
+        proposedNeedDetails.get(type) !== details,
     );
     if (changedExistingNeed) {
       errors.push({
         field: 'event_vendor_needs',
-        message: 'Existing Marketplace Vendor types, descriptions, and fees cannot change after a submission or payment exists; Admin may add new types or increase quantities.',
+        message: 'Marketplace Vendor types with awarded vendors cannot have their descriptions or fees changed. Unawarded types may be edited, reduced, or removed.',
       });
     }
   }
