@@ -99,6 +99,10 @@ const {
   getMarketplaceVendorApplicationCheckoutFeeAmount,
 } = require('../../helper/marketplace-regression-test-fees');
 const {
+  calculateMarketplaceBidTotal,
+  getMarketplaceBidTotal,
+} = require('../../helper/marketplace-bid-total-helper');
+const {
   getPublicMarketplaceEventQuery,
   isPublicMarketplaceEventEligible,
   isPublicTicketPurchaseAvailable,
@@ -6003,6 +6007,12 @@ exports.submitBid = async (req, res, next) => {
         ? roundMoney(regularGuestAmount + vipCateringAmount)
         : vipCateringAmount
       : roundMoney(req.body.full_bid_amount || 0);
+    const totalBidAmount = calculateMarketplaceBidTotal({
+      full_bid_amount: normalizedFullBidAmount,
+      specialty_services: specialtyServices,
+      dessert_bid_amount: dessertBidAmount,
+      drinks_bid_amount: drinksBidAmount,
+    });
 
     if (requestedStatus !== 'DRAFT') {
       const specialtyOnlyTwoServices = guestCoverage === 'SPECIALTY' && specialtyServices.length === 2;
@@ -6074,6 +6084,7 @@ exports.submitBid = async (req, res, next) => {
       vip_catering_amount:
         guestCoverage === 'BOTH' ? vipCateringAmount : null,
       full_bid_amount: normalizedFullBidAmount,
+      total_bid_amount: totalBidAmount,
       event_id: req.params.eventId,
       vendor_user_id: req.user._id,
       food_truck_id: foodTruck._id,
@@ -7439,7 +7450,7 @@ exports.awardBids = async (req, res, next) => {
     );
     const baseAmount = roundMoney(
       selectedBids.reduce(
-        (total, bid) => total + Number(bid.full_bid_amount || 0),
+        (total, bid) => total + getMarketplaceBidTotal(bid),
         0
       ) || event.budgeted_amount
     );
@@ -7936,7 +7947,7 @@ exports.adminAwardBids = async (req, res, next) => {
     const coordinatorUserId = event.customer_user_id;
     const baseAmount = roundMoney(
       selectedBids.reduce(
-        (total, bid) => total + Number(bid.full_bid_amount || 0),
+        (total, bid) => total + getMarketplaceBidTotal(bid),
         0
       ) || event.budgeted_amount
     );
@@ -8495,6 +8506,9 @@ exports.adminUpdateMarketplaceSubmission = async (req, res, next) => {
         if (attachmentErrors.length) throwAdminValidationError(attachmentErrors);
         const before = current.toObject();
         Object.assign(current, updates);
+        if (type === 'FOOD_BID') {
+          current.total_bid_amount = calculateMarketplaceBidTotal(current);
+        }
         await current.save({ session, validateBeforeSave: true });
         published = current;
         await MarketplaceAdminAuditModel.create([{
@@ -9077,7 +9091,7 @@ exports.createFinalEventPayment = async (req, res, next) => {
     }
 
     const awardedAmount = awardedBid
-      ? roundMoney(awardedBid.full_bid_amount || 0)
+      ? getMarketplaceBidTotal(awardedBid)
       : roundMoney(event.budgeted_amount || 0);
     if (awardedAmount <= 0) {
       throw buildError('Award amount is required before closing event for payment.', 400);

@@ -1,7 +1,9 @@
+const { getMarketplaceBidTotal } = require('./marketplace-bid-total-helper');
+
 const isCoordinatorPayableAward = (bid = {}) =>
   bid.bid_status === 'AWARDED' &&
   !bid.award_revoked_at &&
-  Number(bid.full_bid_amount || 0) > 0;
+  getMarketplaceBidTotal(bid) > 0;
 
 const getCoordinatorPaymentCompletion = ({ awardedBids = [], finalPayments = [] } = {}) => {
   const requiredBidIds = awardedBids

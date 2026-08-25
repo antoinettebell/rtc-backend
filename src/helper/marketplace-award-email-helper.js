@@ -1,3 +1,5 @@
+const { getMarketplaceBidTotal } = require('./marketplace-bid-total-helper');
+
 const escapeHtml = (value) =>
   String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -39,7 +41,7 @@ const buildFoodVendorAwardDetailsHtml = ({
 
   if (bid) {
     details.push(
-      row('Awarded price', money(bid.full_bid_amount)),
+      row('Total awarded price', money(getMarketplaceBidTotal(bid))),
       row('Price per guest', hasValue(bid.price_per_guest) ? money(bid.price_per_guest) : null),
       row('Average price per meal', hasValue(bid.average_price_per_meal) ? money(bid.average_price_per_meal) : null),
       row('Menu description', bid.menu_description),

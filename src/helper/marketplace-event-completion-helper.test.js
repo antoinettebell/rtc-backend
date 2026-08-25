@@ -20,6 +20,11 @@ assert.equal(isCoordinatorPayableAward(awarded('bid-1')), true);
 assert.equal(isCoordinatorPayableAward({ ...awarded('bid-1'), bid_status: 'NOT_AWARDED' }), false);
 assert.equal(isCoordinatorPayableAward({ ...awarded('bid-1'), award_revoked_at: new Date() }), false);
 assert.equal(isCoordinatorPayableAward(awarded('bid-1', 0)), false);
+assert.equal(isCoordinatorPayableAward({
+  ...awarded('specialty-bid', 0),
+  specialty_services: ['DESSERTS'],
+  dessert_bid_amount: 75,
+}), true);
 
 assert.deepStrictEqual(
   getCoordinatorPaymentCompletion({ awardedBids: [], finalPayments: [] }),

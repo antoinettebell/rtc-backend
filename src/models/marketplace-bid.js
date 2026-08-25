@@ -46,6 +46,11 @@ const mSchema = mongoose.Schema(
       default: null,
       min: 0,
     },
+    total_bid_amount: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
     guest_coverage: {
       type: String,
       enum: ['REGULAR', 'VIP', 'BOTH', 'SPECIALTY'],
