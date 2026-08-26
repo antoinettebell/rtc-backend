@@ -49,7 +49,7 @@ const filterActivePublicMarketplaceEvents = (events = [], now = new Date()) =>
 
 const getPublicMarketplaceEventQuery = (eventId) => ({
   event_id: eventId,
-  status: { $in: ['OPEN', 'REOPENED', 'CLOSED'] },
+  status: { $in: ['OPEN', 'REOPENED', 'CLOSED', 'AWARDED'] },
   event_visibility: 'PUBLIC',
   tax_exemption_status: { $in: ['NOT_REQUESTED', 'APPROVED'] },
 });

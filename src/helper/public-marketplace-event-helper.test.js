@@ -42,7 +42,7 @@ assert.equal(filterActivePublicMarketplaceEvents([
 ], new Date('2026-08-09T18:00:00Z')).map((item) => item.event_id).join(','), 'active');
 assert.deepEqual(getPublicMarketplaceEventQuery('event-1'), {
   event_id: 'event-1',
-  status: { $in: ['OPEN', 'REOPENED', 'CLOSED'] },
+  status: { $in: ['OPEN', 'REOPENED', 'CLOSED', 'AWARDED'] },
   event_visibility: 'PUBLIC',
   tax_exemption_status: { $in: ['NOT_REQUESTED', 'APPROVED'] },
 });
@@ -63,6 +63,11 @@ assert.equal(isPublicMarketplaceEventEligible(event({
 assert.equal(isPublicMarketplaceEventEligible(event({ tax_exemption_status: 'APPROVED' }), beforeEnd), true);
 assert.equal(isPublicMarketplaceEventEligible(event({ event_visibility: 'PRIVATE' }), beforeEnd), false);
 assert.equal(isPublicMarketplaceEventEligible(event({ status: 'CLOSED' }), beforeEnd), true);
+assert.equal(isPublicMarketplaceEventEligible(event({ status: 'AWARDED' }), beforeEnd), true);
+assert.equal(isPublicMarketplaceEventEligible(event({
+  status: 'AWARDED',
+  ticket_sales_enabled: false,
+}), beforeEnd), false);
 assert.equal(isPublicMarketplaceEventEligible(event({
   status: 'CLOSED',
   ticket_sales_closed_at: new Date(),
