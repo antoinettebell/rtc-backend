@@ -4881,6 +4881,29 @@ const reopenMarketplaceEvent = async ({ event, payload, eventId, updateFilter })
   if (!normalizedEvent.event_close_date || new Date(normalizedEvent.event_close_date) <= now) {
     throw buildError('Enter a new future Close Date and Close Time before reopening.', 400);
   }
+  if (['VENDOR', 'BOTH'].includes(normalizedEvent.payment_responsibility)) {
+    const paymentDeadline = new Date(normalizedEvent.vendor_fee_payment_deadline);
+    const eventTiming = getMarketplaceEventTiming(normalizedEvent);
+    const previousPaymentDeadline = event.vendor_fee_payment_deadline
+      ? new Date(event.vendor_fee_payment_deadline)
+      : null;
+    if (!normalizedEvent.vendor_fee_payment_deadline || Number.isNaN(paymentDeadline.getTime())) {
+      throw buildError('Enter a new Last Date and Time to Accept Payments before reopening.', 400);
+    }
+    if (paymentDeadline.getTime() <= now.getTime()) {
+      throw buildError('Last Date and Time to Accept Payments must be in the future before reopening.', 400);
+    }
+    if (eventTiming && paymentDeadline.getTime() >= eventTiming.start_at.getTime()) {
+      throw buildError('Last Date and Time to Accept Payments must be before the event start time.', 400);
+    }
+    if (
+      previousPaymentDeadline &&
+      !Number.isNaN(previousPaymentDeadline.getTime()) &&
+      paymentDeadline.getTime() === previousPaymentDeadline.getTime()
+    ) {
+      throw buildError('Update the Last Date and Time to Accept Payments before reopening.', 400);
+    }
+  }
   const reopenableEventFields = { ...normalizedEvent };
   [
     '_id', '__v', 'event_id', 'customer_user_id', 'reopen_count',
