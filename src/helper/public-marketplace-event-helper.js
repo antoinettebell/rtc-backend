@@ -31,7 +31,7 @@ const isPublicTicketPurchaseAvailable = (event = {}) =>
   getRemainingTicketInventory(event) > 0;
 
 const hasPublicEventAccess = (event = {}, now = new Date()) =>
-  (event.status === 'OPEN' && !isMarketplaceEventExpired(event, now)) ||
+  (['OPEN', 'REOPENED'].includes(event.status) && !isMarketplaceEventExpired(event, now)) ||
   (event.status === 'CLOSED' && isPublicTicketPurchaseAvailable(event));
 
 const filterActivePublicMarketplaceEvents = (events = [], now = new Date()) =>
@@ -39,7 +39,7 @@ const filterActivePublicMarketplaceEvents = (events = [], now = new Date()) =>
 
 const getPublicMarketplaceEventQuery = (eventId) => ({
   event_id: eventId,
-  status: { $in: ['OPEN', 'CLOSED'] },
+  status: { $in: ['OPEN', 'REOPENED', 'CLOSED'] },
   event_visibility: 'PUBLIC',
   tax_exemption_status: { $in: ['NOT_REQUESTED', 'APPROVED'] },
 });
