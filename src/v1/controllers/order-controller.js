@@ -4053,9 +4053,7 @@ exports.add = async (req, res, next) => {
         });
       } catch (verificationError) {
         console.error('Walk-up Tap to Pay verification failed', {
-          transactionId: nativeTransactionId,
           code: verificationError.code,
-          message: verificationError.message,
         });
         return res.error(
           new Error('Tap to Pay could not be verified with the payment processor.'),

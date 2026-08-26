@@ -3,6 +3,9 @@ const CyberSourcePaymentHelper = require('./cybersource-payment-helper');
 
 const originalEnvironment = {
   CYBERSOURCE_ENVIRONMENT: process.env.CYBERSOURCE_ENVIRONMENT,
+  CYBERSOURCE_TTP_ENV: process.env.CYBERSOURCE_TTP_ENV,
+  CYBERSOURCE_TTP_MERCHANT_ID: process.env.CYBERSOURCE_TTP_MERCHANT_ID,
+  CYBERSOURCE_TTP_ENABLED: process.env.CYBERSOURCE_TTP_ENABLED,
   CYBERSOURCE_MERCHANT_ID: process.env.CYBERSOURCE_MERCHANT_ID,
   CYBERSOURCE_REST_KEY_ID: process.env.CYBERSOURCE_REST_KEY_ID,
   CYBERSOURCE_REST_SHARED_SECRET: process.env.CYBERSOURCE_REST_SHARED_SECRET,
@@ -12,6 +15,7 @@ process.env.CYBERSOURCE_ENVIRONMENT = 'sandbox';
 process.env.CYBERSOURCE_MERCHANT_ID = 'test-merchant';
 process.env.CYBERSOURCE_REST_KEY_ID = 'test-key';
 process.env.CYBERSOURCE_REST_SHARED_SECRET = 'test-secret';
+process.env.CYBERSOURCE_TTP_ENABLED = 'true';
 
 const sdkWithTransaction = (transaction) => ({
   TransactionDetailsApi: class TransactionDetailsApi {
@@ -85,6 +89,14 @@ const restoreEnvironment = () => {
       CyberSourcePaymentHelper.getConfig().runEnvironment,
       'apitest.cybersource.com'
     );
+
+    process.env.CYBERSOURCE_TTP_ENV = 'sandbox';
+    process.env.CYBERSOURCE_TTP_MERCHANT_ID = 'tap-to-pay-merchant';
+    assert.strictEqual(
+      CyberSourcePaymentHelper.getConfig().merchantID,
+      'tap-to-pay-merchant'
+    );
+    assert.strictEqual(CyberSourcePaymentHelper.tapToPayEnabled(), true);
     console.log('CyberSource payment helper tests passed');
   } finally {
     restoreEnvironment();
