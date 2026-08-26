@@ -15,7 +15,6 @@ const {
 } = require('../../models');
 const { addObjectWithKey } = require('../../helper/aws');
 const { docusign } = require('../../config');
-const MailHelper = require('../../helper/mail-helper');
 const PaymentHelper = require('../../helper/payment-helper');
 const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
 const {
@@ -74,10 +73,6 @@ const {
 const {
   applyMarketplaceEventLocationPrivacy,
 } = require('../../helper/marketplace-event-location-privacy');
-const {
-  formatMarketplaceCalendarDate,
-  formatMarketplaceClockTime,
-} = require('../../helper/marketplace-event-close-helper');
 const {
   isEventVendorApplicationUnlocked,
 } = require('../../helper/marketplace-vendor-access-policy');
@@ -886,30 +881,15 @@ exports.awardApplication = async (req, res, next) => {
       coordinator_payout_amount: subtotal, payment_status: 'PENDING',
     });
     application.status = 'PAYMENT_DUE'; application.payment_id = payment.payment_id; await application.save();
-    const [coordinator] = await Promise.all([
-      UserModel.findById(event.customer_user_id).lean(),
-    ]);
-    if (coordinator?.email) {
-      try {
-        await MailHelper.sendMail(
-          coordinator.email,
-          `RTC Marketplace Vendor awarded - ${event.event_name || event.event_id}`,
-          `
-            <p>Your Marketplace Vendor selection has been recorded.</p>
-            <p><strong>Event:</strong> ${event.event_name || event.event_id}</p>
-            <p><strong>Event date:</strong> ${formatMarketplaceCalendarDate(event.event_date)}</p>
-            <p><strong>Event time:</strong> ${formatMarketplaceClockTime(event.event_time)}</p>
-            <p>The vendor must complete the attendance-fee checkout before the award is confirmed.</p>
-          `
-        );
-      } catch (mailError) {
-        console.error('Marketplace Vendor coordinator award email failed', {
-          eventId: event.event_id,
-          applicationId: application.application_id,
-          message: mailError.message,
-        });
-      }
-    }
+    await MarketplaceCommunications.sendMarketplaceCommunication({
+      userId: event.customer_user_id,
+      title: 'Marketplace Vendor awarded',
+      body: `Your Marketplace Vendor selection for ${event.event_name || 'the event'} has been recorded successfully.`,
+      emailSubject: `Marketplace Vendor Awarded — ${event.event_name || event.event_id}`,
+      emailBody: `Your Marketplace Vendor selection for ${event.event_name || 'the event'} has been recorded successfully. The vendor must complete the required attendance-fee checkout before participation is confirmed.`,
+      channels: ['email'],
+      metadata: { eventId: event.event_id, applicationId: application.application_id },
+    });
     return res.data({ eventVendorApplication: application, marketplacePayment: payment }, 'Marketplace Vendor awarded; checkout is due');
   } catch (e) { return next(e); }
 };
@@ -939,6 +919,8 @@ exports.declineApplication = async (req, res, next) => {
         userId: application.vendor_user_id,
         title: 'Marketplace submission not selected',
         body: `${event.event_name || 'Your event'} did not select your application.`,
+        emailSubject: `Application Update — ${event.event_name || 'Event'}`,
+        emailBody: `The selection process for ${event.event_name || 'the event'} has ended, and your application was not selected. Thank you for sharing your services with the Round Da’ Corner community.`,
         data: {
           notificationType: 'MARKETPLACE_SUBMISSION_NOT_SELECTED',
           eventId: event.event_id,
@@ -1078,6 +1060,8 @@ exports.revokeApplicationAward = async (req, res, next) => {
       userId: application.vendor_user_id,
       title: 'Marketplace award revoked',
       body: `${event.event_name || 'Your event'} award was revoked by the coordinator.${req.body?.reason ? ` Reason: ${req.body.reason}` : ''}`,
+      emailSubject: `Award Update — ${event.event_name || 'Event'}`,
+      emailBody: `Your award for ${event.event_name || 'the event'} has been revoked by the event coordinator.${req.body?.reason ? `\n\nReason: ${req.body.reason}` : ''}\n\nPlease open the app to review your updated status.`,
       data: {
         notificationType: 'MARKETPLACE_AWARD_REVOKED',
         eventId: event.event_id,

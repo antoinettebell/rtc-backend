@@ -45,6 +45,13 @@ const {
 
 const money = (value) => Number(Number(value || 0).toFixed(2));
 const buildError = (message, code = 400) => Object.assign(new Error(message), { code });
+const buildTicketEmail = ({ recipientName = 'there', paragraphs = '', details = '' }) => `
+  <p>Hi ${recipientName},</p>
+  ${paragraphs}
+  ${details}
+  <p>For help, contact Round Da’ Corner Support at 800-410-7053.</p>
+  <p>Best Regards,<br>Round Da' Corner Support Team</p>
+`;
 
 const addressFromEvent = (event) => ({
   line1: event.event_address,
@@ -379,13 +386,17 @@ exports.checkout = async (req, res, next) => {
       }),
       MailHelper.sendMail(
         order.purchaser_email,
-        event.event_name,
-        `<h2>Your event tickets</h2>${emailTickets
+        `Your Tickets for ${event.event_name}`,
+        buildTicketEmail({
+          recipientName: order.purchaser_name || 'Ticket Buyer',
+          paragraphs: `<p>Thank you for your purchase. Your tickets for ${event.event_name} are ready.</p><p>Open your secure ticket link below to view each attendee’s ticket, ticket type, and QR code.</p>`,
+          details: `${emailTickets
           .map(
             ({ ticket, url, qr }) =>
               `<p><strong>${ticket.attendee_label} (${ticket.ticket_type})</strong><br><img src="cid:${qr.contentId}" width="240" height="240" alt="Ticket QR code"><br><a href="${url}">Open secure ticket</a></p>`
           )
           .join('')}`,
+        }),
         { attachments: emailTickets.map(({ qr }) => qr.attachment) }
       ),
     ]);
@@ -647,8 +658,11 @@ exports.adminReviewTaxExemption = async (req, res, next) => {
       if (coordinator?.email) {
         await MailHelper.sendMail(
           coordinator.email,
-          `Tax-exemption document needs attention for ${event.event_name}`,
-          `<p>Hello ${coordinator.firstName || 'Event Coordinator'},</p><p>Your State Sales Tax Exemption Certificate for <strong>${event.event_name}</strong> was not approved.</p><p>Please open the event in Round Da' Corner, review the administrator notes, and upload a corrected document.</p>`
+          `Tax-Exemption Document Needs Attention — ${event.event_name}`,
+          buildTicketEmail({
+            recipientName: coordinator.firstName || 'Event Coordinator',
+            paragraphs: `<p>Your tax-exemption document for ${event.event_name} was not approved. Please open the app to review the notes and upload a corrected document.</p>`,
+          })
         );
       }
     }
@@ -778,10 +792,11 @@ exports.cancelEventAndRefundTickets = async (req, res, next) => {
           }),
           MailHelper.sendMail(
             order.purchaser_email,
-            `${event.event_name} cancelled — refund issued`,
-            `<p>${event.event_name} was cancelled.</p><p>Your ticket refund of <strong>$${money(
-              order.total_amount
-            ).toFixed(2)}</strong> has been issued.</p>`
+            `${event.event_name} Canceled — Refund Issued`,
+            buildTicketEmail({
+              recipientName: order.purchaser_name || 'Ticket Buyer',
+              paragraphs: `<p>We’re sorry—${event.event_name} has been canceled. Your refund of <strong>$${money(order.total_amount).toFixed(2)}</strong> has been issued to your original payment method. Processing time may vary by your bank or card provider.</p>`,
+            })
           ),
         ]);
         results.push({ ticket_order_id: order.ticket_order_id, status: 'REFUNDED' });
@@ -797,8 +812,11 @@ exports.cancelEventAndRefundTickets = async (req, res, next) => {
           }),
           MailHelper.sendMail(
             order.purchaser_email,
-            `${event.event_name} cancelled — refund processing`,
-            `<p>${event.event_name} was cancelled.</p><p>Your ticket refund is being reviewed and will be processed manually.</p>`
+            `${event.event_name} Canceled — Refund Processing`,
+            buildTicketEmail({
+              recipientName: order.purchaser_name || 'Ticket Buyer',
+              paragraphs: `<p>We’re sorry—${event.event_name} has been canceled. Your refund is being reviewed and will be processed manually. We will update you when processing is complete.</p>`,
+            })
           ),
         ]);
         results.push({

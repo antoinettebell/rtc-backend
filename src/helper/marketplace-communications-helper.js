@@ -11,11 +11,16 @@ const escapeHtml = (value) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-const buildEmailHtml = ({ title, body }) => `
+const getRecipientName = (recipient) =>
+  recipient?.firstName || recipient?.first_name || recipient?.name || 'there';
+
+const buildEmailHtml = ({ title, body, recipientName }) => `
   <div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2937">
     <h2 style="margin:0 0 12px">${escapeHtml(title)}</h2>
-    <p style="margin:0 0 16px">${escapeHtml(body)}</p>
-    <p style="margin:0;color:#6b7280">Open Round The Corner to view the latest event details.</p>
+    <p style="margin:0 0 16px">Hi ${escapeHtml(recipientName || 'there')},</p>
+    <p style="margin:0 0 16px;white-space:pre-line">${escapeHtml(body)}</p>
+    <p style="margin:24px 0 0">For help, contact Round Da’ Corner Support at 800-410-7053.</p>
+    <p style="margin:16px 0 0">Best Regards,<br>Round Da' Corner Support Team</p>
   </div>
 `;
 
@@ -36,6 +41,8 @@ exports.sendMarketplaceCommunication = async ({
   userId,
   title,
   body,
+  emailSubject = null,
+  emailBody = null,
   data = {},
   channels = ['push', 'email'],
   smsBody = null,
@@ -75,8 +82,12 @@ exports.sendMarketplaceCommunication = async ({
     try {
       await MailHelper.sendMail(
         recipient.email,
-        title,
-        buildEmailHtml({ title, body })
+        emailSubject || title,
+        buildEmailHtml({
+          title: emailSubject || title,
+          body: emailBody || body,
+          recipientName: getRecipientName(recipient),
+        })
       );
       results.email = true;
     } catch (error) {

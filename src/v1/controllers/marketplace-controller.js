@@ -856,6 +856,8 @@ const sendEventClosedNotification = async (event) => {
       userId: event.customer_user_id,
       title: 'Event submissions closed',
       body: `${event.event_name || 'Your event'} is closed to new submissions.`,
+      emailSubject: `Vendor Submissions Closed — ${event.event_name || 'Event'}`,
+      emailBody: `Vendor submissions for ${event.event_name || 'your event'} are now closed. Existing bids and applications remain available in the app for your review and selection.`,
       data: {
         notificationType: 'MARKETPLACE_EVENT_CLOSED',
         eventId: event.event_id,
@@ -888,6 +890,8 @@ const notifyMissedVendorFeePayments = async () => {
         userId: event.customer_user_id,
         title: 'Vendor failed to submit payment',
         body: `Please reopen event or revoke the award and award another vendor. Contact support with any questions or help: ${MARKETPLACE_PHONE_NUMBER}`,
+        emailSubject: `Vendor Payment Deadline Missed — ${event.event_name || 'Event'}`,
+        emailBody: `The selected vendor did not complete the required payment by the deadline for ${event.event_name || 'your event'}. Open the app to review your options, including reopening the event or selecting another vendor.`,
         data: {
           notificationType: 'MARKETPLACE_VENDOR_PAYMENT_MISSED',
           eventId: event.event_id,
@@ -900,6 +904,8 @@ const notifyMissedVendorFeePayments = async () => {
         userId: application.vendor_user_id,
         title: 'Vendor event payment deadline missed',
         body: `Your payment deadline for ${event.event_name || 'the event'} has passed. Contact the coordinator in the app or RTC support at ${MARKETPLACE_PHONE_NUMBER}.`,
+        emailSubject: `Payment Deadline Has Passed — ${event.event_name || 'Event'}`,
+        emailBody: `The payment deadline for ${event.event_name || 'the event'} has passed, and payment can no longer be completed through the app. Please contact the event coordinator in the app or Round Da’ Corner Support for next steps.`,
         data: {
           notificationType: 'MARKETPLACE_VENDOR_PAYMENT_MISSED',
           eventId: event.event_id,
@@ -2636,6 +2642,8 @@ const notifyCoordinatorOfMarketplaceQuestion = async (event) => {
       userId: event.customer_user_id,
       title: 'New marketplace question',
       body: `${event.event_name || 'Your event'} has a new vendor question.`,
+      emailSubject: `New Vendor Question — ${event.event_name || 'Event'}`,
+      emailBody: `A vendor has submitted a question about ${event.event_name || 'your event'}. Open the app to review and respond.`,
       data: {
         notificationType: 'MARKETPLACE_EVENT_QUESTION',
         eventId: event.event_id,
@@ -2686,6 +2694,8 @@ const notifyVendorsOfMarketplaceAnswer = async (event, question) => {
         userId,
         title: 'Marketplace question answered',
         body: `${event.event_name || 'An event'} has a new public answer.`,
+        emailSubject: `New Event Answer Posted — ${event.event_name || 'Event'}`,
+        emailBody: `A new public answer has been posted for ${event.event_name || 'the event'}. Open the app to review the latest event information.`,
         data: {
           notificationType: 'MARKETPLACE_EVENT_ANSWER',
           eventId: event.event_id,
@@ -2710,6 +2720,8 @@ const notifyVendorOfCoordinatorMarketplaceMessage = async (event, question) => {
         userId: question.vendor_user_id,
         title: 'Marketplace coordinator message',
         body: `${event.event_name || 'An event'} has a coordinator message for your submission.`,
+        emailSubject: `New Message From Your Event Coordinator — ${event.event_name || 'Event'}`,
+        emailBody: `Your event coordinator sent you a message about ${event.event_name || 'the event'}. Open the app to read and respond if needed.`,
         data: {
           notificationType: 'MARKETPLACE_COORDINATOR_MESSAGE',
           eventId: event.event_id,
@@ -2941,6 +2953,12 @@ const notifyMarketplaceSubmission = async ({ event, vendorUserId, submissionType
       body: requiresPayment
         ? `${event.event_name || 'An event'} requires payment before your ${label} is submitted.`
         : `Your marketplace ${label} for ${event.event_name || 'an event'} was submitted successfully.`,
+      emailSubject: requiresPayment
+        ? 'Action Required: Complete Your Submission'
+        : `Marketplace ${label === 'bid' ? 'Bid' : 'Application'} Submitted`,
+      emailBody: requiresPayment
+        ? `Payment is required before your ${label} for ${event.event_name || 'the event'} can be submitted. Please open the app, review your submission, and complete payment to send it to the coordinator.`
+        : `Your ${label} for ${event.event_name || 'the event'} has been received and is now available for the event coordinator to review. You can view your ${label} anytime in the app under My ${label === 'bid' ? 'Bids' : 'Applications'}.`,
       data: {
         notificationType: requiresPayment
           ? 'MARKETPLACE_ACTION_REQUIRED'
@@ -2962,6 +2980,8 @@ const notifyMarketplaceSubmission = async ({ event, vendorUserId, submissionType
           userId: event.customer_user_id,
           title: `New marketplace ${label}`,
           body: `${event.event_name || 'Your event'} has a new vendor ${label}.`,
+          emailSubject: `New Vendor ${label === 'bid' ? 'Bid' : 'Application'} Received — ${event.event_name || 'Event'}`,
+          emailBody: `A ${label === 'bid' ? 'Food Vendor has submitted a bid' : 'vendor has submitted an application'} for ${event.event_name || 'your event'}. Open the app to review the ${label} and make your selection when ready.`,
           data: {
             notificationType: 'MARKETPLACE_SUBMISSION_RECEIVED',
             eventId: event.event_id,
@@ -3001,6 +3021,12 @@ const notifyBidAwardOutcomes = async (
         body: wasSelected
           ? `${event.event_name || 'An event'} selected your marketplace bid. Open the app to view the next steps.`
           : `${event.event_name || 'An event'} has closed selection and your bid was not selected.`,
+        emailSubject: wasSelected
+          ? `Your Bid Was Selected — ${event.event_name || 'Event'}`
+          : `Bid Update — ${event.event_name || 'Event'}`,
+        emailBody: wasSelected
+          ? `Great news—your bid for ${event.event_name || 'the event'} has been selected. Open the app to review your award details and complete any remaining steps.`
+          : `The selection process for ${event.event_name || 'the event'} has ended, and your bid was not selected. Thank you for submitting a bid and sharing your services with the Round Da’ Corner community.`,
         data: {
           notificationType: wasSelected
             ? 'MARKETPLACE_BID_ACCEPTED'
@@ -3027,6 +3053,8 @@ const notifyCoordinatorOfMatchLocked = async (event) => {
     userId: event.customer_user_id,
     title: 'Marketplace match locked',
     body: `${event.event_name || 'Your event'} has completed selection. Vendor details and event files are available in the app.`,
+    emailSubject: `Marketplace Selection Complete — ${event.event_name || 'Event'}`,
+    emailBody: `Vendor selection for ${event.event_name || 'your event'} is complete. Vendor details, available event files, and award information are ready to review in the app.`,
     data: {
       notificationType: 'MARKETPLACE_MATCH_LOCKED',
       eventId: event.event_id,
@@ -3042,12 +3070,11 @@ const sendCoordinatorFoodAwardSelectionEmail = async ({ event, bid }) => {
   try {
     await MailHelper.sendMail(
       coordinator.email,
-      `RTC Marketplace bid awarded - ${event.event_name || event.event_id}`,
-      `
-        <p>Your Food Vendor bid selection has been recorded.</p>
-        <p><strong>Event:</strong> ${event.event_name || event.event_id}</p>
-        <p><strong>Bid:</strong> ${bid.bid_id}</p>
-      `
+      `Food Vendor Bid Awarded — ${event.event_name || event.event_id}`,
+      buildMarketplaceEmail({
+        recipientName: getUserName(coordinator, 'Event Coordinator'),
+        paragraphs: `<p>Your Food Vendor bid selection for ${event.event_name || event.event_id} has been recorded successfully. Open the app to review the award details and remaining event steps.</p>`,
+      })
     );
   } catch (mailError) {
     console.error('Food Vendor bid coordinator award email failed', {
@@ -3063,6 +3090,8 @@ const notifyVendorMatchLocked = async ({ event, vendorUserId }) => {
     userId: vendorUserId,
     title: 'Marketplace match locked',
     body: `${event.event_name || 'An event'} is locked. Details, contracts, and logistics are available in the app when released.`,
+    emailSubject: `Marketplace Selection Complete — ${event.event_name || 'Event'}`,
+    emailBody: `Selection for ${event.event_name || 'the event'} is complete. Open the app to review available event details, contracts, and logistics when they are released.`,
     data: {
       notificationType: 'MARKETPLACE_MATCH_LOCKED',
       eventId: event.event_id,
@@ -3078,6 +3107,14 @@ const getUserName = (user, fallback = 'there') =>
   user?.name ||
   user?.email ||
   fallback;
+
+const buildMarketplaceEmail = ({ recipientName = 'there', paragraphs = '', details = '' }) => `
+  <p>Hi ${recipientName},</p>
+  ${paragraphs}
+  ${details}
+  <p>For help, contact Round Da’ Corner Support at 800-410-7053.</p>
+  <p>Best Regards,<br>Round Da' Corner Support Team</p>
+`;
 
 const formatEventSummaryHtml = (event) => `
   <p><strong>Event:</strong> ${event?.event_name || event?.event_id || 'Marketplace event'}</p>
@@ -3189,16 +3226,12 @@ const sendMarketplaceInformationEmailsIfUnlocked = async ({
     try {
       await MailHelper.sendMail(
         coordinator.email,
-        `RTC Marketplace vendor information - ${event.event_name || event.event_id}`,
-        `
-          <p>${coordinatorName},</p>
-          <p>The marketplace payment requirements are complete. Vendor information and collected documents are attached.</p>
-          ${formatEventSummaryHtml(event)}
-          <p><strong>Vendor:</strong> ${vendorName}</p>
-          <p><strong>Submission:</strong> ${submissionLabel}</p>
-          <h3>Award details</h3>
-          ${buildFoodVendorAwardDetailsHtml({ bid, application, event, vendor })}
-        `,
+        `Vendor Information Available — ${event.event_name || event.event_id}`,
+        buildMarketplaceEmail({
+          recipientName: coordinatorName,
+          paragraphs: `<p>Payment requirements for ${event.event_name || event.event_id} have been completed. Vendor contact information, award details, and available documents can now be viewed in the app.</p>`,
+          details: `${formatEventSummaryHtml(event)}<p><strong>Vendor:</strong> ${vendorName}</p><h3>Award details</h3>${buildFoodVendorAwardDetailsHtml({ bid, application, event, vendor })}`,
+        }),
         { attachments: emailAttachments }
       );
     } catch (error) {
@@ -3214,15 +3247,12 @@ const sendMarketplaceInformationEmailsIfUnlocked = async ({
     try {
       await MailHelper.sendMail(
         vendor.email,
-        `RTC Marketplace coordinator information - ${event.event_name || event.event_id}`,
-        `
-          <p>${vendorName},</p>
-          <p>The marketplace payment requirements are complete. Coordinator information is below.</p>
-          ${formatEventSummaryHtml(event)}
-          <p><strong>Coordinator:</strong> ${coordinatorName}</p>
-          <p><strong>Email:</strong> ${coordinator?.email || 'Not provided'}</p>
-          <p><strong>Phone:</strong> ${coordinator?.phone || coordinator?.phoneNumber || 'Not provided'}</p>
-        `
+        `Coordinator Information Available — ${event.event_name || event.event_id}`,
+        buildMarketplaceEmail({
+          recipientName: vendorName,
+          paragraphs: `<p>Payment requirements for ${event.event_name || event.event_id} have been completed. Your event coordinator’s name, email address, phone number, and event details are now available in the app.</p>`,
+          details: `${formatEventSummaryHtml(event)}<p><strong>Coordinator:</strong> ${coordinatorName}</p><p><strong>Email:</strong> ${coordinator?.email || 'Not provided'}</p><p><strong>Phone:</strong> ${coordinator?.phone || coordinator?.phoneNumber || 'Not provided'}</p>`,
+        })
       );
     } catch (error) {
       console.error('Marketplace vendor award email failed', {
@@ -3252,6 +3282,8 @@ const notifyVendorsOfEventChanges = async (event, changes = []) => {
       userId,
       title: 'Marketplace event updated',
       body: `${event.event_name || 'An event'} has updated event details: ${labels}.`,
+      emailSubject: `Event Details Updated — ${event.event_name || 'Event'}`,
+      emailBody: `The coordinator updated details for ${event.event_name || 'the event'}.\n\nUpdated information: ${labels}\n\nPlease open the app to review the latest event details.`,
       data: {
         notificationType: 'MARKETPLACE_EVENT_UPDATED',
         eventId: event.event_id,
@@ -3276,6 +3308,8 @@ const notifyVendorsOfEventCancellation = async (event) => {
       userId,
       title: 'Marketplace event canceled',
       body: `${event.event_name || 'An event'} has been canceled.`,
+      emailSubject: `Event Canceled — ${event.event_name || 'Event'}`,
+      emailBody: `We’re sorry to let you know that ${event.event_name || 'the event'} has been canceled. Please open the app for any available details or next steps.`,
       data: {
         notificationType: 'MARKETPLACE_EVENT_CANCELLED',
         eventId: event.event_id,
@@ -3300,6 +3334,10 @@ const notifyVendorsOfEventReopen = async (event, reopenMode = 'ARCHIVE') => {
       body: reopenMode === 'KEEP'
         ? `${event.event_name || 'An event'} was reopened for new vendor submissions. Your existing submission remains under coordinator review.`
         : `${event.event_name || 'An event'} was reopened for new vendor submissions. Outstanding previous submissions were archived, and previous submitters cannot submit again.`,
+      emailSubject: `Event Reopened — ${event.event_name || 'Event'}`,
+      emailBody: reopenMode === 'KEEP'
+        ? `${event.event_name || 'The event'} has reopened for new vendor submissions. Your existing submission remains available for coordinator review; no action is required unless you would like to review it in the app.`
+        : `${event.event_name || 'The event'} has reopened for new vendor submissions. Outstanding previous submissions were archived and are no longer available for selection. Please note that previous submitters cannot submit again for this event.`,
       data: {
         notificationType: 'MARKETPLACE_EVENT_REOPENED',
         eventId: event.event_id,
@@ -3420,6 +3458,8 @@ const notifyClosedWithoutAward = async (event) => {
       userId: event.customer_user_id,
       title: 'Marketplace event closed with no award',
       body: `${event.event_name || 'Your event'} was closed after receiving submissions, but no vendor was awarded.`,
+      emailSubject: `Event Closed Without a Vendor Award — ${event.event_name || 'Event'}`,
+      emailBody: `${event.event_name || 'Your event'} closed after receiving vendor submissions, but no vendor was awarded. Open the app if you would like to review available event-management options.`,
       data: {
         notificationType: 'MARKETPLACE_EVENT_CLOSED_NO_AWARD',
         eventId: event.event_id,
@@ -3430,6 +3470,8 @@ const notifyClosedWithoutAward = async (event) => {
       userId,
       title: 'Marketplace event closed',
       body: `${event.event_name || 'An event'} was closed and no vendor was awarded.`,
+      emailSubject: `Event Closed — ${event.event_name || 'Event'}`,
+      emailBody: `${event.event_name || 'The event'} has closed, and no vendor was selected. Thank you for your interest in participating through Round Da’ Corner.`,
       data: {
         notificationType: 'MARKETPLACE_EVENT_CLOSED_NO_AWARD',
         eventId: event.event_id,
@@ -3780,16 +3822,19 @@ const sendFinalEventPaymentReceipt = async ({ payment, event }) => {
 
   await MailHelper.sendMail(
     coordinator.email,
-    'Round The Corner event payment receipt',
-    `
-      <p>Your event payment has been received.</p>
+    `Event Payment Receipt — ${event.event_name || event.event_id}`,
+    buildMarketplaceEmail({
+      recipientName: getUserName(coordinator, 'Event Coordinator'),
+      paragraphs: `<p>Your payment for ${event.event_name || event.event_id} was completed successfully.</p>`,
+      details: `
       <p><strong>Event:</strong> ${event.event_name || event.event_id}</p>
       <p><strong>Award amount:</strong> $${Number(payment.base_amount || 0).toFixed(2)}</p>
       <p><strong>Tip:</strong> $${Number(payment.tip_amount || 0).toFixed(2)}</p>
       <p><strong>Total paid:</strong> $${Number(payment.total_amount || 0).toFixed(2)}</p>
       <p><strong>Payment method:</strong> ${payment.payment_method || 'Not provided'}</p>
       <p><strong>Transaction:</strong> ${payment.processor_transaction_id || 'Pending'}</p>
-    `
+      `,
+    })
   );
 };
 
@@ -4007,6 +4052,12 @@ const applyFoodApplicationSelections = async (event, selectedApplications = []) 
       body: vendorFeeRequired
         ? `Your application for ${event.event_name || 'the event'} was accepted. Pay the vendor fee by ${new Date(application.payment_due_at).toLocaleDateString('en-US')}.`
         : `Your application for ${event.event_name || 'the event'} was accepted.`,
+      emailSubject: vendorFeeRequired
+        ? `Your Application Was Accepted — Payment Due`
+        : `Your Application Was Accepted — ${event.event_name || 'Event'}`,
+      emailBody: vendorFeeRequired
+        ? `Your application for ${event.event_name || 'the event'} has been accepted. Please open the app and pay your vendor fee by ${new Date(application.payment_due_at).toLocaleString('en-US')} to confirm your participation.`
+        : `Great news—your application for ${event.event_name || 'the event'} has been accepted. No vendor fee is due at this time. Open the app to review your event details.`,
       data: {
         notificationType: 'MARKETPLACE_APPLICATION_ACCEPTED',
         eventId: event.event_id,
@@ -4021,12 +4072,11 @@ const applyFoodApplicationSelections = async (event, selectedApplications = []) 
       try {
         await MailHelper.sendMail(
           coordinator.email,
-          `RTC Marketplace application awarded - ${event.event_name || event.event_id}`,
-          `
-            <p>Your Food Vendor application selection has been recorded.</p>
-            <p><strong>Event:</strong> ${event.event_name || event.event_id}</p>
-            <p><strong>Application:</strong> ${application.application_id}</p>
-          `
+          `Food Vendor Application Awarded — ${event.event_name || event.event_id}`,
+          buildMarketplaceEmail({
+            recipientName: getUserName(coordinator, 'Event Coordinator'),
+            paragraphs: `<p>Your Food Vendor application selection for ${event.event_name || event.event_id} has been recorded successfully. Open the app to review the award details and remaining event steps.</p>`,
+          })
         );
       } catch (mailError) {
         console.error('Food Vendor application coordinator award email failed', {
@@ -4078,14 +4128,11 @@ const applyEventVendorApplicationSelections = async (
       try {
         await MailHelper.sendMail(
           coordinator.email,
-          `RTC Marketplace Vendor awarded - ${event.event_name || event.event_id}`,
-          `
-            <p>Your Marketplace Vendor selection has been recorded.</p>
-            <p><strong>Event:</strong> ${event.event_name || event.event_id}</p>
-            <p><strong>Event date:</strong> ${formatMarketplaceCalendarDate(event.event_date)}</p>
-            <p><strong>Event time:</strong> ${formatMarketplaceClockTime(event.event_time)}</p>
-            <p>The vendor must complete the attendance-fee checkout before the award is confirmed.</p>
-          `
+          `Marketplace Vendor Awarded — ${event.event_name || event.event_id}`,
+          buildMarketplaceEmail({
+            recipientName: getUserName(coordinator, 'Event Coordinator'),
+            paragraphs: `<p>Your Marketplace Vendor selection for ${event.event_name || event.event_id} has been recorded successfully. The vendor must complete the required attendance-fee checkout before participation is confirmed.</p>`,
+          })
         );
       } catch (mailError) {
         console.error('Marketplace Vendor coordinator award email failed', {
@@ -5823,6 +5870,8 @@ const notifyVendorNotSelected = async ({ event, vendorUserId, submissionType, su
       userId: vendorUserId,
       title: 'Marketplace submission not selected',
       body: `${event.event_name || 'Your event'} did not select your ${submissionType}.`,
+      emailSubject: `${submissionType === 'application' ? 'Application' : 'Bid'} Update — ${event.event_name || 'Event'}`,
+      emailBody: `The selection process for ${event.event_name || 'the event'} has ended, and your ${submissionType} was not selected. Thank you for sharing your services with the Round Da’ Corner community.`,
       data: {
         notificationType: 'MARKETPLACE_SUBMISSION_NOT_SELECTED',
         eventId: event.event_id,
@@ -7606,6 +7655,12 @@ exports.acceptApplication = async (req, res, next) => {
       body: vendorFeeRequired
         ? `Your application for ${event.event_name || 'the event'} was accepted. Pay the vendor fee by ${new Date(application.payment_due_at).toLocaleDateString('en-US')}.`
         : `Your application for ${event.event_name || 'the event'} was accepted.`,
+      emailSubject: vendorFeeRequired
+        ? 'Your Application Was Accepted — Payment Due'
+        : `Your Application Was Accepted — ${event.event_name || 'Event'}`,
+      emailBody: vendorFeeRequired
+        ? `Your application for ${event.event_name || 'the event'} has been accepted. Please open the app and pay your vendor fee by ${new Date(application.payment_due_at).toLocaleString('en-US')} to confirm your participation.`
+        : `Great news—your application for ${event.event_name || 'the event'} has been accepted. No vendor fee is due at this time. Open the app to review your event details.`,
       data: {
         notificationType: 'MARKETPLACE_APPLICATION_ACCEPTED',
         eventId: event.event_id,
@@ -7620,12 +7675,11 @@ exports.acceptApplication = async (req, res, next) => {
       try {
         await MailHelper.sendMail(
           coordinator.email,
-          `RTC Marketplace application awarded - ${event.event_name || event.event_id}`,
-          `
-            <p>Your Food Vendor application selection has been recorded.</p>
-            <p><strong>Event:</strong> ${event.event_name || event.event_id}</p>
-            <p><strong>Application:</strong> ${application.application_id}</p>
-          `
+          `Food Vendor Application Awarded — ${event.event_name || event.event_id}`,
+          buildMarketplaceEmail({
+            recipientName: getUserName(coordinator, 'Event Coordinator'),
+            paragraphs: `<p>Your Food Vendor application selection for ${event.event_name || event.event_id} has been recorded successfully. Open the app to review the award details and remaining event steps.</p>`,
+          })
         );
       } catch (mailError) {
         console.error('Food Vendor application coordinator award email failed', {
@@ -7827,6 +7881,8 @@ exports.revokeAward = async (req, res, next) => {
       userId: bid.vendor_user_id,
       title: 'Marketplace award revoked',
       body: `${event.event_name || 'Your event'} award was revoked by the coordinator.${req.body?.reason ? ` Reason: ${req.body.reason}` : ''}`,
+      emailSubject: `Award Update — ${event.event_name || 'Event'}`,
+      emailBody: `Your award for ${event.event_name || 'the event'} has been revoked by the event coordinator.${req.body?.reason ? `\n\nReason: ${req.body.reason}` : ''}\n\nPlease open the app to review your updated status.`,
       data: {
         notificationType: 'MARKETPLACE_AWARD_REVOKED',
         eventId: event.event_id,
@@ -7910,6 +7966,8 @@ exports.revokeApplicationAward = async (req, res, next) => {
       userId: application.vendor_user_id,
       title: 'Marketplace award revoked',
       body: `${event.event_name || 'Your event'} award was revoked by the coordinator.${req.body?.reason ? ` Reason: ${req.body.reason}` : ''}`,
+      emailSubject: `Award Update — ${event.event_name || 'Event'}`,
+      emailBody: `Your award for ${event.event_name || 'the event'} has been revoked by the event coordinator.${req.body?.reason ? `\n\nReason: ${req.body.reason}` : ''}\n\nPlease open the app to review your updated status.`,
       data: {
         notificationType: 'MARKETPLACE_AWARD_REVOKED',
         eventId: event.event_id,

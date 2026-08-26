@@ -136,7 +136,7 @@ exports.createMarketplaceAgreementEnvelope = async ({
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      emailSubject: `RTC Marketplace Agreement - ${event.event_name || event.event_id}`,
+      emailSubject: `Action Required: Sign Your Marketplace Agreement — ${event.event_name || event.event_id}`,
       documents: [
         {
           documentBase64,
