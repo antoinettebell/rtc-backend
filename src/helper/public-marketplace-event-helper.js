@@ -35,15 +35,13 @@ const isPublicTicketPurchaseAvailable = (event = {}, now = new Date()) =>
   event.ticket_sales_enabled === true &&
   !event.ticket_sales_closed_at &&
   !['DRAFT', 'CANCELLED'].includes(event.status) &&
-  isWithinPublicEventAvailabilityWindow(event, now) &&
+  !isMarketplaceEventExpired(event, now) &&
   getRemainingTicketInventory(event) > 0;
 
 const hasPublicEventAccess = (event = {}, now = new Date()) => {
-  if (!isWithinPublicEventAvailabilityWindow(event, now)) return false;
-  if (['OPEN', 'REOPENED'].includes(event.status)) {
-    return !event.ticket_sales_enabled || isPublicTicketPurchaseAvailable(event, now);
-  }
-  return event.status === 'CLOSED' && isPublicTicketPurchaseAvailable(event, now);
+  if (event.ticket_sales_enabled) return !isMarketplaceEventExpired(event, now);
+  return ['OPEN', 'REOPENED'].includes(event.status) &&
+    isWithinPublicEventAvailabilityWindow(event, now);
 };
 
 const filterActivePublicMarketplaceEvents = (events = [], now = new Date()) =>

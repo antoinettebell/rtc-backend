@@ -55,7 +55,7 @@ assert.equal(isPublicMarketplaceEventEligible(event({
   ga_tickets_reserved: 1,
   vip_ticket_quantity: 2,
   vip_tickets_sold: 2,
-}), beforeEnd), false);
+}), beforeEnd), true);
 assert.equal(isPublicMarketplaceEventEligible(event({
   status: 'REOPENED',
   ticket_sales_enabled: false,
@@ -66,7 +66,7 @@ assert.equal(isPublicMarketplaceEventEligible(event({ status: 'CLOSED' }), befor
 assert.equal(isPublicMarketplaceEventEligible(event({
   status: 'CLOSED',
   ticket_sales_closed_at: new Date(),
-}), beforeEnd), false);
+}), beforeEnd), true);
 assert.equal(isPublicMarketplaceEventEligible(event({
   status: 'CLOSED',
   ga_ticket_quantity: 3,
@@ -74,9 +74,10 @@ assert.equal(isPublicMarketplaceEventEligible(event({
   ga_tickets_reserved: 1,
   vip_ticket_quantity: 2,
   vip_tickets_sold: 2,
-}), beforeEnd), false);
+}), beforeEnd), true);
 assert.equal(isPublicMarketplaceEventEligible(event({ tax_exemption_status: 'PENDING' }), beforeEnd), false);
-assert.equal(isPublicMarketplaceEventEligible(event(), new Date('2026-08-08T17:15:00Z')), false);
+assert.equal(isPublicMarketplaceEventEligible(event(), new Date('2026-08-08T17:15:00Z')), true);
+assert.equal(isPublicMarketplaceEventEligible(event({ ticket_sales_enabled: false }), new Date('2026-08-08T17:15:00Z')), false);
 assert.equal(isPublicMarketplaceEventEligible(event({ status: 'REOPENED' }), new Date('2026-08-08T19:00:00Z')), false);
 assert.equal(isPublicMarketplaceEventEligible(
   event({ status: 'CLOSED' }),
@@ -85,9 +86,11 @@ assert.equal(isPublicMarketplaceEventEligible(
 assert.equal(isPublicMarketplaceEventEligible(
   event({ status: 'CLOSED' }),
   new Date('2026-08-08T17:15:00Z')
-), false);
+), true);
 assert.equal(getRemainingTicketInventory(event()), 10);
 assert.equal(isPublicTicketPurchaseAvailable(event({ status: 'CLOSED' }), beforeEnd), true);
+assert.equal(isPublicTicketPurchaseAvailable(event(), new Date('2026-08-08T17:15:00Z')), true);
+assert.equal(isPublicTicketPurchaseAvailable(event(), new Date('2026-08-08T18:00:01Z')), false);
 assert.equal(isPublicTicketPurchaseAvailable(event({
   status: 'CLOSED',
   ticket_sales_closed_at: new Date(),
