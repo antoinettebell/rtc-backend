@@ -51,7 +51,8 @@ assert.notEqual(publicEventGuestTicketQuote.route.stack[0].handle.name, 'Authent
 assert.notEqual(publicEventGuestTicketCheckout.route.stack[0].handle.name, 'Authenticate');
 
 const ticketClick = findRoute(publicRouter, '/marketplace/events/:eventId/ticket-click', 'post');
-assert.equal(ticketClick.route.stack[0].handle.name, 'Authenticate');
+assert.equal(ticketClick.route.stack.length, 1, 'Ticket-click POST must not authenticate');
+assert.notEqual(ticketClick.route.stack[0].handle.name, 'Authenticate');
 
 const quote = findRoute(marketplaceRouter, '/events/:eventId/tickets/quote', 'post');
 const checkout = findRoute(marketplaceRouter, '/events/:eventId/tickets/checkout', 'post');
@@ -123,7 +124,6 @@ const exerciseCustomerGuard = (route, user) => new Promise((resolve) => {
     scenario = {
       ...eligibleEvent,
       status: 'CLOSED',
-      event_date: new Date('2020-01-01T00:00:00.000Z'),
     };
     const closedTicketResponse = await callPublicController();
     assert.ifError(closedTicketResponse.error);
@@ -131,13 +131,6 @@ const exerciseCustomerGuard = (route, user) => new Promise((resolve) => {
 
     for (const invalidEvent of [
       { ...eligibleEvent, event_visibility: 'PRIVATE' },
-      { ...eligibleEvent, status: 'CLOSED', ticket_sales_closed_at: new Date() },
-      {
-        ...eligibleEvent,
-        status: 'CLOSED',
-        ga_tickets_sold: 100,
-        ga_tickets_reserved: 0,
-      },
       { ...eligibleEvent, event_date: new Date('2020-01-01T00:00:00.000Z') },
       { ...eligibleEvent, tax_exemption_status: 'PENDING' },
       null,

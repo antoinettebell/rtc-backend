@@ -7,6 +7,7 @@ const {
   MarketplaceAttachmentModel,
   MarketplaceEventQuestionModel,
   MarketplacePaymentModel,
+  MarketplaceTicketModel,
 } = require('../../models');
 const { BaseService } = require('../../common-services');
 const {
@@ -171,6 +172,12 @@ class MarketplaceEventService extends BaseService {
         .map((record) => String(record.vendor_user_id || ''))
         .filter(Boolean)
     );
+    const ticketsCheckedIn = await MarketplaceTicketModel.countDocuments({
+      event_id,
+      status: 'CHECKED_IN',
+    });
+    const ticketsSold =
+      Number(event.ga_tickets_sold || 0) + Number(event.vip_tickets_sold || 0);
 
     return {
       ...event,
@@ -181,8 +188,8 @@ class MarketplaceEventService extends BaseService {
       marketplace_metrics: {
         views: Number(event.event_impression_count || 0),
         ticket_checkout_clicks: Number(event.ticket_click_count || 0),
-        tickets_sold:
-          Number(event.ga_tickets_sold || 0) + Number(event.vip_tickets_sold || 0),
+        tickets_sold: ticketsSold,
+        tickets_remaining_to_scan: Math.max(0, ticketsSold - ticketsCheckedIn),
         vip_vendors_selected: filledSlots.vipSlotsFilled,
         vendor_ga_slots_filled: filledSlots.gaSlotsFilled,
         dessert_vendors_selected: filledSlots.dessertSlotsFilled || 0,

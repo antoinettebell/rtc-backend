@@ -194,7 +194,6 @@ router.get(
 /** [POST] /api/v1/public/marketplace/events/:eventId/ticket-click */
 router.post(
   '/marketplace/events/:eventId/ticket-click',
-  authenticate,
   MarketplaceController.trackPublicEventTicketClick
 );
 
