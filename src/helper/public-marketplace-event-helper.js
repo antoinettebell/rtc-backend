@@ -6,6 +6,13 @@ const isMarketplaceEventExpired = (event = {}, now = new Date()) => {
   return timing.end_at.getTime() < new Date(now).getTime();
 };
 
+const isWithinPublicEventAvailabilityWindow = (event = {}, now = new Date()) => {
+  const timing = getMarketplaceEventTiming(event);
+  if (!timing) return true;
+  const cutoff = timing.end_at.getTime() - (45 * 60 * 1000);
+  return new Date(now).getTime() < cutoff;
+};
+
 const getRemainingTicketInventory = (event = {}) => {
   const remainingGa = Math.max(
     0,
@@ -24,15 +31,20 @@ const getRemainingTicketInventory = (event = {}) => {
   return remainingGa + remainingVip;
 };
 
-const isPublicTicketPurchaseAvailable = (event = {}) =>
+const isPublicTicketPurchaseAvailable = (event = {}, now = new Date()) =>
   event.ticket_sales_enabled === true &&
   !event.ticket_sales_closed_at &&
   !['DRAFT', 'CANCELLED'].includes(event.status) &&
+  isWithinPublicEventAvailabilityWindow(event, now) &&
   getRemainingTicketInventory(event) > 0;
 
-const hasPublicEventAccess = (event = {}, now = new Date()) =>
-  (['OPEN', 'REOPENED'].includes(event.status) && !isMarketplaceEventExpired(event, now)) ||
-  (event.status === 'CLOSED' && isPublicTicketPurchaseAvailable(event));
+const hasPublicEventAccess = (event = {}, now = new Date()) => {
+  if (!isWithinPublicEventAvailabilityWindow(event, now)) return false;
+  if (['OPEN', 'REOPENED'].includes(event.status)) {
+    return !event.ticket_sales_enabled || isPublicTicketPurchaseAvailable(event, now);
+  }
+  return event.status === 'CLOSED' && isPublicTicketPurchaseAvailable(event, now);
+};
 
 const filterActivePublicMarketplaceEvents = (events = [], now = new Date()) =>
   events.filter((event) => isPublicMarketplaceEventEligible(event, now));
@@ -80,6 +92,7 @@ module.exports = {
   getRemainingTicketInventory,
   getPublicMarketplaceEventQuery,
   isMarketplaceEventExpired,
+  isWithinPublicEventAvailabilityWindow,
   isPublicMarketplaceEventEligible,
   isPublicTicketPurchaseAvailable,
   sanitizePublicMarketplaceEvent,
