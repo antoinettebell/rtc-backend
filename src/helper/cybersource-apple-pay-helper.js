@@ -128,11 +128,17 @@ const safeObjectKeys = (value) => {
   return Object.keys(value).slice(0, 40);
 };
 
+const isSensitiveDiagnosticKey = (key) =>
+  /(authorization|token|secret|paymentdata|fluiddata|credential|card)/i.test(String(key));
+
 const safeSerializedBodyKeys = (value) => {
   if (!value) return [];
-  if (typeof value === 'object') return safeObjectKeys(value);
+  if (typeof value === 'object') {
+    return safeObjectKeys(value).filter((key) => !isSensitiveDiagnosticKey(key));
+  }
   try {
-    return safeObjectKeys(JSON.parse(String(value)));
+    return safeObjectKeys(JSON.parse(String(value)))
+      .filter((key) => !isSensitiveDiagnosticKey(key));
   } catch (_error) {
     return [];
   }
@@ -141,6 +147,50 @@ const safeSerializedBodyKeys = (value) => {
 const safePrimitiveDiagnosticValue = (value) => {
   if (value === undefined || value === null) return null;
   return sanitizeDiagnosticText(value);
+};
+
+const parseJsonObjectSafely = (value) => {
+  if (!value) return null;
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(String(value));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const safeValidationEntry = (entry) => {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  const result = {};
+  ['code', 'message', 'field', 'reason'].forEach((key) => {
+    const value = safePrimitiveDiagnosticValue(entry[key]);
+    if (value !== null) result[key] = value;
+  });
+  return Object.keys(result).length ? result : null;
+};
+
+const safeValidationEntries = (entries) => {
+  const values = Array.isArray(entries) ? entries : (entries ? [entries] : []);
+  return values.slice(0, 20).map(safeValidationEntry).filter(Boolean);
+};
+
+const cybersourceValidationDiagnostics = (responseText) => {
+  const parsed = parseJsonObjectSafely(responseText);
+  if (!parsed) return null;
+  const error = parsed.error && typeof parsed.error === 'object' && !Array.isArray(parsed.error)
+    ? parsed.error
+    : parsed;
+  return {
+    code: safePrimitiveDiagnosticValue(error.code),
+    message: safePrimitiveDiagnosticValue(error.message),
+    field: safePrimitiveDiagnosticValue(error.field),
+    reason: safePrimitiveDiagnosticValue(error.reason),
+    details: safeValidationEntries(error.details || parsed.details),
+    embedded_errors: safeValidationEntries(
+      error._embedded?.errors || parsed._embedded?.errors
+    ),
+  };
 };
 
 const callbackFailureDiagnostics = ({ error, data, response }) => {
@@ -160,10 +210,21 @@ const callbackFailureDiagnostics = ({ error, data, response }) => {
         errorResponse?.body || errorResponse?.data || errorResponse?.text
       ),
       response_header_keys: safeObjectKeys(errorHeaders),
+      v_c_correlation_id: safeHeaderValue(errorHeaders, ['v-c-correlation-id']),
+      x_requestid: safeHeaderValue(errorHeaders, ['x-requestid', 'x-request-id']),
+      validation: cybersourceValidationDiagnostics(errorResponse?.text),
     },
     callback_data_keys: safeObjectKeys(data),
     callback_response_status: safePrimitiveDiagnosticValue(response?.status || response?.statusCode),
     callback_response_header_keys: safeObjectKeys(responseHeaders),
+    callback_response_v_c_correlation_id: safeHeaderValue(
+      responseHeaders,
+      ['v-c-correlation-id']
+    ),
+    callback_response_x_requestid: safeHeaderValue(
+      responseHeaders,
+      ['x-requestid', 'x-request-id']
+    ),
     configured_environment: isSandboxEnvironment() ? 'sandbox' : 'production',
     configured_credentials_present: {
       merchant_id: Boolean(config.merchantID),
@@ -262,7 +323,7 @@ const safeSdkFailureClass = (error) => {
 };
 
 const logProviderFailure = ({ correlationId, error, status, reason }) => {
-  const headers = error?.response?.headers || error?.headers;
+  const headers = error?.response?.headers || error?.response?.header || error?.headers || error?.header;
   const isTypeError = error?.name === 'TypeError';
   // Do not log the Apple Pay token, credentials, request body, or full provider response.
   console.error('[CyberSourceApplePay] payment_failed', {

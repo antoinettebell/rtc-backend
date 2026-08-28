@@ -65,8 +65,26 @@ const compatibilityObjectErrorSdk = {
           status: 422,
           header: { 'x-request-id': 'provider-request-id' },
           text: JSON.stringify({
-            reason: 'MISSING_REQUIRED_FIELD',
-            message: 'The request is invalid',
+            error: {
+              code: 'INVALID_REQUEST',
+              reason: 'MISSING_REQUIRED_FIELD',
+              message: 'The request is invalid',
+              field: 'paymentInformation.fluidData.value',
+              details: [{
+                code: 'INVALID_DATA',
+                message: 'Invalid payment data',
+                field: 'paymentInformation.fluidData.value',
+                reason: 'INVALID_DATA',
+              }],
+              _embedded: {
+                errors: [{
+                  code: 'MISSING_FIELD',
+                  message: 'A required field is missing',
+                  field: 'orderInformation.amountDetails.totalAmount',
+                  reason: 'MISSING_FIELD',
+                }],
+              },
+            },
             paymentToken: 'must-not-appear-in-diagnostics',
           }),
         },
@@ -159,7 +177,36 @@ const restore = () => Object.entries(original).forEach(([key, value]) => {
     assert.strictEqual(compatibilityDiagnostic.callback_diagnostics.callback_error_type, 'object');
     assert.deepStrictEqual(
       compatibilityDiagnostic.callback_diagnostics.callback_error_fields.response_body_keys.sort(),
-      ['message', 'paymentToken', 'reason']
+      ['error']
+    );
+    assert.strictEqual(
+      compatibilityDiagnostic.callback_diagnostics.callback_error_fields.v_c_correlation_id,
+      null
+    );
+    assert.strictEqual(
+      compatibilityDiagnostic.callback_diagnostics.callback_error_fields.x_requestid,
+      'provider-request-id'
+    );
+    assert.deepStrictEqual(
+      compatibilityDiagnostic.callback_diagnostics.callback_error_fields.validation,
+      {
+        code: 'INVALID_REQUEST',
+        message: 'The request is invalid',
+        field: 'paymentInformation.fluidData.value',
+        reason: 'MISSING_REQUIRED_FIELD',
+        details: [{
+          code: 'INVALID_DATA',
+          message: 'Invalid payment data',
+          field: 'paymentInformation.fluidData.value',
+          reason: 'INVALID_DATA',
+        }],
+        embedded_errors: [{
+          code: 'MISSING_FIELD',
+          message: 'A required field is missing',
+          field: 'orderInformation.amountDetails.totalAmount',
+          reason: 'MISSING_FIELD',
+        }],
+      }
     );
     assert.deepStrictEqual(
       compatibilityDiagnostic.callback_diagnostics.callback_response_header_keys,
