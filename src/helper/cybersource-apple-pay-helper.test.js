@@ -53,6 +53,15 @@ const responseErrorSdk = {
   },
 };
 
+const constructorTypeErrorSdk = {
+  CreatePaymentRequest: { constructFromObject: (value) => value },
+  PaymentsApi: class PaymentsApi {
+    constructor() {
+      throw new TypeError('Cannot read properties of undefined (reading enableLog)');
+    }
+  },
+};
+
 const restore = () => Object.entries(original).forEach(([key, value]) => {
   if (value === undefined) delete process.env[key];
   else process.env[key] = value;
@@ -87,6 +96,27 @@ const restore = () => Object.entries(original).forEach(([key, value]) => {
     });
     assert.strictEqual(responseError.success, false);
     assert.strictEqual(responseError.code, 'INVALID_REQUEST');
+
+    const loggedFailures = [];
+    const originalConsoleError = console.error;
+    console.error = (...args) => loggedFailures.push(args);
+    try {
+      const constructorTypeError = await ApplePay.chargeApplePay({
+        paymentData: { data: 'must-not-appear-in-diagnostics' },
+        amount: 1,
+      }, { sdk: constructorTypeErrorSdk });
+      assert.strictEqual(constructorTypeError.success, false);
+    } finally {
+      console.error = originalConsoleError;
+    }
+    const diagnostic = loggedFailures.find(([tag]) => tag === '[CyberSourceApplePay] payment_failed')[1];
+    assert.strictEqual(diagnostic.sdk_failure_class, 'TypeError');
+    assert.match(diagnostic.sdk_failure_message, /enableLog/);
+    assert.strictEqual(
+      diagnostic.local_failure_location,
+      'createPayment: PaymentsApi constructor or request model construction'
+    );
+    assert.doesNotMatch(JSON.stringify(diagnostic), /must-not-appear-in-diagnostics/);
     console.log('CyberSource Apple Pay helper tests passed');
   } finally {
     restore();

@@ -38,7 +38,10 @@ const getConfig = (correlationId = null) => {
     runEnvironment: isSandboxEnvironment()
       ? 'apitest.cybersource.com'
       : 'api.cybersource.com',
-    enableLog: false,
+    logConfiguration: {
+      enableLog: false,
+      enableMasking: true,
+    },
   };
 
   // This gives CyberSource support a request-bound value to trace without
@@ -113,22 +116,58 @@ const responseMetadata = (response) => {
   };
 };
 
+// Keep temporary diagnostics useful without ever emitting Apple Pay payment data,
+// credentials, authorization headers, or complete provider payloads.
+const sanitizeDiagnosticText = (value) => String(value || '')
+  .replace(/(authorization|token|secret|paymentdata|fluiddata|credential)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]')
+  .replace(/eyJ[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+){1,2}/g, '[REDACTED_JWT]')
+  .slice(0, 1200);
+
+const sanitizedStack = (error) => {
+  if (!error?.stack) return null;
+  return String(error.stack)
+    .split('\n')
+    .filter((line, index) => index === 0 || /cybersource-apple-pay-helper|cybersource-rest-client/.test(line))
+    .slice(0, 10)
+    .map(sanitizeDiagnosticText)
+    .join('\n') || null;
+};
+
+const withLocalFailureLocation = (error, location) => {
+  const target = error instanceof Error ? error : new Error(String(error || 'Unknown SDK failure'));
+  if (!target.cybersourceApplePayLocalFailureLocation) {
+    target.cybersourceApplePayLocalFailureLocation = location;
+  }
+  return target;
+};
+
 const createPayment = (request, { sdk = CyberSource, correlationId = null } = {}) => {
-  const config = getConfig(correlationId);
-  assertConfigured(config);
-  const api = new sdk.PaymentsApi(config);
-  const requestBody = sdk.CreatePaymentRequest.constructFromObject(request);
+  let config;
+  let api;
+  let requestBody;
+  try {
+    config = getConfig(correlationId);
+    assertConfigured(config);
+    api = new sdk.PaymentsApi(config);
+    requestBody = sdk.CreatePaymentRequest.constructFromObject(request);
+  } catch (error) {
+    throw withLocalFailureLocation(error, 'createPayment: PaymentsApi constructor or request model construction');
+  }
   return new Promise((resolve, reject) => {
-    api.createPayment(requestBody, (error, data, response) => {
-      const metadata = responseMetadata(response);
-      if (error) {
-        // The SDK supplies the HTTP response as the third callback argument.
-        // Preserve only its metadata for safe downstream diagnostics.
-        if (metadata && !error.response) error.response = metadata;
-        return reject(error);
-      }
-      return resolve({ data: data || {}, metadata });
-    });
+    try {
+      api.createPayment(requestBody, (error, data, response) => {
+        const metadata = responseMetadata(response);
+        if (error) {
+          // The SDK supplies the HTTP response as the third callback argument.
+          // Preserve only its metadata for safe downstream diagnostics.
+          if (metadata && !error.response) error.response = metadata;
+          return reject(withLocalFailureLocation(error, 'createPayment: PaymentsApi.createPayment callback'));
+        }
+        return resolve({ data: data || {}, metadata });
+      });
+    } catch (error) {
+      reject(withLocalFailureLocation(error, 'createPayment: PaymentsApi.createPayment invocation'));
+    }
   });
 };
 
@@ -163,6 +202,7 @@ const safeSdkFailureClass = (error) => {
 
 const logProviderFailure = ({ correlationId, error, status, reason }) => {
   const headers = error?.response?.headers || error?.headers;
+  const isTypeError = error?.name === 'TypeError';
   // Do not log the Apple Pay token, credentials, request body, or full provider response.
   console.error('[CyberSourceApplePay] payment_failed', {
     correlation_id: correlationId,
@@ -176,6 +216,9 @@ const logProviderFailure = ({ correlationId, error, status, reason }) => {
       'request-id',
     ]),
     sdk_failure_class: error ? safeSdkFailureClass(error) : null,
+    sdk_failure_message: isTypeError ? sanitizeDiagnosticText(error.message) : null,
+    sdk_failure_stack: isTypeError ? sanitizedStack(error) : null,
+    local_failure_location: error?.cybersourceApplePayLocalFailureLocation || null,
   });
 };
 
@@ -199,7 +242,13 @@ const providerFailure = (error, correlationId = newCorrelationId()) => {
 const chargeApplePay = async (details, options = {}) => {
   const correlationId = newCorrelationId();
   try {
-    const { data: response } = await createPayment(buildRequest(details), {
+    let request;
+    try {
+      request = buildRequest(details);
+    } catch (error) {
+      throw withLocalFailureLocation(error, 'chargeApplePay: buildRequest');
+    }
+    const { data: response } = await createPayment(request, {
       ...options,
       correlationId,
     });
