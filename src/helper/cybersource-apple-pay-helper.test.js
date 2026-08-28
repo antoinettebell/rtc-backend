@@ -25,7 +25,7 @@ const approvedSdk = {
         id: 'cybs-payment-1',
         status: 'PENDING',
         processorInformation: { approvalCode: 'APPROVED' },
-      });
+      }, { status: 201, headers: { 'v-c-correlation-id': 'provider-correlation' } });
     }
   },
 };
@@ -35,6 +35,20 @@ const declinedSdk = {
   PaymentsApi: class PaymentsApi {
     createPayment(_request, callback) {
       callback(null, { id: 'cybs-payment-2', status: 'DECLINED' });
+    }
+  },
+};
+
+const responseErrorSdk = {
+  CreatePaymentRequest: { constructFromObject: (value) => value },
+  PaymentsApi: class PaymentsApi {
+    createPayment(_request, callback) {
+      const error = new Error('Provider rejected the request');
+      callback(error, null, {
+        status: 422,
+        headers: { 'x-requestid': 'provider-request-id' },
+        body: { reason: 'INVALID_REQUEST' },
+      });
     }
   },
 };
@@ -58,6 +72,7 @@ const restore = () => Object.entries(original).forEach(([key, value]) => {
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.transactionId, 'cybs-payment-1');
     assert.strictEqual(capturedConfig.runEnvironment, 'apitest.cybersource.com');
+    assert.match(capturedConfig.defaultHeaders['v-c-correlation-id'], /^[0-9a-f-]{36}$/i);
     assert.strictEqual(capturedRequest.processingInformation.paymentSolution, '001');
     assert.strictEqual(capturedRequest.paymentInformation.fluidData.descriptor, ApplePay.APPLE_PAY_DESCRIPTOR);
     assert.deepStrictEqual(
@@ -67,6 +82,11 @@ const restore = () => Object.entries(original).forEach(([key, value]) => {
     const declined = await ApplePay.chargeApplePay({ paymentData: token, amount: 1 }, { sdk: declinedSdk });
     assert.strictEqual(declined.success, false);
     assert.strictEqual(declined.transactionId, 'cybs-payment-2');
+    const responseError = await ApplePay.chargeApplePay({ paymentData: token, amount: 1 }, {
+      sdk: responseErrorSdk,
+    });
+    assert.strictEqual(responseError.success, false);
+    assert.strictEqual(responseError.code, 'INVALID_REQUEST');
     console.log('CyberSource Apple Pay helper tests passed');
   } finally {
     restore();

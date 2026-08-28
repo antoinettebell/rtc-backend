@@ -24,21 +24,31 @@ const isSandboxEnvironment = () =>
     )
   );
 
-const getConfig = () => ({
-  authenticationType: 'jwt',
-  jwtKeyType: 'SHARED_SECRET',
-  merchantID: firstConfiguredValue(
-    process.env.CYBERSOURCE_APPLE_PAY_MERCHANT_ID,
-    process.env.CYBERSOURCE_MERCHANT_ID,
-    process.env.CYBERSOURCE_TTP_MERCHANT_ID
-  ),
-  merchantKeyId: process.env.CYBERSOURCE_REST_KEY_ID,
-  merchantsecretKey: process.env.CYBERSOURCE_REST_SHARED_SECRET,
-  runEnvironment: isSandboxEnvironment()
-    ? 'apitest.cybersource.com'
-    : 'api.cybersource.com',
-  enableLog: false,
-});
+const getConfig = (correlationId = null) => {
+  const config = {
+    authenticationType: 'jwt',
+    jwtKeyType: 'SHARED_SECRET',
+    merchantID: firstConfiguredValue(
+      process.env.CYBERSOURCE_APPLE_PAY_MERCHANT_ID,
+      process.env.CYBERSOURCE_MERCHANT_ID,
+      process.env.CYBERSOURCE_TTP_MERCHANT_ID
+    ),
+    merchantKeyId: process.env.CYBERSOURCE_REST_KEY_ID,
+    merchantsecretKey: process.env.CYBERSOURCE_REST_SHARED_SECRET,
+    runEnvironment: isSandboxEnvironment()
+      ? 'apitest.cybersource.com'
+      : 'api.cybersource.com',
+    enableLog: false,
+  };
+
+  // This gives CyberSource support a request-bound value to trace without
+  // including payment data, credentials, or other sensitive request content.
+  if (correlationId) {
+    config.defaultHeaders = { 'v-c-correlation-id': correlationId };
+  }
+
+  return config;
+};
 
 const assertConfigured = (config) => {
   const missing = [
@@ -93,15 +103,31 @@ const buildRequest = ({ paymentData, amount, referenceCode, firstName, lastName,
   },
 });
 
-const createPayment = (request, { sdk = CyberSource } = {}) => {
-  const config = getConfig();
+const responseMetadata = (response) => {
+  if (!response || typeof response !== 'object') return null;
+  return {
+    status: response.status || response.statusCode || null,
+    headers: response.headers || null,
+    body: response.body || response.data || null,
+    data: response.data || response.body || null,
+  };
+};
+
+const createPayment = (request, { sdk = CyberSource, correlationId = null } = {}) => {
+  const config = getConfig(correlationId);
   assertConfigured(config);
   const api = new sdk.PaymentsApi(config);
   const requestBody = sdk.CreatePaymentRequest.constructFromObject(request);
   return new Promise((resolve, reject) => {
-    api.createPayment(requestBody, (error, data) => {
-      if (error) return reject(error);
-      return resolve(data || {});
+    api.createPayment(requestBody, (error, data, response) => {
+      const metadata = responseMetadata(response);
+      if (error) {
+        // The SDK supplies the HTTP response as the third callback argument.
+        // Preserve only its metadata for safe downstream diagnostics.
+        if (metadata && !error.response) error.response = metadata;
+        return reject(error);
+      }
+      return resolve({ data: data || {}, metadata });
     });
   });
 };
@@ -123,6 +149,18 @@ const safeProviderReason = (error) => {
   return value === undefined || value === null ? 'CYBERSOURCE_APPLE_PAY_FAILED' : String(value);
 };
 
+const safeSdkFailureClass = (error) => {
+  const code = String(error?.code || '').trim().toUpperCase();
+  if (['ECONNREFUSED', 'ECONNRESET', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN'].includes(code)) {
+    return code;
+  }
+  const message = String(error?.message || '');
+  if (/failed to decrypt error response/i.test(message)) return 'SDK_RESPONSE_UNAVAILABLE';
+  if (/(certificate|tls|ssl)/i.test(message)) return 'TLS_OR_CERTIFICATE_ERROR';
+  if (/timeout/i.test(message)) return 'REQUEST_TIMEOUT';
+  return error?.name ? String(error.name).slice(0, 80) : 'SDK_ERROR';
+};
+
 const logProviderFailure = ({ correlationId, error, status, reason }) => {
   const headers = error?.response?.headers || error?.headers;
   // Do not log the Apple Pay token, credentials, request body, or full provider response.
@@ -134,8 +172,10 @@ const logProviderFailure = ({ correlationId, error, status, reason }) => {
       'v-c-correlation-id',
       'x-correlation-id',
       'x-request-id',
+      'x-requestid',
       'request-id',
     ]),
+    sdk_failure_class: error ? safeSdkFailureClass(error) : null,
   });
 };
 
@@ -157,12 +197,15 @@ const providerFailure = (error, correlationId = newCorrelationId()) => {
 };
 
 const chargeApplePay = async (details, options = {}) => {
+  const correlationId = newCorrelationId();
   try {
-    const response = await createPayment(buildRequest(details), options);
+    const { data: response } = await createPayment(buildRequest(details), {
+      ...options,
+      correlationId,
+    });
     const status = String(response.status || '').toUpperCase();
     const success = Boolean(response.id) && SUCCESS_STATUSES.has(status);
     if (!success) {
-      const correlationId = newCorrelationId();
       logProviderFailure({
         correlationId,
         status,
@@ -196,7 +239,7 @@ const chargeApplePay = async (details, options = {}) => {
     if (error?.code === 'CYBERSOURCE_APPLE_PAY_NOT_CONFIGURED' || error?.code === 'APPLE_PAY_TOKEN_MISSING') {
       throw error;
     }
-    return providerFailure(error);
+    return providerFailure(error, correlationId);
   }
 };
 
