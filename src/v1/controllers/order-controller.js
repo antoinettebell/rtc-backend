@@ -2327,6 +2327,7 @@ exports.paymentCheckout = async (req, res, next) => {
         subTotal = 0,
         foodTruckId,
         orderNumber,
+        billingAddress,
       },
       user,
     } = req;
@@ -2425,6 +2426,8 @@ exports.paymentCheckout = async (req, res, next) => {
           firstName,
           lastName,
           email,
+          phone: user.mobileNumber,
+          billingAddress,
         })
       : await PaymentHelper.chargePaymentUnified({
           opaqueToken,

@@ -80,7 +80,19 @@ const encodeApplePaymentData = (paymentData) => {
   return Buffer.from(serialized, 'utf8').toString('base64');
 };
 
-const buildRequest = ({ paymentData, amount, referenceCode, firstName, lastName, email }) => ({
+const billingAddressFields = (billingAddress) => {
+  if (!billingAddress || typeof billingAddress !== 'object' || Array.isArray(billingAddress)) return {};
+  const address = {};
+  ['address1', 'locality', 'administrativeArea', 'postalCode'].forEach((field) => {
+    const value = typeof billingAddress[field] === 'string' ? billingAddress[field].trim() : '';
+    if (value) address[field] = value;
+  });
+  const country = typeof billingAddress.country === 'string' ? billingAddress.country.trim().toUpperCase() : '';
+  if (/^[A-Z]{2}$/.test(country)) address.country = country;
+  return address;
+};
+
+const buildRequest = ({ paymentData, amount, referenceCode, firstName, lastName, email, phone, billingAddress }) => ({
   clientReferenceInformation: { code: String(referenceCode || `APPLE-${Date.now()}`).slice(0, 50) },
   processingInformation: {
     capture: true,
@@ -102,6 +114,8 @@ const buildRequest = ({ paymentData, amount, referenceCode, firstName, lastName,
       firstName: firstName || 'Customer',
       lastName: lastName || 'Customer',
       email: email || undefined,
+      phoneNumber: phone || undefined,
+      ...billingAddressFields(billingAddress),
     },
   },
 });

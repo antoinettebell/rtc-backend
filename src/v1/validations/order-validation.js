@@ -229,6 +229,13 @@ module.exports = {
       taxAmount: Joi.string().optional(),
       subTotal: Joi.string().optional(),
       amount: Joi.string().required(),
+      billingAddress: Joi.object({
+        address1: Joi.string().trim().max(200).optional(),
+        locality: Joi.string().trim().max(100).optional(),
+        administrativeArea: Joi.string().trim().max(100).optional(),
+        postalCode: Joi.string().trim().max(20).optional(),
+        country: Joi.string().trim().uppercase().length(2).optional(),
+      }).optional(),
       // applePayToken: Joi.string().optional(),
       // email: Joi.string(),
       // userId: Joi.string().optional(),

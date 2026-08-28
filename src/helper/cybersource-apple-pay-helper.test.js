@@ -60,31 +60,22 @@ const compatibilityObjectErrorSdk = {
       callback({
         status: 422,
         code: 'INVALID_REQUEST',
-        reason: 'MISSING_REQUIRED_FIELD',
+        reason: 'MISSING_FIELD',
         response: {
           status: 422,
           header: { 'x-request-id': 'provider-request-id' },
           text: JSON.stringify({
-            error: {
-              code: 'INVALID_REQUEST',
-              reason: 'MISSING_REQUIRED_FIELD',
-              message: 'The request is invalid',
-              field: 'paymentInformation.fluidData.value',
-              details: [{
-                code: 'INVALID_DATA',
-                message: 'Invalid payment data',
-                field: 'paymentInformation.fluidData.value',
-                reason: 'INVALID_DATA',
-              }],
-              _embedded: {
-                errors: [{
-                  code: 'MISSING_FIELD',
-                  message: 'A required field is missing',
-                  field: 'orderInformation.amountDetails.totalAmount',
-                  reason: 'MISSING_FIELD',
-                }],
-              },
-            },
+            id: 'provider-error-id',
+            submitTimeUtc: '2026-08-28T00:00:00Z',
+            status: 'INVALID_REQUEST',
+            reason: 'MISSING_FIELD',
+            message: 'Declined - The request is missing one or more fields',
+            details: [
+              { field: 'orderInformation.billTo.locality', reason: 'MISSING_FIELD' },
+              { field: 'orderInformation.billTo.address1', reason: 'MISSING_FIELD' },
+              { field: 'orderInformation.billTo.country', reason: 'MISSING_FIELD' },
+            ],
+            address1: 'billing-address-value-must-not-appear-in-diagnostics',
             paymentToken: 'must-not-appear-in-diagnostics',
           }),
         },
@@ -113,6 +104,34 @@ const restore = () => Object.entries(original).forEach(([key, value]) => {
 (async () => {
   try {
     const token = { version: 'EC_v1', data: 'test-token' };
+    const billingAddress = {
+      address1: '123 Test Street',
+      locality: 'Test City',
+      administrativeArea: 'NY',
+      postalCode: '10001',
+      country: 'us',
+    };
+    const requestWithBillingAddress = ApplePay.buildRequest({
+      paymentData: token,
+      amount: 3.43,
+      referenceCode: 'ticket-order-1',
+      firstName: 'Test',
+      lastName: 'Customer',
+      email: 'test@example.com',
+      phone: '5551234567',
+      billingAddress,
+    });
+    assert.deepStrictEqual(requestWithBillingAddress.orderInformation.billTo, {
+      firstName: 'Test',
+      lastName: 'Customer',
+      email: 'test@example.com',
+      phoneNumber: '5551234567',
+      address1: '123 Test Street',
+      locality: 'Test City',
+      administrativeArea: 'NY',
+      postalCode: '10001',
+      country: 'US',
+    });
     const result = await ApplePay.chargeApplePay({
       paymentData: token,
       amount: 3.43,
@@ -175,13 +194,13 @@ const restore = () => Object.entries(original).forEach(([key, value]) => {
     assert.doesNotMatch(JSON.stringify(diagnostic), /must-not-appear-in-diagnostics/);
 
     const compatibilityDiagnostic = diagnostics.find((details) => (
-      details.callback_diagnostics?.callback_error_fields?.reason === 'MISSING_REQUIRED_FIELD'
+      details.callback_diagnostics?.callback_error_fields?.reason === 'MISSING_FIELD'
     ));
     assert(compatibilityDiagnostic, 'expected safe diagnostics for SDK compatibility object');
     assert.strictEqual(compatibilityDiagnostic.callback_diagnostics.callback_error_type, 'object');
     assert.deepStrictEqual(
       compatibilityDiagnostic.callback_diagnostics.callback_error_fields.response_body_keys.sort(),
-      ['error']
+      ['address1', 'details', 'id', 'message', 'reason', 'status', 'submitTimeUtc']
     );
     assert.strictEqual(
       compatibilityDiagnostic.callback_diagnostics.callback_error_fields.v_c_correlation_id,
@@ -194,22 +213,16 @@ const restore = () => Object.entries(original).forEach(([key, value]) => {
     assert.deepStrictEqual(
       compatibilityDiagnostic.callback_diagnostics.callback_error_fields.validation,
       {
-        code: 'INVALID_REQUEST',
-        message: 'The request is invalid',
-        field: 'paymentInformation.fluidData.value',
-        reason: 'MISSING_REQUIRED_FIELD',
-        details: [{
-          code: 'INVALID_DATA',
-          message: 'Invalid payment data',
-          field: 'paymentInformation.fluidData.value',
-          reason: 'INVALID_DATA',
-        }],
-        embedded_errors: [{
-          code: 'MISSING_FIELD',
-          message: 'A required field is missing',
-          field: 'orderInformation.amountDetails.totalAmount',
-          reason: 'MISSING_FIELD',
-        }],
+        code: null,
+        message: 'Declined - The request is missing one or more fields',
+        field: null,
+        reason: 'MISSING_FIELD',
+        details: [
+          { field: 'orderInformation.billTo.locality', reason: 'MISSING_FIELD' },
+          { field: 'orderInformation.billTo.address1', reason: 'MISSING_FIELD' },
+          { field: 'orderInformation.billTo.country', reason: 'MISSING_FIELD' },
+        ],
+        embedded_errors: [],
       }
     );
     assert.deepStrictEqual(
@@ -221,6 +234,7 @@ const restore = () => Object.entries(original).forEach(([key, value]) => {
       true
     );
     assert.doesNotMatch(JSON.stringify(compatibilityDiagnostic), /must-not-appear-in-diagnostics/);
+    assert.doesNotMatch(JSON.stringify(compatibilityDiagnostic), /billing-address-value-must-not-appear/);
     console.log('CyberSource Apple Pay helper tests passed');
   } finally {
     restore();
