@@ -26,6 +26,10 @@ const { buildPublicReviewUrl } = require('../../helper/review-url-helper');
 const PaymentHelper = require('../../helper/payment-helper');
 const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
 const CyberSourceApplePayHelper = require('../../helper/cybersource-apple-pay-helper');
+const {
+  getApplePayCheckoutRequestShape,
+  isApplePayCheckout,
+} = require('../../helper/apple-pay-checkout-diagnostics');
 const MailHelper = require('../../helper/mail-helper');
 const TaxHelper = require('../../helper/tax-helper');
 const {
@@ -2326,8 +2330,20 @@ exports.paymentCheckout = async (req, res, next) => {
       },
       user,
     } = req;
+    const isApplePay = isApplePayCheckout(req.body);
+
+    if (isApplePay) {
+      console.info('[ApplePayCheckout] request_shape',
+        getApplePayCheckoutRequestShape(req.body));
+    }
 
     if (!amount || !user) {
+      if (isApplePay) {
+        console.warn('[ApplePayCheckout] rejected_before_cybersource', {
+          reason: 'AMOUNT_OR_USER_MISSING',
+          ...getApplePayCheckoutRequestShape(req.body),
+        });
+      }
       return res.error(new Error('amount and user are required'), 400);
     }
 
@@ -2353,6 +2369,12 @@ exports.paymentCheckout = async (req, res, next) => {
     // console.log("applePayToken",typeof(applePayToken));
 
     if (!opaqueToken) {
+      if (isApplePay) {
+        console.warn('[ApplePayCheckout] rejected_before_cybersource', {
+          reason: 'PAYMENT_TOKEN_MISSING',
+          ...getApplePayCheckoutRequestShape(req.body),
+        });
+      }
       return res.error(new Error('Payment token missing'), 400);
     }
     if (paymentMethod === 'TAP_TO_PAY') {
@@ -2448,6 +2470,13 @@ exports.paymentCheckout = async (req, res, next) => {
 
     // PAYMENT FAILED
     if (!chargeResp.success) {
+      if (isApplePay) {
+        console.warn('[ApplePayCheckout] rejected_after_cybersource', {
+          reason: chargeResp?.code || 'CYBERSOURCE_APPLE_PAY_FAILED',
+          correlation_id: chargeResp?.correlationId || null,
+          ...getApplePayCheckoutRequestShape(req.body),
+        });
+      }
       const failedData = {
         userId,
         transactionId:

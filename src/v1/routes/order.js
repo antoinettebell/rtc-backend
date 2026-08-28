@@ -6,6 +6,28 @@ const router = express.Router();
 const { OrderController: Controller } = require('../controllers');
 const { validate, OrderValidation: Validation } = require('../validations');
 const { allowedTo } = require('../../middleware/allow-route');
+const {
+  getApplePayCheckoutRequestShape,
+  isApplePayCheckout,
+} = require('../../helper/apple-pay-checkout-diagnostics');
+
+const logApplePayCheckoutValidationRejection = (err, req, res, next) => {
+  if (isApplePayCheckout(req.body)) {
+    const validationFields = Array.isArray(err?.details?.body)
+      ? err.details.body
+          .map((detail) => detail?.path?.join('.'))
+          .filter(Boolean)
+      : [];
+
+    console.warn('[ApplePayCheckout] rejected_before_cybersource', {
+      reason: 'REQUEST_VALIDATION_FAILED',
+      validation_fields: validationFields,
+      ...getApplePayCheckoutRequestShape(req.body),
+    });
+  }
+
+  return next(err);
+};
 
 /** [GET] /api/v1/order */
 router.get('/', validate(Validation.list), Controller.list);
@@ -49,6 +71,7 @@ router.post(
   '/payment-checkout',
   allowedTo(['CUSTOMER', 'VENDOR', 'EMPLOYEE']),
   validate(Validation.checkout),
+  logApplePayCheckoutValidationRejection,
   Controller.paymentCheckout
 );
 
