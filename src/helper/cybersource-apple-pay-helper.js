@@ -1,4 +1,5 @@
 const CyberSource = require('cybersource-rest-client');
+const crypto = require('crypto');
 
 const APPLE_PAY_DESCRIPTOR = 'RklEPUNPTU1PTi5BUFBMRS5JTkFQUC5QQVlNRU5U';
 const SUCCESS_STATUSES = new Set([
@@ -105,23 +106,81 @@ const createPayment = (request, { sdk = CyberSource } = {}) => {
   });
 };
 
-const providerFailure = (error) => ({
+const newCorrelationId = () => crypto.randomUUID();
+
+const safeHeaderValue = (headers, names) => {
+  if (!headers || typeof headers !== 'object') return null;
+  const matchedName = Object.keys(headers).find((headerName) =>
+    names.includes(String(headerName).toLowerCase())
+  );
+  const value = matchedName ? headers[matchedName] : null;
+  return value === undefined || value === null ? null : String(value);
+};
+
+const safeProviderReason = (error) => {
+  const body = error?.response?.body || error?.response?.data || {};
+  const value = body?.reason || body?.code || error?.code || error?.status;
+  return value === undefined || value === null ? 'CYBERSOURCE_APPLE_PAY_FAILED' : String(value);
+};
+
+const logProviderFailure = ({ correlationId, error, status, reason }) => {
+  const headers = error?.response?.headers || error?.headers;
+  // Do not log the Apple Pay token, credentials, request body, or full provider response.
+  console.error('[CyberSourceApplePay] payment_failed', {
+    correlation_id: correlationId,
+    status: status || error?.response?.status || error?.status || null,
+    reason: reason || safeProviderReason(error),
+    cybersource_request_id: safeHeaderValue(headers, [
+      'v-c-correlation-id',
+      'x-correlation-id',
+      'x-request-id',
+      'request-id',
+    ]),
+  });
+};
+
+const providerFailure = (error, correlationId = newCorrelationId()) => {
+  const reason = safeProviderReason(error);
+  logProviderFailure({ correlationId, error, reason });
+  return {
   success: false,
   env: isSandboxEnvironment() ? 'sandbox' : 'production',
-  code: String(error?.response?.body?.reason || error?.status || 'CYBERSOURCE_APPLE_PAY_FAILED'),
+  code: reason,
   message: 'Apple Pay could not be approved. Please try another payment method.',
   transactionId: null,
   authCode: null,
   invoiceNumber: null,
   accountNumber: null,
   accountType: 'APPLE_PAY',
-});
+  correlationId,
+  };
+};
 
 const chargeApplePay = async (details, options = {}) => {
   try {
     const response = await createPayment(buildRequest(details), options);
     const status = String(response.status || '').toUpperCase();
     const success = Boolean(response.id) && SUCCESS_STATUSES.has(status);
+    if (!success) {
+      const correlationId = newCorrelationId();
+      logProviderFailure({
+        correlationId,
+        status,
+        reason: status || 'CYBERSOURCE_APPLE_PAY_FAILED',
+      });
+      return {
+        success: false,
+        env: isSandboxEnvironment() ? 'sandbox' : 'production',
+        code: status || 'CYBERSOURCE_APPLE_PAY_FAILED',
+        message: 'Apple Pay could not be approved. Please try another payment method.',
+        transactionId: response.id || null,
+        authCode: null,
+        invoiceNumber: null,
+        accountNumber: null,
+        accountType: 'APPLE_PAY',
+        correlationId,
+      };
+    }
     return {
       success,
       env: isSandboxEnvironment() ? 'sandbox' : 'production',
