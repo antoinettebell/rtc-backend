@@ -29,6 +29,7 @@ const event = {
 
 let createdOrderPayload;
 let chargedPayment;
+let chargedApplePay;
 let smsPayload;
 let emailDelivery;
 let publicEventEligible = true;
@@ -89,6 +90,12 @@ Module._load = (request, parent, isMain) => {
       chargePaymentUnified: async (payload) => {
         chargedPayment = payload;
         return { success: true, transactionId: 'transaction-1' };
+      },
+    };
+    if (request === '../../helper/cybersource-apple-pay-helper') return {
+      chargeApplePay: async (payload) => {
+        chargedApplePay = payload;
+        return { success: true, transactionId: 'cybs-transaction-1' };
       },
     };
     if (request === '../../helper/tax-helper') return {
@@ -197,8 +204,8 @@ const requestBody = {
     10,
     'in-app ticket proceeds must not deduct external payout fees or collected tax'
   );
-  assert.equal(chargedPayment.userId, 'guest-order-1', 'processor reference uses the durable ticket order');
-  assert.equal(chargedPayment.email, 'guest@example.com');
+  assert.equal(chargedApplePay.referenceCode, 'guest-order-1', 'processor reference uses the durable ticket order');
+  assert.equal(chargedApplePay.email, 'guest@example.com');
   assert.equal(smsPayload.to, '+15555550123');
   assert.equal(emailDelivery.recipient, 'guest@example.com');
   assert.equal(emailDelivery.subject, 'Your Tickets for Public Festival');

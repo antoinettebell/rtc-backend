@@ -30,6 +30,7 @@ const {
 } = require('../../helper/aws');
 const PaymentHelper = require('../../helper/payment-helper');
 const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
+const CyberSourceApplePayHelper = require('../../helper/cybersource-apple-pay-helper');
 const DocuSignHelper = require('../../helper/docusign-helper');
 const {
   getFoodVendorDisplayIdsByProfileId,
@@ -9573,18 +9574,27 @@ exports.checkoutPayment = async (req, res, next) => {
 
     let chargeResp;
     try {
-      chargeResp = await PaymentHelper.chargePaymentUnified({
-        opaqueToken,
-        amount: marketplacePayment.total_amount,
-        paymentMethod,
-        dataDescriptor: opaquePaymentData.dataDescriptor,
-        firstName: req.user.firstName || 'Marketplace',
-        lastName: req.user.lastName || 'Payer',
-        email: req.user.email,
-        subTotal: marketplacePayment.total_amount,
-        taxAmount: 0,
-        userId: req.user._id,
-      });
+      chargeResp = paymentMethod === 'APPLE_PAY'
+        ? await CyberSourceApplePayHelper.chargeApplePay({
+            paymentData: req.body.payment_data,
+            amount: marketplacePayment.total_amount,
+            referenceCode: marketplacePayment.payment_id,
+            firstName: req.user.firstName || 'Marketplace',
+            lastName: req.user.lastName || 'Payer',
+            email: req.user.email,
+          })
+        : await PaymentHelper.chargePaymentUnified({
+            opaqueToken,
+            amount: marketplacePayment.total_amount,
+            paymentMethod,
+            dataDescriptor: opaquePaymentData.dataDescriptor,
+            firstName: req.user.firstName || 'Marketplace',
+            lastName: req.user.lastName || 'Payer',
+            email: req.user.email,
+            subTotal: marketplacePayment.total_amount,
+            taxAmount: 0,
+            userId: req.user._id,
+          });
     } catch (chargeError) {
       marketplacePayment = await MarketplacePaymentService.getModel().findOneAndUpdate(
         { payment_id: marketplacePayment.payment_id, payment_status: 'PROCESSING' },

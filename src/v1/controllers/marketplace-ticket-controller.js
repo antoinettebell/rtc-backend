@@ -8,6 +8,7 @@ const {
 } = require('../../models');
 const TicketService = require('../services/marketplace-ticket-service');
 const PaymentHelper = require('../../helper/payment-helper');
+const CyberSourceApplePayHelper = require('../../helper/cybersource-apple-pay-helper');
 const TaxHelper = require('../../helper/tax-helper');
 const {
   calculateTicketAmounts,
@@ -328,17 +329,26 @@ exports.checkout = async (req, res, next) => {
       status: 'PAYMENT_PROCESSING',
     });
 
-    const charge = await PaymentHelper.chargePaymentUnified({
-      opaqueToken,
-      amount: totalAmount,
-      paymentMethod: req.body.payment_method,
-      firstName: req.user.firstName || 'Ticket',
-      lastName: req.user.lastName || 'Customer',
-      email: req.user.email,
-      subTotal: money(ticketSubtotal + customerProcessingFee),
-      taxAmount: salesTax,
-      userId: req.user._id || order.ticket_order_id,
-    });
+    const charge = req.body.payment_method === 'APPLE_PAY'
+      ? await CyberSourceApplePayHelper.chargeApplePay({
+          paymentData: req.body.payment_data,
+          amount: totalAmount,
+          referenceCode: order.ticket_order_id,
+          firstName: req.user.firstName || 'Ticket',
+          lastName: req.user.lastName || 'Customer',
+          email: req.user.email,
+        })
+      : await PaymentHelper.chargePaymentUnified({
+          opaqueToken,
+          amount: totalAmount,
+          paymentMethod: req.body.payment_method,
+          firstName: req.user.firstName || 'Ticket',
+          lastName: req.user.lastName || 'Customer',
+          email: req.user.email,
+          subTotal: money(ticketSubtotal + customerProcessingFee),
+          taxAmount: salesTax,
+          userId: req.user._id || order.ticket_order_id,
+        });
     if (!charge.success) {
       order.status = 'PAYMENT_FAILED';
       order.failure_reason = charge.message || 'Payment failed';

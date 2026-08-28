@@ -25,6 +25,7 @@ const {
 const { buildPublicReviewUrl } = require('../../helper/review-url-helper');
 const PaymentHelper = require('../../helper/payment-helper');
 const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
+const CyberSourceApplePayHelper = require('../../helper/cybersource-apple-pay-helper');
 const MailHelper = require('../../helper/mail-helper');
 const TaxHelper = require('../../helper/tax-helper');
 const {
@@ -2394,18 +2395,27 @@ exports.paymentCheckout = async (req, res, next) => {
       );
     }
     //  CHARGE PAYMENT
-    const chargeResp = await PaymentHelper.chargePaymentUnified({
-      opaqueToken,
-      amount,
-      paymentMethod,
-      dataDescriptor: opaquePaymentData.dataDescriptor,
-      firstName,
-      lastName,
-      email,
-      taxAmount,
-      subTotal,
-      userId,
-    });
+    const chargeResp = paymentMethod === 'APPLE_PAY'
+      ? await CyberSourceApplePayHelper.chargeApplePay({
+          paymentData,
+          amount,
+          referenceCode: orderNumber || `order-${userId}`,
+          firstName,
+          lastName,
+          email,
+        })
+      : await PaymentHelper.chargePaymentUnified({
+          opaqueToken,
+          amount,
+          paymentMethod,
+          dataDescriptor: opaquePaymentData.dataDescriptor,
+          firstName,
+          lastName,
+          email,
+          taxAmount,
+          subTotal,
+          userId,
+        });
 
     //  LOG PAYMENT ATTEMPT
     await PaymentsLogService.create({
