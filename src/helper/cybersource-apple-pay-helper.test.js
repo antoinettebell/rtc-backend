@@ -160,7 +160,11 @@ const restore = () => Object.entries(original).forEach(([key, value]) => {
     }
     const diagnostics = loggedFailures
       .filter(([tag]) => tag === '[CyberSourceApplePay] payment_failed')
-      .map(([, details]) => details);
+      .map(([, details]) => {
+        assert.strictEqual(typeof details, 'string');
+        assert.doesNotMatch(details, /\[Object\]/);
+        return JSON.parse(details);
+      });
     const diagnostic = diagnostics.find((details) => details.sdk_failure_class === 'TypeError');
     assert.strictEqual(diagnostic.sdk_failure_class, 'TypeError');
     assert.match(diagnostic.sdk_failure_message, /enableLog/);

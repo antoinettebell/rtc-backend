@@ -326,7 +326,7 @@ const logProviderFailure = ({ correlationId, error, status, reason }) => {
   const headers = error?.response?.headers || error?.response?.header || error?.headers || error?.header;
   const isTypeError = error?.name === 'TypeError';
   // Do not log the Apple Pay token, credentials, request body, or full provider response.
-  console.error('[CyberSourceApplePay] payment_failed', {
+  console.error('[CyberSourceApplePay] payment_failed', JSON.stringify({
     correlation_id: correlationId,
     status: status || error?.response?.status || error?.status || null,
     reason: reason || safeProviderReason(error),
@@ -342,7 +342,7 @@ const logProviderFailure = ({ correlationId, error, status, reason }) => {
     sdk_failure_stack: isTypeError ? sanitizedStack(error) : null,
     local_failure_location: error?.cybersourceApplePayLocalFailureLocation || null,
     callback_diagnostics: error?.cybersourceApplePayCallbackDiagnostics || null,
-  });
+  }, null, 2));
 };
 
 const providerFailure = (error, correlationId = newCorrelationId()) => {
