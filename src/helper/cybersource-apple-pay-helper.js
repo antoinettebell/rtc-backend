@@ -123,6 +123,56 @@ const sanitizeDiagnosticText = (value) => String(value || '')
   .replace(/eyJ[a-zA-Z0-9_-]+(?:\.[a-zA-Z0-9_-]+){1,2}/g, '[REDACTED_JWT]')
   .slice(0, 1200);
 
+const safeObjectKeys = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  return Object.keys(value).slice(0, 40);
+};
+
+const safeSerializedBodyKeys = (value) => {
+  if (!value) return [];
+  if (typeof value === 'object') return safeObjectKeys(value);
+  try {
+    return safeObjectKeys(JSON.parse(String(value)));
+  } catch (_error) {
+    return [];
+  }
+};
+
+const safePrimitiveDiagnosticValue = (value) => {
+  if (value === undefined || value === null) return null;
+  return sanitizeDiagnosticText(value);
+};
+
+const callbackFailureDiagnostics = ({ error, data, response }) => {
+  const errorResponse = error?.response;
+  const errorHeaders = errorResponse?.headers || errorResponse?.header || error?.headers || error?.header;
+  const responseHeaders = response?.headers || response?.header;
+  const config = getConfig();
+  return {
+    callback_error_type: typeof error,
+    callback_error_keys: safeObjectKeys(error),
+    callback_error_fields: {
+      status: safePrimitiveDiagnosticValue(error?.status),
+      statusCode: safePrimitiveDiagnosticValue(error?.statusCode),
+      code: safePrimitiveDiagnosticValue(error?.code),
+      reason: safePrimitiveDiagnosticValue(error?.reason),
+      response_body_keys: safeSerializedBodyKeys(
+        errorResponse?.body || errorResponse?.data || errorResponse?.text
+      ),
+      response_header_keys: safeObjectKeys(errorHeaders),
+    },
+    callback_data_keys: safeObjectKeys(data),
+    callback_response_status: safePrimitiveDiagnosticValue(response?.status || response?.statusCode),
+    callback_response_header_keys: safeObjectKeys(responseHeaders),
+    configured_environment: isSandboxEnvironment() ? 'sandbox' : 'production',
+    configured_credentials_present: {
+      merchant_id: Boolean(config.merchantID),
+      key_id: Boolean(config.merchantKeyId),
+      shared_secret: Boolean(config.merchantsecretKey),
+    },
+  };
+};
+
 const sanitizedStack = (error) => {
   if (!error?.stack) return null;
   return String(error.stack)
@@ -134,7 +184,9 @@ const sanitizedStack = (error) => {
 };
 
 const withLocalFailureLocation = (error, location) => {
-  const target = error instanceof Error ? error : new Error(String(error || 'Unknown SDK failure'));
+  const target = error instanceof Error
+    ? error
+    : new Error(error?.message || 'CyberSource SDK callback returned a non-Error failure');
   if (!target.cybersourceApplePayLocalFailureLocation) {
     target.cybersourceApplePayLocalFailureLocation = location;
   }
@@ -158,10 +210,19 @@ const createPayment = (request, { sdk = CyberSource, correlationId = null } = {}
       api.createPayment(requestBody, (error, data, response) => {
         const metadata = responseMetadata(response);
         if (error) {
+          const wrappedError = withLocalFailureLocation(
+            error,
+            'createPayment: PaymentsApi.createPayment callback'
+          );
+          Object.defineProperty(wrappedError, 'cybersourceApplePayCallbackDiagnostics', {
+            value: callbackFailureDiagnostics({ error, data, response }),
+            enumerable: false,
+            configurable: true,
+          });
           // The SDK supplies the HTTP response as the third callback argument.
           // Preserve only its metadata for safe downstream diagnostics.
-          if (metadata && !error.response) error.response = metadata;
-          return reject(withLocalFailureLocation(error, 'createPayment: PaymentsApi.createPayment callback'));
+          if (metadata && !wrappedError.response) wrappedError.response = metadata;
+          return reject(wrappedError);
         }
         return resolve({ data: data || {}, metadata });
       });
@@ -219,6 +280,7 @@ const logProviderFailure = ({ correlationId, error, status, reason }) => {
     sdk_failure_message: isTypeError ? sanitizeDiagnosticText(error.message) : null,
     sdk_failure_stack: isTypeError ? sanitizedStack(error) : null,
     local_failure_location: error?.cybersourceApplePayLocalFailureLocation || null,
+    callback_diagnostics: error?.cybersourceApplePayCallbackDiagnostics || null,
   });
 };
 

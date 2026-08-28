@@ -53,6 +53,31 @@ const responseErrorSdk = {
   },
 };
 
+const compatibilityObjectErrorSdk = {
+  CreatePaymentRequest: { constructFromObject: (value) => value },
+  PaymentsApi: class PaymentsApi {
+    createPayment(_request, callback) {
+      callback({
+        status: 422,
+        code: 'INVALID_REQUEST',
+        reason: 'MISSING_REQUIRED_FIELD',
+        response: {
+          status: 422,
+          header: { 'x-request-id': 'provider-request-id' },
+          text: JSON.stringify({
+            reason: 'MISSING_REQUIRED_FIELD',
+            message: 'The request is invalid',
+            paymentToken: 'must-not-appear-in-diagnostics',
+          }),
+        },
+      }, null, {
+        status: 422,
+        header: { 'x-request-id': 'provider-request-id' },
+      });
+    }
+  },
+};
+
 const constructorTypeErrorSdk = {
   CreatePaymentRequest: { constructFromObject: (value) => value },
   PaymentsApi: class PaymentsApi {
@@ -106,10 +131,19 @@ const restore = () => Object.entries(original).forEach(([key, value]) => {
         amount: 1,
       }, { sdk: constructorTypeErrorSdk });
       assert.strictEqual(constructorTypeError.success, false);
+
+      const compatibilityObjectError = await ApplePay.chargeApplePay({
+        paymentData: { data: 'must-not-appear-in-diagnostics' },
+        amount: 1,
+      }, { sdk: compatibilityObjectErrorSdk });
+      assert.strictEqual(compatibilityObjectError.success, false);
     } finally {
       console.error = originalConsoleError;
     }
-    const diagnostic = loggedFailures.find(([tag]) => tag === '[CyberSourceApplePay] payment_failed')[1];
+    const diagnostics = loggedFailures
+      .filter(([tag]) => tag === '[CyberSourceApplePay] payment_failed')
+      .map(([, details]) => details);
+    const diagnostic = diagnostics.find((details) => details.sdk_failure_class === 'TypeError');
     assert.strictEqual(diagnostic.sdk_failure_class, 'TypeError');
     assert.match(diagnostic.sdk_failure_message, /enableLog/);
     assert.strictEqual(
@@ -117,6 +151,25 @@ const restore = () => Object.entries(original).forEach(([key, value]) => {
       'createPayment: PaymentsApi constructor or request model construction'
     );
     assert.doesNotMatch(JSON.stringify(diagnostic), /must-not-appear-in-diagnostics/);
+
+    const compatibilityDiagnostic = diagnostics.find((details) => (
+      details.callback_diagnostics?.callback_error_fields?.reason === 'MISSING_REQUIRED_FIELD'
+    ));
+    assert(compatibilityDiagnostic, 'expected safe diagnostics for SDK compatibility object');
+    assert.strictEqual(compatibilityDiagnostic.callback_diagnostics.callback_error_type, 'object');
+    assert.deepStrictEqual(
+      compatibilityDiagnostic.callback_diagnostics.callback_error_fields.response_body_keys.sort(),
+      ['message', 'paymentToken', 'reason']
+    );
+    assert.deepStrictEqual(
+      compatibilityDiagnostic.callback_diagnostics.callback_response_header_keys,
+      ['x-request-id']
+    );
+    assert.strictEqual(
+      compatibilityDiagnostic.callback_diagnostics.configured_credentials_present.shared_secret,
+      true
+    );
+    assert.doesNotMatch(JSON.stringify(compatibilityDiagnostic), /must-not-appear-in-diagnostics/);
     console.log('CyberSource Apple Pay helper tests passed');
   } finally {
     restore();
