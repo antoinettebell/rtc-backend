@@ -7,8 +7,9 @@ const {
   UserModel,
 } = require('../../models');
 const TicketService = require('../services/marketplace-ticket-service');
-const PaymentHelper = require('../../helper/payment-helper');
 const CyberSourceApplePayHelper = require('../../helper/cybersource-apple-pay-helper');
+const CyberSourceGooglePayHelper = require('../../helper/cybersource-google-pay-helper');
+const CyberSourceRefundHelper = require('../../helper/cybersource-refund-helper');
 const TaxHelper = require('../../helper/tax-helper');
 const {
   calculateTicketAmounts,
@@ -16,7 +17,6 @@ const {
   getEntityUseCode,
   cancellationDeadline,
   assertInventoryAvailable,
-  encodeWalletPaymentToken,
 } = require('../../helper/event-ticket-helper');
 const {
   hashTicketToken,
@@ -305,7 +305,13 @@ exports.checkout = async (req, res, next) => {
       entityUseCode,
       transactionCode,
     } = quote;
-    const opaqueToken = encodeWalletPaymentToken(req.body.payment_data);
+    const walletBillingAddress = {
+      address1: req.body.billing_address?.line1,
+      locality: req.body.billing_address?.city,
+      administrativeArea: req.body.billing_address?.region,
+      postalCode: req.body.billing_address?.postalCode,
+      country: req.body.billing_address?.country,
+    };
 
     order = await MarketplaceTicketOrderModel.create({
       event_id: event.event_id,
@@ -337,17 +343,18 @@ exports.checkout = async (req, res, next) => {
           firstName: req.user.firstName || 'Ticket',
           lastName: req.user.lastName || 'Customer',
           email: req.user.email,
+          phone: req.user.mobileNumber,
+          billingAddress: walletBillingAddress,
         })
-      : await PaymentHelper.chargePaymentUnified({
-          opaqueToken,
+      : await CyberSourceGooglePayHelper.chargeGooglePay({
+          paymentData: req.body.payment_data,
           amount: totalAmount,
-          paymentMethod: req.body.payment_method,
+          referenceCode: order.ticket_order_id,
           firstName: req.user.firstName || 'Ticket',
           lastName: req.user.lastName || 'Customer',
           email: req.user.email,
-          subTotal: money(ticketSubtotal + customerProcessingFee),
-          taxAmount: salesTax,
-          userId: req.user._id || order.ticket_order_id,
+          phone: req.user.mobileNumber,
+          billingAddress: walletBillingAddress,
         });
     if (!charge.success) {
       order.status = 'PAYMENT_FAILED';
@@ -782,9 +789,10 @@ exports.cancelEventAndRefundTickets = async (req, res, next) => {
       );
       if (!order) continue;
 
-      const refund = await PaymentHelper.processRefund({
+      const refund = await CyberSourceRefundHelper.processRefund({
         transactionId: order.gateway_transaction_id,
         amount: order.total_amount,
+        paymentMethod: order.payment_method,
       });
       if (refund.success) {
         order.status = 'REFUNDED';

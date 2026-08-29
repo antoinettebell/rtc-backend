@@ -165,7 +165,7 @@ const loadController = (state) => {
         canUseTapToPay: () => true,
       };
       if (request === '../services/vendor-compliance-service' || request === '../services/operational-compliance-form-service') return {};
-      if (request === '../../helper/aws' || request === '../../helper/payment-helper' || request === '../../helper/cybersource-payment-helper' || request === '../../helper/docusign-helper') return {};
+      if (request === '../../helper/aws' || request === '../../helper/cybersource-payment-helper' || request === '../../helper/docusign-helper') return {};
       if (request === '../../helper/marketplace-agreement-email-attachments') return { buildAgreementEmailAttachments: async () => [], excludeAgreementDocuments: (items) => items };
       if (request === '../../helper/marketplace-vendor-agreement-reconciliation' || request === '../../helper/marketplace-agreement-document-verification' || request === '../../helper/marketplace-agreement-vendor-context') return {};
       if (request === '../../helper/marketplace-coordinator-details-email') return {};

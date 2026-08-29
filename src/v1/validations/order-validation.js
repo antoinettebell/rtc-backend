@@ -223,7 +223,7 @@ module.exports = {
         )
         .required(),
       paymentMethod: Joi.string()
-        .valid('APPLE_PAY', 'GOOGLE_PAY', 'CARD', 'TAP_TO_PAY')
+        .valid('APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY')
         .default('APPLE_PAY'),
 
       taxAmount: Joi.string().optional(),
@@ -235,6 +235,10 @@ module.exports = {
         administrativeArea: Joi.string().trim().max(100).optional(),
         postalCode: Joi.string().trim().max(20).optional(),
         country: Joi.string().trim().uppercase().length(2).optional(),
+        firstName: Joi.string().trim().max(100).optional(),
+        lastName: Joi.string().trim().max(100).optional(),
+        email: Joi.string().trim().email().optional(),
+        phone: Joi.string().trim().max(40).optional(),
       }).optional(),
       // applePayToken: Joi.string().optional(),
       // email: Joi.string(),

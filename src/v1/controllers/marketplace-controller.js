@@ -28,9 +28,10 @@ const {
   addObjectWithKey,
   removeObject,
 } = require('../../helper/aws');
-const PaymentHelper = require('../../helper/payment-helper');
 const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
 const CyberSourceApplePayHelper = require('../../helper/cybersource-apple-pay-helper');
+const CyberSourceGooglePayHelper = require('../../helper/cybersource-google-pay-helper');
+const CyberSourceRefundHelper = require('../../helper/cybersource-refund-helper');
 const DocuSignHelper = require('../../helper/docusign-helper');
 const {
   getFoodVendorDisplayIdsByProfileId,
@@ -7713,7 +7714,7 @@ const refundPaidVendorFeePaymentForRevocation = async ({ payment, actorUserId })
   refundPaidMarketplaceVendorFee({
     payment,
     actorUserId,
-    processRefund: PaymentHelper.processRefund.bind(PaymentHelper),
+    processRefund: CyberSourceRefundHelper.processRefund,
     claimRefund: ({ paymentId, actorUserId: actorId }) =>
       MarketplacePaymentService.getModel().findOneAndUpdate(
         {
@@ -9554,17 +9555,7 @@ exports.checkoutPayment = async (req, res, next) => {
       );
     }
 
-    const opaquePaymentData = normalizeOpaquePaymentData(req.body.payment_data);
-    const opaqueToken =
-      paymentMethod === 'APPLE_PAY'
-        ? Buffer.from(JSON.stringify(req.body.payment_data)).toString('base64')
-        : Buffer.from(
-            typeof req.body.payment_data === 'string'
-              ? req.body.payment_data
-              : JSON.stringify(req.body.payment_data)
-          ).toString('base64');
-
-    if (!opaqueToken) {
+    if (!req.body.payment_data) {
       await MarketplacePaymentService.getModel().updateOne(
         { payment_id: marketplacePayment.payment_id, payment_status: 'PROCESSING' },
         { $set: { payment_status: 'FAILED' } }
@@ -9582,18 +9573,18 @@ exports.checkoutPayment = async (req, res, next) => {
             firstName: req.user.firstName || 'Marketplace',
             lastName: req.user.lastName || 'Payer',
             email: req.user.email,
+            phone: req.user.mobileNumber,
+            billingAddress: req.body.billing_address,
           })
-        : await PaymentHelper.chargePaymentUnified({
-            opaqueToken,
+        : await CyberSourceGooglePayHelper.chargeGooglePay({
+            paymentData: req.body.payment_data,
             amount: marketplacePayment.total_amount,
-            paymentMethod,
-            dataDescriptor: opaquePaymentData.dataDescriptor,
-            firstName: req.user.firstName || 'Marketplace',
-            lastName: req.user.lastName || 'Payer',
-            email: req.user.email,
-            subTotal: marketplacePayment.total_amount,
-            taxAmount: 0,
-            userId: req.user._id,
+            referenceCode: marketplacePayment.payment_id,
+            firstName: req.body.billing_address?.firstName || req.user.firstName || 'Marketplace',
+            lastName: req.body.billing_address?.lastName || req.user.lastName || 'Payer',
+            email: req.body.billing_address?.email || req.user.email,
+            phone: req.body.billing_address?.phone || req.user.mobileNumber,
+            billingAddress: req.body.billing_address,
           });
     } catch (chargeError) {
       marketplacePayment = await MarketplacePaymentService.getModel().findOneAndUpdate(

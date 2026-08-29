@@ -15,7 +15,7 @@ const {
 } = require('../../models');
 const { addObjectWithKey } = require('../../helper/aws');
 const { docusign } = require('../../config');
-const PaymentHelper = require('../../helper/payment-helper');
+const CyberSourceRefundHelper = require('../../helper/cybersource-refund-helper');
 const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
 const {
   findOrCreateEventVendorApplication,
@@ -945,7 +945,7 @@ const refundPaidEventVendorFeeForRevocation = async ({ payment, actorUserId }) =
   refundPaidMarketplaceVendorFee({
     payment,
     actorUserId,
-    processRefund: PaymentHelper.processRefund.bind(PaymentHelper),
+    processRefund: CyberSourceRefundHelper.processRefund,
     claimRefund: ({ paymentId, actorUserId: actorId }) => MarketplacePaymentModel.findOneAndUpdate(
       {
         payment_id: paymentId,

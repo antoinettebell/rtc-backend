@@ -23,9 +23,10 @@ const {
   sendWalkUpRefundSms,
 } = require('../../helper/walk-up-refund-sms-helper');
 const { buildPublicReviewUrl } = require('../../helper/review-url-helper');
-const PaymentHelper = require('../../helper/payment-helper');
 const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
 const CyberSourceApplePayHelper = require('../../helper/cybersource-apple-pay-helper');
+const CyberSourceGooglePayHelper = require('../../helper/cybersource-google-pay-helper');
+const CyberSourceRefundHelper = require('../../helper/cybersource-refund-helper');
 const {
   getApplePayCheckoutRequestShape,
   isApplePayCheckout,
@@ -2348,16 +2349,6 @@ exports.paymentCheckout = async (req, res, next) => {
       return res.error(new Error('amount and user are required'), 400);
     }
 
-    const opaquePaymentData = normalizeOpaquePaymentData(paymentData);
-    const base64String =
-      paymentMethod === 'CARD' || paymentMethod === 'TAP_TO_PAY'
-        ? opaquePaymentData.opaqueToken
-        : Buffer.from(
-            paymentMethod === 'APPLE_PAY'
-              ? JSON.stringify(paymentData)
-              : paymentData
-          ).toString('base64');
-
     const userId =
       user.userType === 'EMPLOYEE' ? user.vendor_user_id || user._id : user._id;
     const email = user.email;
@@ -2365,7 +2356,7 @@ exports.paymentCheckout = async (req, res, next) => {
     const lastName = user.lastName || '';
 
     // const opaqueToken = applePayToken || googlePayToken;
-    const opaqueToken = base64String;
+    const opaqueToken = paymentData;
     // console.log(typeof(base64String));
     // console.log("applePayToken",typeof(applePayToken));
 
@@ -2417,6 +2408,9 @@ exports.paymentCheckout = async (req, res, next) => {
         'Payment checkout was successful'
       );
     }
+    if (!['APPLE_PAY', 'GOOGLE_PAY'].includes(paymentMethod)) {
+      return res.error(new Error('Direct payment checkout supports wallet payments only.'), 400);
+    }
     //  CHARGE PAYMENT
     const chargeResp = paymentMethod === 'APPLE_PAY'
       ? await CyberSourceApplePayHelper.chargeApplePay({
@@ -2429,17 +2423,15 @@ exports.paymentCheckout = async (req, res, next) => {
           phone: user.mobileNumber,
           billingAddress,
         })
-      : await PaymentHelper.chargePaymentUnified({
-          opaqueToken,
+      : await CyberSourceGooglePayHelper.chargeGooglePay({
+          paymentData,
           amount,
-          paymentMethod,
-          dataDescriptor: opaquePaymentData.dataDescriptor,
-          firstName,
-          lastName,
-          email,
-          taxAmount,
-          subTotal,
-          userId,
+          referenceCode: orderNumber || `order-${userId}`,
+          firstName: billingAddress?.firstName || firstName,
+          lastName: billingAddress?.lastName || lastName,
+          email: billingAddress?.email || email,
+          phone: billingAddress?.phone || user.mobileNumber,
+          billingAddress,
         });
 
     //  LOG PAYMENT ATTEMPT
@@ -2689,12 +2681,14 @@ exports.refundPayment = async (req, res, next) => {
     }
 
     const refundTransactionId = String(
-      transactionId ||
-        order.transactionId ||
+      order.transactionId ||
         order.transaction_id ||
         order.paymentTransactionId ||
         ''
     );
+    if (!refundTransactionId || String(transactionId) !== refundTransactionId) {
+      return res.error(new Error('Refund transaction does not match the original order payment.'), 409);
+    }
 
     if (refundTransactionId.startsWith('tap_to_pay_sandbox_')) {
       const requestedRefundAmount = toMoney(Number(amount) || 0);
@@ -2748,9 +2742,13 @@ exports.refundPayment = async (req, res, next) => {
       );
     }
 
-    const resp = await PaymentHelper.processRefund({
-      transactionId,
+    if (!['APPLE_PAY', 'GOOGLE_PAY'].includes(order.paymentMethod)) {
+      return res.error(new Error('Only Apple Pay and Google Pay refunds are supported by this route.'), 400);
+    }
+    const resp = await CyberSourceRefundHelper.processRefund({
+      transactionId: refundTransactionId,
       amount,
+      paymentMethod: order.paymentMethod,
     });
 
     // Create payment log only if not skipLog
@@ -2985,9 +2983,10 @@ exports.refundPosOrder = async (req, res, next) => {
           }
         );
 
-        refundResponse = await PaymentHelper.processRefund({
+        refundResponse = await CyberSourceRefundHelper.processRefund({
           transactionId: order.transactionId,
           amount: refundAmount,
+          paymentMethod: order.paymentMethod,
         });
       }
 
@@ -4500,9 +4499,10 @@ exports.update = async (req, res, next) => {
           }
         } else {
           try {
-            const refundResp = await PaymentHelper.processRefund({
+            const refundResp = await CyberSourceRefundHelper.processRefund({
               transactionId: item.transactionId,
               amount: item.total,
+              paymentMethod: item.paymentMethod,
             });
 
             // Log refund attempt if not skipLog

@@ -211,7 +211,6 @@ const loadMarketplaceController = (state) => {
 		},
 		'../services/operational-compliance-form-service': {},
 		'../../helper/aws': {},
-		'../../helper/payment-helper': {},
 		'../../helper/cybersource-payment-helper': {},
 		'../../helper/docusign-helper': {},
 		'../../helper/marketplace-vendor-agreement-reconciliation': {},

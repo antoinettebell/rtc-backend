@@ -101,7 +101,7 @@ const loadController = (state) => {
     '../services': services,
     '../services/vendor-compliance-service': {},
     '../services/operational-compliance-form-service': {},
-    '../../helper/aws': {}, '../../helper/payment-helper': {
+    '../../helper/aws': {}, '../../helper/cybersource-refund-helper': {
       processRefund: async () => {
         counters.refunds += 1;
         return state.refundSuccess

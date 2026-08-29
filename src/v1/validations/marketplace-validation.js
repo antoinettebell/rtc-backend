@@ -476,6 +476,17 @@ module.exports = {
           then: Joi.optional(),
           otherwise: Joi.required(),
         }),
+      billing_address: Joi.object({
+        address1: Joi.string().trim().max(200).optional(),
+        locality: Joi.string().trim().max(100).optional(),
+        administrativeArea: Joi.string().trim().max(100).optional(),
+        postalCode: Joi.string().trim().max(20).optional(),
+        country: Joi.string().trim().uppercase().length(2).optional(),
+        firstName: Joi.string().trim().max(100).optional(),
+        lastName: Joi.string().trim().max(100).optional(),
+        email: Joi.string().trim().email().optional(),
+        phone: Joi.string().trim().max(40).optional(),
+      }).optional(),
     }),
   },
 

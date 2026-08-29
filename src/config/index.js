@@ -63,22 +63,6 @@ module.exports = {
       AVALARA_CLIENT_HEADER: process.env.AVALARA_CLIENT_HEADER,
       AVALARA_MERCHANT_SELLER_ID: process.env.AVALARA_MERCHANT_SELLER_ID,
     },
-    authorizenet: {
-      // sandip bhai sanbox account
-      // API_LOGIN_ID: "7du6kBX7x",
-      // TRANSACTION_KEY: "58VZ43Crx4vhn5X9",
-      // PAYMENT_MODE: "dev",
-
-      // client sanbox account
-      // API_LOGIN_ID: "6E7kL25mQEE5",
-      // TRANSACTION_KEY: "77vsk23CR466Q67w",
-      // PAYMENT_MODE: "dev",
-
-      // client production account
-      API_LOGIN_ID: "48TQ8Zt2pmjP",
-      TRANSACTION_KEY: "364vh9ZFC3B46VvJ",
-      PAYMENT_MODE: "prod",
-    },
     docusign: {
       enabled: String(process.env.DOCUSIGN_ENABLED || 'false').toLowerCase() === 'true',
       integrationKey: process.env.DOCUSIGN_INTEGRATION_KEY,

@@ -5,7 +5,7 @@ const { BaseService } = require('../../common-services');
 const FoodTruckService = require('./food-truck-service');
 const OrderService = require('./order-service');
 const PaymentsLogService = require('./payments-log');
-const PaymentHelper = require('../../helper/payment-helper');
+const CyberSourceRefundHelper = require('../../helper/cybersource-refund-helper');
 const CustomNotification = require('../../helper/custom-notification');
 const {
   getRefundAmountExcludingTip,
@@ -350,9 +350,10 @@ class EmployeeRefundCancelRequestService extends BaseService {
           throw buildError('Refund amount must be greater than zero.');
         }
 
-        refundResponse = await PaymentHelper.processRefund({
+        refundResponse = await CyberSourceRefundHelper.processRefund({
           transactionId: order.transactionId,
           amount: refundAmount,
+          paymentMethod: order.paymentMethod,
         });
 
         if (!refundResponse.skipLog) {

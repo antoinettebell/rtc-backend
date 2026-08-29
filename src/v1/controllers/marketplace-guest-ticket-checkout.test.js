@@ -30,6 +30,7 @@ const event = {
 let createdOrderPayload;
 let chargedPayment;
 let chargedApplePay;
+let chargedGooglePay;
 let smsPayload;
 let emailDelivery;
 let publicEventEligible = true;
@@ -86,16 +87,16 @@ Module._load = (request, parent, isMain) => {
   if (parent?.filename === controllerPath) {
     if (request === '../../models') return models;
     if (request === '../services/marketplace-ticket-service') return ticketService;
-    if (request === '../../helper/payment-helper') return {
-      chargePaymentUnified: async (payload) => {
-        chargedPayment = payload;
-        return { success: true, transactionId: 'transaction-1' };
-      },
-    };
     if (request === '../../helper/cybersource-apple-pay-helper') return {
       chargeApplePay: async (payload) => {
         chargedApplePay = payload;
         return { success: true, transactionId: 'cybs-transaction-1' };
+      },
+    };
+    if (request === '../../helper/cybersource-google-pay-helper') return {
+      chargeGooglePay: async (payload) => {
+        chargedGooglePay = payload;
+        return { success: true, transactionId: 'cybs-google-transaction-1' };
       },
     };
     if (request === '../../helper/tax-helper') return {
@@ -206,6 +207,9 @@ const requestBody = {
   );
   assert.equal(chargedApplePay.referenceCode, 'guest-order-1', 'processor reference uses the durable ticket order');
   assert.equal(chargedApplePay.email, 'guest@example.com');
+  assert.deepEqual(chargedApplePay.billingAddress, {
+    address1: '1 Main Street', locality: 'Buffalo', administrativeArea: 'NY', postalCode: '14201', country: 'US',
+  });
   assert.equal(smsPayload.to, '+15555550123');
   assert.equal(emailDelivery.recipient, 'guest@example.com');
   assert.equal(emailDelivery.subject, 'Your Tickets for Public Festival');
@@ -237,6 +241,21 @@ const requestBody = {
   assert.equal(response.message, 'Ticket purchase confirmed');
   assert.equal(createdOrderPayload.customer_user_id, null, 'public-event checkout remains account-free');
   assert.equal(createdOrderPayload.purchaser_email, 'guest@example.com');
+
+  response = undefined;
+  error = undefined;
+  await controller.publicGuestCheckout(
+    { params: { eventId: event.event_id }, body: { ...requestBody, payment_method: 'GOOGLE_PAY', payment_data: 'google-wallet-token', idempotency_key: '0e7b8a80-8ee6-4c10-a28c-03bd6254917a' } },
+    { data: (payload, message) => { response = { payload, message }; } },
+    (nextError) => { error = nextError; }
+  );
+  assert.equal(error, undefined);
+  assert.equal(response.message, 'Ticket purchase confirmed');
+  assert.equal(chargedGooglePay.paymentData, 'google-wallet-token');
+  assert.equal(chargedGooglePay.referenceCode, 'guest-order-1');
+  assert.deepEqual(chargedGooglePay.billingAddress, {
+    address1: '1 Main Street', locality: 'Buffalo', administrativeArea: 'NY', postalCode: '14201', country: 'US',
+  });
 
   publicEventEligible = false;
   createdOrderPayload = undefined;

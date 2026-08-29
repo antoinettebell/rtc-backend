@@ -38,7 +38,7 @@ const loadController = ({ deliver }) => {
 			if (request === '../../helper/vendor-plan-helper') return { canUseCashPOS: () => true, canUseTapToPay: () => true };
 			if (request === '../services/vendor-compliance-service' || request === '../services/operational-compliance-form-service') return {};
 			if (request === '../../helper/aws') return {};
-			if (request === '../../helper/payment-helper' || request === '../../helper/cybersource-payment-helper' || request === '../../helper/docusign-helper') return {};
+			if (request === '../../helper/cybersource-payment-helper' || request === '../../helper/docusign-helper') return {};
 			if (request === '../../helper/marketplace-vendor-agreement-reconciliation') return {};
 			if (request === '../../helper/marketplace-agreement-vendor-context') return {};
 			if (request === '../../helper/marketplace-communications-helper' || request === '../../helper/mail-helper') return {};

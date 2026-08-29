@@ -55,7 +55,7 @@ const loadController = (state) => {
 			if (request === '../../helper/mail-helper') return {
 				sendMail: async (...args) => { counters.emails += 1; counters.emailArgs.push(args); },
 			};
-			if (request === '../../helper/payment-helper') return {
+			if (request === '../../helper/cybersource-refund-helper') return {
 				processRefund: async () => {
 					counters.refunds += 1;
 					return state.refundSuccess
@@ -64,9 +64,13 @@ const loadController = (state) => {
 				},
 			};
 			if (request === '../../helper/marketplace-communications-helper') return {
-				sendMarketplaceCommunication: async ({ userId }) => {
+				sendMarketplaceCommunication: async ({ userId, channels, emailSubject, emailBody }) => {
 					counters.notifications += 1;
 					counters.notificationUserIds.push(String(userId));
+					if (channels?.includes('email')) {
+						counters.emails += 1;
+						counters.emailArgs.push([userId, emailSubject, emailBody]);
+					}
 				},
 			};
 			if (request === '../../helper/event-vendor-application-idempotency') return {};
@@ -154,7 +158,7 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 		assert.equal(state.createdPayment.fee_rate, 3.5);
 		assert.equal(state.counters.saves, 1);
 		assert.equal(state.counters.emails, 1);
-		assert.match(state.counters.emailArgs[0][2], /selection has been recorded/);
+		assert.match(state.counters.emailArgs[0][2], /recorded successfully/);
 		assert.doesNotMatch(state.counters.emailArgs[0][2], /contact|phone|email|business/i);
 	}
 
@@ -234,6 +238,7 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 		state.application.payment_id = 'payment-paid';
 		state.payment = {
 			payment_id: 'payment-paid', payment_status: 'PAID',
+			payment_method: 'APPLE_PAY',
 			processor_transaction_id: 'transaction-paid', total_amount: 25,
 			refund_status: 'NOT_REQUESTED',
 			save: async () => { state.counters.paymentSaves += 1; },
@@ -253,6 +258,7 @@ const createState = ({ eventStatus = 'OPEN', closedAt = null, closeDate = null, 
 		state.application.payment_id = 'payment-failed';
 		state.payment = {
 			payment_id: 'payment-failed', payment_status: 'PAID',
+			payment_method: 'APPLE_PAY',
 			processor_transaction_id: 'transaction-failed', total_amount: 25,
 			refund_status: 'NOT_REQUESTED',
 		};

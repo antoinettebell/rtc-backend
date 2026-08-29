@@ -34,6 +34,7 @@ const refundPaidMarketplaceVendorFee = async ({
     refund = await processRefund({
       transactionId: payment.processor_transaction_id,
       amount,
+      paymentMethod: payment.payment_method,
     });
   } catch (error) {
     await failRefund({

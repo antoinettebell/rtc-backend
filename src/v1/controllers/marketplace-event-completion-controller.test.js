@@ -102,7 +102,6 @@ const loadController = (state) => {
         request === '../services/vendor-compliance-service' ||
         request === '../services/operational-compliance-form-service' ||
         request === '../../helper/aws' ||
-        request === '../../helper/payment-helper' ||
         request === '../../helper/cybersource-payment-helper' ||
         request === '../../helper/docusign-helper' ||
         request === '../../helper/marketplace-vendor-agreement-reconciliation' ||
