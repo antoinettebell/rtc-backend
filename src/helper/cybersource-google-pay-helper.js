@@ -2,16 +2,15 @@ const CyberSource = require('cybersource-rest-client');
 const crypto = require('crypto');
 
 const SUCCESS_STATUSES = new Set(['AUTHORIZED', 'PENDING', 'TRANSMITTED', 'SETTLED', 'SUCCEEDED', 'COMPLETED']);
-const firstConfiguredValue = (...values) => values.find((value) => value !== undefined && value !== null && String(value).trim() !== '');
-const isSandboxEnvironment = () => /^(sandbox|test|testing|development|dev)$/i.test(String(process.env.CYBERSOURCE_GOOGLE_PAY_ENV || ''));
+const isSandboxEnvironment = () => /^(sandbox|test|testing|development|dev)$/i.test(String(process.env.CYBERSOURCE_ENVIRONMENT || ''));
 
 const getConfig = (correlationId = null) => {
   const config = {
     authenticationType: 'jwt',
     jwtKeyType: 'SHARED_SECRET',
-    merchantID: process.env.CYBERSOURCE_GOOGLE_PAY_MERCHANT_ID,
-    merchantKeyId: process.env.CYBERSOURCE_GOOGLE_PAY_REST_KEY_ID,
-    merchantsecretKey: process.env.CYBERSOURCE_GOOGLE_PAY_REST_SHARED_SECRET,
+    merchantID: process.env.CYBERSOURCE_MERCHANT_ID,
+    merchantKeyId: process.env.CYBERSOURCE_REST_KEY_ID,
+    merchantsecretKey: process.env.CYBERSOURCE_REST_SHARED_SECRET,
     runEnvironment: isSandboxEnvironment() ? 'apitest.cybersource.com' : 'api.cybersource.com',
     logConfiguration: { enableLog: false, enableMasking: true },
   };
@@ -21,13 +20,13 @@ const getConfig = (correlationId = null) => {
 
 const assertConfigured = (config) => {
   const missing = [
-    ['CYBERSOURCE_GOOGLE_PAY_MERCHANT_ID', config.merchantID],
-    ['CYBERSOURCE_GOOGLE_PAY_REST_KEY_ID', config.merchantKeyId],
-    ['CYBERSOURCE_GOOGLE_PAY_REST_SHARED_SECRET', config.merchantsecretKey],
+    ['CYBERSOURCE_MERCHANT_ID', config.merchantID],
+    ['CYBERSOURCE_REST_KEY_ID', config.merchantKeyId],
+    ['CYBERSOURCE_REST_SHARED_SECRET', config.merchantsecretKey],
   ].filter(([, value]) => !value).map(([name]) => name);
   if (missing.length) {
     const error = new Error(`CyberSource Google Pay is not configured: ${missing.join(', ')}`);
-    error.code = 'CYBERSOURCE_GOOGLE_PAY_NOT_CONFIGURED';
+    error.code = 'CYBERSOURCE_NOT_CONFIGURED';
     throw error;
   }
 };
@@ -112,7 +111,7 @@ const chargeGooglePay = async (details, { sdk = CyberSource } = {}) => {
     }
     return { success: true, env: isSandboxEnvironment() ? 'sandbox' : 'production', code: status, message: 'Payment approved.', transactionId: response.id, authCode: response.processorInformation?.approvalCode || null, accountType: 'GOOGLE_PAY', correlationId };
   } catch (error) {
-    if (['CYBERSOURCE_GOOGLE_PAY_NOT_CONFIGURED', 'GOOGLE_PAY_TOKEN_MISSING'].includes(error?.code)) throw error;
+    if (['CYBERSOURCE_NOT_CONFIGURED', 'GOOGLE_PAY_TOKEN_MISSING'].includes(error?.code)) throw error;
     const diagnostic = failureDetails(error);
     console.error('[CyberSourceGooglePay] payment_failed', JSON.stringify({ stage: 'charge_result', ...diagnostic }));
     return { success: false, env: isSandboxEnvironment() ? 'sandbox' : 'production', code: diagnostic.reason, message: 'Google Pay could not be approved. Please try another payment method.', transactionId: null, accountType: 'GOOGLE_PAY', correlationId };

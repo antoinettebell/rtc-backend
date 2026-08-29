@@ -2,16 +2,16 @@ const assert = require('assert');
 const GooglePay = require('./cybersource-google-pay-helper');
 
 const original = {
-  CYBERSOURCE_GOOGLE_PAY_ENV: process.env.CYBERSOURCE_GOOGLE_PAY_ENV,
-  CYBERSOURCE_GOOGLE_PAY_MERCHANT_ID: process.env.CYBERSOURCE_GOOGLE_PAY_MERCHANT_ID,
-  CYBERSOURCE_GOOGLE_PAY_REST_KEY_ID: process.env.CYBERSOURCE_GOOGLE_PAY_REST_KEY_ID,
-  CYBERSOURCE_GOOGLE_PAY_REST_SHARED_SECRET: process.env.CYBERSOURCE_GOOGLE_PAY_REST_SHARED_SECRET,
+  CYBERSOURCE_ENVIRONMENT: process.env.CYBERSOURCE_ENVIRONMENT,
+  CYBERSOURCE_MERCHANT_ID: process.env.CYBERSOURCE_MERCHANT_ID,
+  CYBERSOURCE_REST_KEY_ID: process.env.CYBERSOURCE_REST_KEY_ID,
+  CYBERSOURCE_REST_SHARED_SECRET: process.env.CYBERSOURCE_REST_SHARED_SECRET,
 };
 
-process.env.CYBERSOURCE_GOOGLE_PAY_ENV = 'sandbox';
-process.env.CYBERSOURCE_GOOGLE_PAY_MERCHANT_ID = 'test-merchant';
-process.env.CYBERSOURCE_GOOGLE_PAY_REST_KEY_ID = 'test-key';
-process.env.CYBERSOURCE_GOOGLE_PAY_REST_SHARED_SECRET = 'test-secret';
+process.env.CYBERSOURCE_ENVIRONMENT = 'sandbox';
+process.env.CYBERSOURCE_MERCHANT_ID = 'test-merchant';
+process.env.CYBERSOURCE_REST_KEY_ID = 'test-key';
+process.env.CYBERSOURCE_REST_SHARED_SECRET = 'test-secret';
 
 let request;
 const approvedSdk = {
