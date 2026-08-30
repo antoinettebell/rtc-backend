@@ -71,8 +71,23 @@ const parseBody = (value) => {
   try { return JSON.parse(String(value)); } catch (_) { return null; }
 };
 
+const getHeader = (headers, headerName) => {
+  if (!headers || typeof headers !== 'object') return null;
+  if (typeof headers.get === 'function') {
+    const value = headers.get(headerName);
+    return value == null ? null : String(value);
+  }
+  const matchingKey = Object.keys(headers).find(
+    (key) => String(key).toLowerCase() === headerName.toLowerCase()
+  );
+  if (!matchingKey) return null;
+  const value = headers[matchingKey];
+  return value == null ? null : String(value);
+};
+
 const failureDetails = (error) => {
   const response = error?.response || error?.errorResponse || error?.responseData || {};
+  const headers = response.headers || response.header || error?.headers || error?.responseHeaders;
   const body = parseBody(
     response.body || response.data || response.text || response.responseBody ||
     error?.body || error?.data || error?.text
@@ -87,6 +102,8 @@ const failureDetails = (error) => {
       : null,
     reason: body.reason || body.code || error?.reason || error?.code || 'CYBERSOURCE_GOOGLE_PAY_FAILED',
     missing_fields: details.filter((entry) => entry?.reason === 'MISSING_FIELD').map((entry) => entry.field).filter(Boolean),
+    cybersource_request_id: getHeader(headers, 'x-requestid'),
+    cybersource_correlation_id: getHeader(headers, 'v-c-correlation-id'),
   };
 };
 
@@ -113,7 +130,11 @@ const chargeGooglePay = async (details, { sdk = CyberSource } = {}) => {
   } catch (error) {
     if (['CYBERSOURCE_NOT_CONFIGURED', 'GOOGLE_PAY_TOKEN_MISSING'].includes(error?.code)) throw error;
     const diagnostic = failureDetails(error);
-    console.error('[CyberSourceGooglePay] payment_failed', JSON.stringify({ stage: 'charge_result', ...diagnostic }));
+    console.error('[CyberSourceGooglePay] payment_failed', JSON.stringify({
+      stage: 'charge_result',
+      correlation_id: correlationId,
+      ...diagnostic,
+    }));
     return { success: false, env: isSandboxEnvironment() ? 'sandbox' : 'production', code: diagnostic.reason, message: 'Google Pay could not be approved. Please try another payment method.', transactionId: null, accountType: 'GOOGLE_PAY', correlationId };
   }
 };

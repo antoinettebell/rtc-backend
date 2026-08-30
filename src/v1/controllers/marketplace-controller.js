@@ -583,8 +583,9 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   // VIP catering always creates its own awardable service slot. Keep the legacy
   // field true for existing consumers without asking coordinators to configure it.
   const separateVipVendorRequired = cateredVipSectionEnabled;
-  const dessertCatererRequired = cateredVipSectionEnabled && Boolean(body.dessert_caterer_required);
-  const drinksCatererRequired = cateredVipSectionEnabled && Boolean(body.drinks_caterer_required);
+  const additionalCatererEligible = fullyCateredEvent || cateredVipSectionEnabled;
+  const dessertCatererRequired = additionalCatererEligible && Boolean(body.dessert_caterer_required);
+  const drinksCatererRequired = additionalCatererEligible && Boolean(body.drinks_caterer_required);
   // VIP events retain both established paths: a coordinator-paid VIP bid and
   // a vendor-paid GA application. The answer below only governs the combined
   // VIP + GA option inside a bid.

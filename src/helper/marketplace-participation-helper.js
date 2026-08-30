@@ -43,10 +43,17 @@ const getMarketplaceVendorCapacity = (event = {}) => {
   if (event.fully_catered_event) {
     const gaMaximum = ceilPerHundred(gaGuests);
     const vipRequirement = ceilPerHundred(vipGuests);
-    const calculatedMaximum = Math.max(1, gaMaximum, vipRequirement);
+    const dessertRequirement = event.dessert_caterer_required ? 1 : 0;
+    const drinksRequirement = event.drinks_caterer_required ? 1 : 0;
+    const calculatedMaximum =
+      Math.max(1, gaMaximum, vipRequirement) +
+      dessertRequirement +
+      drinksRequirement;
     return {
       gaMaximum,
       vipRequirement,
+      ...(dessertRequirement ? { dessertRequirement } : {}),
+      ...(drinksRequirement ? { drinksRequirement } : {}),
       calculatedMaximum,
     };
   }

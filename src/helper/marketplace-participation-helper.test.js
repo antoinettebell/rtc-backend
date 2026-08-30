@@ -45,6 +45,43 @@ assert.deepStrictEqual(getMarketplaceServiceRequirements(fullyCateredGaOnly), {
   gaRequirement: 2,
   vipRequirement: 0,
 });
+assert.deepStrictEqual(
+  getAllowedBidCoverages({
+    ...fullyCateredGaOnly,
+    dessert_caterer_required: true,
+    drinks_caterer_required: true,
+  }),
+  ['REGULAR', 'VIP', 'BOTH', 'SPECIALTY'],
+  'existing specialty routing must remain available for fully catered GA events',
+);
+assert.deepStrictEqual(
+  getMarketplaceVendorCapacity({
+    ...fullyCateredGaOnly,
+    dessert_caterer_required: true,
+    drinks_caterer_required: true,
+  }),
+  {
+    gaMaximum: 2,
+    vipRequirement: 0,
+    dessertRequirement: 1,
+    drinksRequirement: 1,
+    calculatedMaximum: 4,
+  },
+  'Desserts and Drinks each add an awardable specialty slot to a fully catered GA event',
+);
+assert.deepStrictEqual(
+  getMarketplaceServiceRequirements({
+    ...fullyCateredGaOnly,
+    dessert_caterer_required: true,
+    drinks_caterer_required: true,
+  }),
+  {
+    gaRequirement: 2,
+    vipRequirement: 0,
+    dessertRequirement: 1,
+    drinksRequirement: 1,
+  },
+);
 
 const vipWithGaSales = {
   catered_vip_section_enabled: true,
