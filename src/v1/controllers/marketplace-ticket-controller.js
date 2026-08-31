@@ -4,6 +4,7 @@ const {
   MarketplaceTicketModel,
   MarketplaceScannerSessionModel,
   MarketplaceAttachmentModel,
+  MarketplaceEventImageModel,
   UserModel,
 } = require('../../models');
 const TicketService = require('../services/marketplace-ticket-service');
@@ -117,6 +118,19 @@ const getTicketInvitationEvent = (shareToken) => MarketplaceEventModel.findOne({
     availableTicketInventoryQuery,
   ],
 });
+
+const attachActiveEventImages = async (event) => {
+  if (!event) return event;
+
+  const images = await MarketplaceEventImageModel.find({
+    event_id: event.event_id,
+    status: 'ACTIVE',
+  })
+    .sort({ created_at: 1 })
+    .lean();
+
+  return { ...event, images };
+};
 
 const getPublicGuestTicketEvent = async (eventId) => {
   const event = await MarketplaceEventModel.findOne({
@@ -1000,8 +1014,9 @@ exports.getTicketInvitationEvent = async (req, res, next) => {
   try {
     const event = await getTicketInvitationEvent(req.params.shareToken).lean();
     if (!event) throw buildError('Ticket invitation is unavailable', 404);
+    const eventWithImages = await attachActiveEventImages(event);
     return res.data(
-      { marketplaceEvent: sanitizePublicMarketplaceEvent(event) },
+      { marketplaceEvent: sanitizePublicMarketplaceEvent(eventWithImages) },
       'Private ticket invitation'
     );
   } catch (error) {
