@@ -3495,6 +3495,10 @@ const attachEventsToBids = async (bids = [], options = {}) => {
     { event_id: { $in: eventIds } },
     { lean: true }
   );
+  const eventImages = await MarketplaceEventImageService.getByData(
+    { event_id: { $in: eventIds }, status: 'ACTIVE' },
+    { lean: true }
+  );
   const eventById = events.reduce((acc, event) => {
     acc[event.event_id] = event;
     return acc;
@@ -3509,6 +3513,10 @@ const attachEventsToBids = async (bids = [], options = {}) => {
     : [];
   const coordinatorById = coordinators.reduce((acc, coordinator) => {
     acc[String(coordinator._id)] = coordinator;
+    return acc;
+  }, {});
+  const eventImagesByEventId = eventImages.reduce((acc, image) => {
+    (acc[image.event_id] ||= []).push(image);
     return acc;
   }, {});
 
@@ -3531,6 +3539,9 @@ const attachEventsToBids = async (bids = [], options = {}) => {
         detailsUnlocked: unlockState.details_unlocked,
       });
     }
+    if (visibleEvent) {
+      visibleEvent.public_images = eventImagesByEventId[bid.event_id] || [];
+    }
     return {
       ...visibleBid,
       marketplace_unlock: unlockState,
@@ -3551,6 +3562,10 @@ const attachEventsToApplications = async (applications = [], options = {}) => {
     { event_id: { $in: eventIds } },
     { lean: true }
   );
+  const eventImages = await MarketplaceEventImageService.getByData(
+    { event_id: { $in: eventIds }, status: 'ACTIVE' },
+    { lean: true }
+  );
   const eventById = events.reduce((acc, event) => {
     acc[event.event_id] = event;
     return acc;
@@ -3565,6 +3580,10 @@ const attachEventsToApplications = async (applications = [], options = {}) => {
     : [];
   const coordinatorById = coordinators.reduce((acc, coordinator) => {
     acc[String(coordinator._id)] = coordinator;
+    return acc;
+  }, {});
+  const eventImagesByEventId = eventImages.reduce((acc, image) => {
+    (acc[image.event_id] ||= []).push(image);
     return acc;
   }, {});
 
@@ -3586,6 +3605,9 @@ const attachEventsToApplications = async (applications = [], options = {}) => {
         coordinator,
         detailsUnlocked: unlockState.details_unlocked,
       });
+    }
+    if (visibleEvent) {
+      visibleEvent.public_images = eventImagesByEventId[application.event_id] || [];
     }
     return {
       ...visibleApplication,
