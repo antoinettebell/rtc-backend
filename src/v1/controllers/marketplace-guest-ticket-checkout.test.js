@@ -121,7 +121,13 @@ Module._load = (request, parent, isMain) => {
       createTicketToken: () => ({ token: 'token', tokenHash: 'hash' }),
       buildPublicTicketUrl: () => 'https://tickets.example/t/one',
     };
-    if (request === '../../config') return { server: { publicTicketBaseURL: 'https://tickets.example' } };
+    if (request === '../../config') return {
+      server: {
+        publicTicketBaseURL: 'https://tickets.example',
+        customerIosAppStoreURL: 'https://apps.example/customer',
+        customerAndroidPlayStoreURL: 'https://play.example/store?id=com.example.customer',
+      },
+    };
     if (request === '../../helper/aws') return {};
     if (request === '../../helper/encryption') return {};
     if (request === '../../helper/public-ticket-page') return {};
@@ -281,10 +287,12 @@ const requestBody = {
   );
   assert.match(html, /Download on the App Store/);
   assert.match(html, /Get it on Google Play/);
-  assert.match(html, /setTimeout\(\(\)=>window\.location\.assign\(target\),900\)/);
-  assert.match(html, /tap the original event link again/i);
-  assert.doesNotMatch(html, /rtc-customer:\/\//);
-  assert.doesNotMatch(html, /sign in|create your customer profile/i);
+  assert.match(html, /Download the app to buy tickets/);
+  assert.match(html, /I already have the app — Open this event/);
+  assert.match(html, /rtc-customer:\/\/invite\/private-share-token/);
+  assert.match(html, /rtc_ticket_share%3Dprivate-share-token/);
+  assert.match(html, /After signing up, we will return you to this event/);
+  assert.doesNotMatch(html, /window\.location\.assign/);
 
   let shareResponse;
   await controller.createTicketShareLink(
