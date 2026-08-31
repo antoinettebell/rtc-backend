@@ -36,6 +36,7 @@ let emailDelivery;
 let publicEventEligible = true;
 let lastEventFindQuery;
 let shareLinkUpdate;
+const activeEventImages = [{ image_id: 'event-image-1', image_url: 'https://images.example/event.png' }];
 
 const queryFor = (value) => ({
   select() { return this; },
@@ -69,6 +70,12 @@ const models = {
   MarketplaceTicketModel: {},
   MarketplaceScannerSessionModel: {},
   MarketplaceAttachmentModel: {},
+  MarketplaceEventImageModel: {
+    find: () => ({
+      sort() { return this; },
+      lean: async () => activeEventImages,
+    }),
+  },
   UserModel: {},
 };
 
@@ -274,6 +281,17 @@ const requestBody = {
   assert.equal(error?.code, 404);
   assert.equal(createdOrderPayload, undefined, 'ineligible event creates no guest ticket order');
   publicEventEligible = true;
+
+  response = undefined;
+  error = undefined;
+  await controller.getTicketInvitationEvent(
+    { params: { shareToken: 'private-share-token' } },
+    { data: (payload, message) => { response = { payload, message }; } },
+    (nextError) => { error = nextError; }
+  );
+  assert.equal(error, undefined);
+  assert.equal(response.message, 'Private ticket invitation');
+  assert.deepEqual(response.payload.marketplaceEvent.images, activeEventImages);
 
   let html;
   await controller.publicTicketInvitation(
