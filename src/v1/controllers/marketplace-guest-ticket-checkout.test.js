@@ -305,11 +305,14 @@ const requestBody = {
   );
   assert.match(html, /Download on the App Store/);
   assert.match(html, /Get it on Google Play/);
-  assert.match(html, /Download the app to buy tickets/);
+  assert.match(html, /Download the app to continue/);
   assert.match(html, /I already have the app — Open this event/);
+  assert.match(html, /After installing, return to this page and tap Open this event to continue/);
+  assert.match(html, /Installation complete\? Tap Continue to Event to finish buying tickets/);
+  assert.match(html, /rtc_ticket_install_pending_/);
   assert.match(html, /rtc-customer:\/\/invite\/private-share-token/);
   assert.match(html, /rtc_ticket_share%3Dprivate-share-token/);
-  assert.match(html, /After signing up, we will return you to this event/);
+  assert.match(html, /Already installed\? Open this event\. New here\? Download the app to continue/);
   assert.doesNotMatch(html, /window\.location\.assign/);
 
   let shareResponse;
