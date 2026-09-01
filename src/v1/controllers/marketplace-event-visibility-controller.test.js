@@ -125,6 +125,7 @@ const createFoodState = () => ({
 	users: {},
 	foodTrucks: {},
 	events: [],
+	images: [],
 	bids: [],
 	applications: [],
 });
@@ -195,7 +196,9 @@ const loadMarketplaceController = (state) => {
 			getModel: () => ({}),
 		},
 		MarketplaceAttachmentService: { getByData: async () => [] }, MarketplaceAgreementAuditService: {},
-		MarketplaceEventImageService: {}, MarketplaceEventQuestionService: {},
+		MarketplaceEventImageService: {
+			getByData: async (query, options = {}) => getListOrOne(state.images, query, options),
+		}, MarketplaceEventQuestionService: {},
 		MarketplaceFileAuditService: {}, MarketplacePaymentAuditService: {},
 		MarketplaceVendorAgreementService: {}, VendorComplianceDocumentService: { getByData: async () => [] },
 	};
@@ -488,6 +491,12 @@ const runFoodVendorTests = async () => {
 			vendor_fee: 50,
 			budgeted_amount: 1000,
 		}));
+		state.images.push({
+			image_id: 'both-path-flyer',
+			event_id: 'both-path-draft',
+			image_url: 'https://example.test/both-path-flyer.jpg',
+			status: 'ACTIVE',
+		});
 		state.bids.push({
 			bid_id: 'saved-draft', event_id: 'both-path-draft', vendor_user_id: 'draft-owner',
 			food_truck_id: 'truck-draft-owner', bid_status: 'DRAFT', archived_at: null,
@@ -499,6 +508,11 @@ const runFoodVendorTests = async () => {
 			result.response.payload.marketplaceBidList.map((bid) => [bid.bid_id, bid.bid_status, bid.event_id]),
 			[['saved-draft', 'DRAFT', 'both-path-draft']],
 			'a saved BOTH-event bid draft remains available through My Bids'
+		);
+		assert.deepStrictEqual(
+			result.response.payload.marketplaceBidList[0].marketplaceEvent.public_images.map((image) => image.image_id),
+			['both-path-flyer'],
+			'My Bids includes active event flyers for Bid Details'
 		);
 	}
 
