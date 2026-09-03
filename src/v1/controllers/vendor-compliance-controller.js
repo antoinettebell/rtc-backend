@@ -15,8 +15,12 @@ const {
 
 const getVendorFoodTruck = async (user, foodTruckId = null) => {
   const query = {
-    ...(foodTruckId ? { _id: foodTruckId } : {}),
-    ...(user.userType === 'VENDOR' ? { userId: user._id } : {}),
+    ...(user.userType === 'EMPLOYEE'
+      ? { _id: user.food_truck_id, userId: user.vendor_user_id }
+      : {
+          ...(foodTruckId ? { _id: foodTruckId } : {}),
+          ...(user.userType === 'VENDOR' ? { userId: user._id } : {}),
+        }),
   };
 
   const foodTruck = await FoodTruckService.getByData(query, {

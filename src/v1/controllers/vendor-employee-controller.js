@@ -330,6 +330,13 @@ exports.update = async (req, res, next) => {
       user,
     } = req;
 
+    if (body.tap_to_pay_serial_number !== undefined) {
+      return res.error(
+        new Error('Tap to Pay serial number is managed by support.'),
+        403
+      );
+    }
+
     const employee = await Service.getScopedEmployee({
       vendor_user_id: user._id,
       employee_id: id,
@@ -526,6 +533,7 @@ exports.adminAdd = async (req, res, next) => {
 	        employee_tax_identifier_type,
 	        employee_tax_identifier,
 	        employee_rate,
+	        tap_to_pay_serial_number,
 	        pin,
         is_active,
         is_working,
@@ -549,6 +557,7 @@ exports.adminAdd = async (req, res, next) => {
 	      employee_tax_identifier_type,
 	      employee_tax_identifier,
 	      employee_rate,
+	      tap_to_pay_serial_number,
 	      pin,
       is_active,
       is_working,

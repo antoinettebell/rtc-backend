@@ -45,6 +45,7 @@ const {
   calculateRuleBasedBogoPricing,
   roundCurrency,
 } = require('../../helper/order-bogo-pricing-helper');
+const VendorComplianceService = require('../services/vendor-compliance-service');
 const { OrderModel } = require('../../models');
 
 const { env } = require('../../config');
@@ -910,6 +911,16 @@ const assertVendorTapToPayAccess = async (user) => {
     'tapToPay',
     'Tap to Pay is not available for your current vendor plan.'
   );
+
+  const compliance = await VendorComplianceService.calculateComplianceSummary(foodTruck);
+  if (!compliance.eligible || Number(compliance.score) !== 100) {
+    const error = new Error(
+      'Tap to Pay requires a 100% compliant vendor profile. Please complete all compliance requirements.'
+    );
+    error.code = 403;
+    error.compliance = compliance;
+    throw error;
+  }
 };
 
 const normalizeOpaquePaymentData = (paymentData) => {

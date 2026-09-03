@@ -167,6 +167,11 @@ const mSchema = mongoose.Schema(
       default: null,
       min: 0,
     },
+    tap_to_pay_serial_number: {
+      type: String,
+      default: null,
+      trim: true,
+    },
     employee_rate_history: [
       {
         previous_rate: {
@@ -200,6 +205,7 @@ const mSchema = mongoose.Schema(
           address_state: String,
           address_zip: String,
           employee_id_photo_url: String,
+          tap_to_pay_serial_number: String,
         },
         next: {
           first_name: String,
@@ -211,6 +217,7 @@ const mSchema = mongoose.Schema(
           address_state: String,
           address_zip: String,
           employee_id_photo_url: String,
+          tap_to_pay_serial_number: String,
         },
         changed_at: {
           type: Date,

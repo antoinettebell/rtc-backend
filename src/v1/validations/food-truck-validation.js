@@ -165,6 +165,7 @@ module.exports = {
       planId: Joi.string().trim(),
       logo: Joi.string().min(2).trim(),
       currentLocation: Joi.string().trim().allow(null),
+      tap_to_pay_serial_number: Joi.string().trim().max(100).allow(null, ''),
       food_truck_count: Joi.number().integer().min(1),
       // photos: Joi.array().items(Joi.string().required()).min(0).allow(null).optional(),
       photos: Joi.alternatives().try(

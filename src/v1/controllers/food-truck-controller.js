@@ -1062,6 +1062,7 @@ exports.update = async (req, res, next) => {
         availability,
         businessHours,
         currentLocation,
+        tap_to_pay_serial_number,
         planId,
         socialMedia,
         ein,
@@ -1088,6 +1089,16 @@ exports.update = async (req, res, next) => {
       return res.error(new Error('No food truck found'), 409);
     }
     ensureDefaultTruckUnits(item);
+
+    if (tap_to_pay_serial_number !== undefined) {
+      if (user.userType !== 'SUPER_ADMIN') {
+        return res.error(
+          new Error('Tap to Pay serial number is managed by support.'),
+          403
+        );
+      }
+      item.tap_to_pay_serial_number = tap_to_pay_serial_number || null;
+    }
 
     if (name) {
       item.name = name;

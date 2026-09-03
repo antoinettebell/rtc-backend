@@ -10,7 +10,7 @@ router.get(
   Controller.requirements
 );
 
-router.get('/me', allowedTo(['VENDOR']), Controller.mySummary);
+router.get('/me', allowedTo(['VENDOR', 'EMPLOYEE']), Controller.mySummary);
 
 router.get(
   '/food-truck/:foodTruckId',

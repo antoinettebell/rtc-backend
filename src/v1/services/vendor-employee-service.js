@@ -58,6 +58,7 @@ const employeeProfileFields = [
   'employee_id_photo_url',
   'employee_tax_identifier_type',
   'employee_tax_identifier_masked',
+  'tap_to_pay_serial_number',
 ];
 const normalizeEmployeeProfileValue = (value) =>
   value === null || value === undefined ? '' : String(value).trim();

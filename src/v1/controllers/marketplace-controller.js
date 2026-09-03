@@ -9423,6 +9423,17 @@ exports.checkoutPayment = async (req, res, next) => {
       if (paymentMethod === 'TAP_TO_PAY' && !canUseTapToPay(vendorFoodTruck)) {
         throw buildError('Tap to Pay is not available for this vendor plan.', 403);
       }
+      if (paymentMethod === 'TAP_TO_PAY') {
+        const compliance = await VendorComplianceService.calculateComplianceSummary(
+          vendorFoodTruck
+        );
+        if (!compliance.eligible || Number(compliance.score) !== 100) {
+          throw buildError(
+            'Tap to Pay requires a 100% compliant vendor profile. Please complete all compliance requirements.',
+            403
+          );
+        }
+      }
     }
     if (roundMoney(req.body.expected_total) !== roundMoney(authorizedPayment.total_amount)) {
       throw buildError('The payment amount changed. Refresh before completing payment.', 409);

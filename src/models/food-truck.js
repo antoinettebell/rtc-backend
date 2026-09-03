@@ -35,6 +35,11 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    tap_to_pay_serial_number: {
+      type: String,
+      default: null,
+      trim: true,
+    },
     socialMedia: [
       {
         mediaType: {
