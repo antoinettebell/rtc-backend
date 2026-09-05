@@ -69,6 +69,20 @@ router.post(
   Controller.adminAdd
 );
 
+router.get(
+  '/admin/:id/shift-history',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.shiftHistory),
+  Controller.adminShiftHistory
+);
+
+router.put(
+  '/admin/:id/shift-history/:sessionId',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.updateShiftHistory),
+  Controller.adminUpdateShiftHistory
+);
+
 router.put(
   '/admin/:id',
   allowedTo(['SUPER_ADMIN']),
