@@ -961,6 +961,7 @@ exports.dashboard = async (req, res, next) => {
     const dashboard = await EmployeeSessionService.getEmployeeDashboard({
       user: {
         ...user,
+        tap_to_pay_serial_number: employee.tap_to_pay_serial_number || null,
         assigned_location_id: assignedLocation._id,
         assigned_truck_unit_id: assignedTruckUnit?._id || null,
       },

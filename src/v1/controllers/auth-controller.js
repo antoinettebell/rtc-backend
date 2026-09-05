@@ -688,6 +688,7 @@ exports.loginEmployee = async (req, res, next) => {
           address_state: employee.address_state || null,
           zip_code: employee.zip_code || null,
           employee_rate: employee.employee_rate ?? null,
+          tap_to_pay_serial_number: employee.tap_to_pay_serial_number || null,
           role: 'EMPLOYEE',
           userType: 'EMPLOYEE',
           is_active: employee.is_active,

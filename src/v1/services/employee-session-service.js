@@ -560,6 +560,7 @@ class EmployeeSessionService extends BaseService {
         address_state: user.address_state || null,
         zip_code: user.zip_code || null,
         employee_rate: user.employee_rate ?? null,
+        tap_to_pay_serial_number: user.tap_to_pay_serial_number || null,
         is_working: !!user.is_working,
         name:
           [user.first_name, user.last_name].filter(Boolean).join(' ') ||
