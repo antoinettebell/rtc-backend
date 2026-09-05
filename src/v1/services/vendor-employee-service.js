@@ -231,7 +231,12 @@ class VendorEmployeeService extends BaseService {
     if (archivedOnly) {
       q.is_archived = true;
     } else if (!includeArchived) {
-      q.is_archived = false;
+      // Employees created before archive support do not have this field at
+      // all. Treat those legacy records as current rather than hiding them.
+      q.$or = [
+        { is_archived: false },
+        { is_archived: { $exists: false } },
+      ];
     }
 
     return q;

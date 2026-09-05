@@ -493,6 +493,8 @@ exports.adminList = async (req, res, next) => {
         archivedOnly = false,
       },
     } = req;
+    const shouldIncludeArchived = parseBooleanFlag(includeArchived);
+    const shouldShowArchivedOnly = parseBooleanFlag(archivedOnly);
 
     const foodTruck = foodTruckId
       ? await Service.getVendorFoodTruck(vendorUserId, foodTruckId)
@@ -500,8 +502,8 @@ exports.adminList = async (req, res, next) => {
     const data = await Service.listForVendor({
       vendor_user_id: vendorUserId,
       food_truck_id: foodTruck?._id,
-      includeArchived,
-      archivedOnly,
+      includeArchived: shouldIncludeArchived,
+      archivedOnly: shouldShowArchivedOnly,
     });
 
     return res.data(
