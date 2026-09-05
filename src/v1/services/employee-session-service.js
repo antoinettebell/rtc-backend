@@ -66,6 +66,11 @@ const getShiftRange = (range = 'week') => {
 
   if (range === 'day') {
     start.setHours(0, 0, 0, 0);
+  } else if (range === 'current_week') {
+    const dayOfWeek = start.getDay();
+    const daysSinceMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    start.setDate(start.getDate() - daysSinceMonday);
+    start.setHours(0, 0, 0, 0);
   } else {
     start.setDate(start.getDate() - 7);
     start.setHours(0, 0, 0, 0);
@@ -886,6 +891,20 @@ class EmployeeSessionService extends BaseService {
 	    employeeInternalId,
 	    range = 'week',
 	  }) {
+	    if (range === 'archived') {
+	      return Model.find({
+        food_truck_id: foodTruckId,
+        employee_internal_id: employeeInternalId,
+        is_archived: true,
+      })
+        .sort({ started_at: -1 })
+	        .limit(100)
+	        .select(
+	          'employee_session_id started_at ended_at last_active_at shift_status is_active total_break_minutes gross_work_minutes net_work_minutes gross_hours_worked net_hours_worked work_date_key operational_day_key time_zone is_vendor_override override_reason override_approved_by_user_id override_approved_at is_archived timecard_adjustments'
+	        )
+	        .lean();
+	    }
+
 	    const { start, end } = getShiftRange(range);
 
 	    return Model.find({
