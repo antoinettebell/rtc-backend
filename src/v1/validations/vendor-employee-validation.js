@@ -163,7 +163,7 @@ module.exports = {
       id: Joi.string().trim().required(),
     }),
     query: Joi.object({
-      range: Joi.string().valid('day', 'week', 'current_week', 'archived'),
+      range: Joi.string().valid('day', 'week', 'current_week', 'pending_archive', 'archived'),
     }),
   },
 
