@@ -615,6 +615,7 @@ exports.adminUpdateShiftHistory = async (req, res, next) => {
       endedAt: req.body.ended_at,
       totalBreakMinutes: req.body.total_break_minutes,
       reason: req.body.reason,
+      allowArchived: true,
     });
     return res.data({ session }, 'Employee timecard updated');
   } catch (e) {

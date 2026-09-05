@@ -930,6 +930,7 @@ class EmployeeSessionService extends BaseService {
     endedAt,
     totalBreakMinutes,
     reason,
+    allowArchived = false,
   }) {
     const session = await Model.findOne({
       employee_session_id: sessionId,
@@ -940,7 +941,9 @@ class EmployeeSessionService extends BaseService {
     if (session.is_active || !session.ended_at) {
       throw new Error('An active shift cannot be edited');
     }
-    if (session.is_archived) throw new Error('An archived shift cannot be edited');
+    if (session.is_archived && !allowArchived) {
+      throw new Error('An archived shift cannot be edited');
+    }
 
     const nextStart = new Date(startedAt);
     const nextEnd = new Date(endedAt);
