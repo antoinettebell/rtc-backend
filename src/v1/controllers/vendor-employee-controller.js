@@ -752,8 +752,11 @@ exports.adminUpdate = async (req, res, next) => {
       user,
     } = req;
 
+    // Super admins must be able to correct a terminated employee's profile
+    // and historical records. Archival disables login; it does not make the
+    // support record immutable.
     const employee = await Service.getByData(
-      { _id: id, is_archived: false },
+      { _id: id },
       { singleResult: true }
     );
     if (!employee) {
@@ -764,6 +767,7 @@ exports.adminUpdate = async (req, res, next) => {
       employee_id: id,
       update: body,
       actor_user_id: user?._id || employee.vendor_user_id,
+      includeArchived: true,
     });
 
     if (body.is_working === false || body.is_active === false) {

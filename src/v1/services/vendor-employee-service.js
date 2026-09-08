@@ -428,8 +428,18 @@ class VendorEmployeeService extends BaseService {
     return employee;
   }
 
-  async updateForVendor({ vendor_user_id, employee_id, update, actor_user_id = vendor_user_id }) {
-    const employee = await this.getScopedEmployee({ vendor_user_id, employee_id });
+  async updateForVendor({
+    vendor_user_id,
+    employee_id,
+    update,
+    actor_user_id = vendor_user_id,
+    includeArchived = false,
+  }) {
+    const employee = await this.getScopedEmployee({
+      vendor_user_id,
+      employee_id,
+      includeArchived,
+    });
     let assignedLocationChanged = false;
 
     if (
