@@ -25,6 +25,8 @@ const EMPLOYEE_SHIFT_EXEMPT_ROUTES = [
   '/vendor-employee/dashboard',
   '/vendor-employee/session/action',
   '/vendor-employee/session/end',
+  '/vendor-employee/manager/',
+  '/vendor-employee/refund-cancel-requests',
 ];
 
 const IGNORE_ROUTES = [
@@ -179,7 +181,10 @@ const Authenticate = async (req, res, next) => {
       req.user = {
         _id: employee._id,
         userType: 'EMPLOYEE',
-        role: 'EMPLOYEE',
+        role: employee.role || 'EMPLOYEE',
+        manager_scope: employee.manager_scope || 'NONE',
+        manager_truck_unit_id: employee.manager_truck_unit_id || null,
+        manager_truck_unit_name: employee.manager_truck_unit_name || null,
         employee_internal_id: employee.employee_internal_id,
         employee_session_id: activeSession?.employee_session_id || null,
         employee_login_id: employee.employee_login_id,

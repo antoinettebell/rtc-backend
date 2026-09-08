@@ -157,6 +157,9 @@ class VendorEmployeeService extends BaseService {
 	    employee_tax_identifier_type = null,
 	    employee_tax_identifier = undefined,
 	    pin,
+    role = 'EMPLOYEE',
+    manager_scope = 'NONE',
+    manager_truck_unit_id = null,
     ...rest
   }) {
     const foodTruck = await FoodTruckService.getByData(
@@ -179,6 +182,13 @@ class VendorEmployeeService extends BaseService {
     if (!pin) {
       throw buildError('Employee PIN is required.');
     }
+
+    const managerAccess = this.getManagerAccess({
+      foodTruck,
+      role,
+      manager_scope,
+      manager_truck_unit_id,
+    });
 
     const employee_login_id = await this.generateUniqueEmployeeLoginId({
       food_truck_id,
@@ -213,6 +223,7 @@ class VendorEmployeeService extends BaseService {
 	      employee_login_id,
       pin_hash: pin,
       employee_rate: normalizeEmployeeRate(rest.employee_rate),
+      ...managerAccess,
     });
   }
 
@@ -355,6 +366,42 @@ class VendorEmployeeService extends BaseService {
     return unit;
   }
 
+  getManagerAccess({ foodTruck, role, manager_scope, manager_truck_unit_id }) {
+    if (role !== 'MANAGER') {
+      return {
+        role: 'EMPLOYEE',
+        manager_scope: 'NONE',
+        manager_truck_unit_id: null,
+        manager_truck_unit_name: null,
+      };
+    }
+
+    if (manager_scope === 'ALL_TRUCKS') {
+      return {
+        role: 'MANAGER',
+        manager_scope: 'ALL_TRUCKS',
+        manager_truck_unit_id: null,
+        manager_truck_unit_name: null,
+      };
+    }
+
+    if (manager_scope !== 'TRUCK_UNIT' || !manager_truck_unit_id) {
+      throw buildError('Select one food truck or All food trucks for this manager.', 400);
+    }
+
+    const truckUnit = this.getAssignedTruckUnit(foodTruck, manager_truck_unit_id);
+    if (!truckUnit) {
+      throw buildError('Selected manager food truck was not found.', 400);
+    }
+
+    return {
+      role: 'MANAGER',
+      manager_scope: 'TRUCK_UNIT',
+      manager_truck_unit_id: truckUnit._id,
+      manager_truck_unit_name: truckUnit.name || null,
+    };
+  }
+
   async getScopedEmployee({
     vendor_user_id,
     employee_id,
@@ -384,6 +431,29 @@ class VendorEmployeeService extends BaseService {
   async updateForVendor({ vendor_user_id, employee_id, update, actor_user_id = vendor_user_id }) {
     const employee = await this.getScopedEmployee({ vendor_user_id, employee_id });
     let assignedLocationChanged = false;
+
+    if (
+      update.role !== undefined ||
+      update.manager_scope !== undefined ||
+      update.manager_truck_unit_id !== undefined
+    ) {
+      const foodTruck = await this.getVendorFoodTruck(vendor_user_id, employee.food_truck_id);
+      Object.assign(
+        employee,
+        this.getManagerAccess({
+          foodTruck,
+          role: update.role === undefined ? employee.role : update.role,
+          manager_scope:
+            update.manager_scope === undefined
+              ? employee.manager_scope
+              : update.manager_scope,
+          manager_truck_unit_id:
+            update.manager_truck_unit_id === undefined
+              ? employee.manager_truck_unit_id
+              : update.manager_truck_unit_id,
+        })
+      );
+    }
 
     if (update.assigned_location_id || update.assigned_truck_unit_id) {
       const foodTruck = await this.getVendorFoodTruck(

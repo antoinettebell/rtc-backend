@@ -6,6 +6,7 @@ const {
 } = require('../../models');
 const { BaseService } = require('../../common-services');
 const { getOperationalDayKey } = require('../../helper/employee-operational-day-helper');
+const { isEmployeeScheduledToday } = require('../../helper/employee-weekly-schedule');
 
 const toNumber = (value) => {
   const amount = Number(value);
@@ -811,8 +812,11 @@ class EmployeeSessionService extends BaseService {
             operational_day_key: sessionOperationalDayKey,
             can_override_clock_in:
               !session?.is_active &&
-              !!session?.ended_at &&
-              sessionOperationalDayKey === currentOperationalDayKey,
+              (
+                (!!session?.ended_at &&
+                  sessionOperationalDayKey === currentOperationalDayKey) ||
+                isEmployeeScheduledToday(employee, now, timeZone)
+              ),
             is_vendor_override: !!session?.is_vendor_override,
             override_reason: session?.override_reason || null,
             override_approved_by_user_id:

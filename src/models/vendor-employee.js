@@ -158,9 +158,22 @@ const mSchema = mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['EMPLOYEE'],
+      enum: ['EMPLOYEE', 'MANAGER'],
       default: 'EMPLOYEE',
-      immutable: true,
+    },
+    manager_scope: {
+      type: String,
+      enum: ['NONE', 'TRUCK_UNIT', 'ALL_TRUCKS'],
+      default: 'NONE',
+    },
+    manager_truck_unit_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+      index: true,
+    },
+    manager_truck_unit_name: {
+      type: String,
+      default: null,
     },
     employee_rate: {
       type: Number,

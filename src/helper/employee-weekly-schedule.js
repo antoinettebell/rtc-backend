@@ -14,6 +14,25 @@ const getZonedParts = (date, timeZone) => {
   return { dayIndex: DAY_KEYS.indexOf(String(parts.weekday || '').slice(0, 3).toLowerCase()), minutes: Number(parts.hour) * 60 + Number(parts.minute) };
 };
 
+const isEmployeeScheduledToday = (
+  employee = {},
+  now = new Date(),
+  timeZone = 'America/New_York'
+) => {
+  const { dayIndex } = getZonedParts(now, timeZone);
+  const day = DAY_KEYS[dayIndex];
+  const assignments = Array.isArray(employee.schedule_assignments)
+    ? employee.schedule_assignments
+    : [];
+  const schedules = assignments.length
+    ? assignments.map((assignment) => assignment.days || [])
+    : [employee.weekly_schedule || []];
+
+  return schedules.some((schedule) =>
+    schedule.some((entry) => entry?.day === day && entry?.enabled)
+  );
+};
+
 const getEmployeeScheduleState = (schedule = [], now = new Date(), timeZone = 'America/New_York') => {
   const { dayIndex, minutes } = getZonedParts(now, timeZone);
   const entries = new Map((schedule || []).map((entry) => [entry.day, entry]));
@@ -82,4 +101,5 @@ module.exports = {
   getEmployeeScheduleState,
   getEmployeeScheduleAssignment,
   getEffectiveEmployeeAssignment,
+  isEmployeeScheduledToday,
 };

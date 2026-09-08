@@ -3,6 +3,7 @@ const {
   getEmployeeScheduleState,
   getEmployeeScheduleAssignment,
   getEffectiveEmployeeAssignment,
+  isEmployeeScheduledToday,
 } = require('./employee-weekly-schedule');
 
 const monday = [{ day: 'mon', enabled: true, clock_in: '09:00', clock_out: '17:00' }];
@@ -57,6 +58,14 @@ assert.equal(legacyEffective.truckUnitId, 'legacy-truck');
 assert.equal(
   getEmployeeScheduleAssignment(assignments, new Date('2026-08-06T10:30:00Z'), 'UTC'),
   null
+);
+assert.equal(
+  isEmployeeScheduledToday({ weekly_schedule: monday }, new Date('2026-08-03T23:00:00Z'), 'UTC'),
+  true
+);
+assert.equal(
+  isEmployeeScheduledToday({ weekly_schedule: monday }, new Date('2026-08-04T23:00:00Z'), 'UTC'),
+  false
 );
 
 console.log('employee weekly schedule tests passed');

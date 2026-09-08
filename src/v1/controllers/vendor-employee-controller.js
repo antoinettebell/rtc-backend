@@ -15,6 +15,7 @@ const {
   getEmployeeScheduleState,
   getEmployeeScheduleAssignment,
   getEffectiveEmployeeAssignment,
+  isEmployeeScheduledToday,
 } = require('../../helper/employee-weekly-schedule');
 
 const entityName = 'VendorEmployee';
@@ -34,6 +35,34 @@ const assertEmployeeManagementAllowed = async (foodTruck) => {
 const buildTempPin = () => String(crypto.randomInt(1000, 10000));
 const parseBooleanFlag = (value) =>
   value === true || String(value).toLowerCase() === 'true';
+
+const isManager = (user) =>
+  user?.userType === 'EMPLOYEE' && user?.role === 'MANAGER';
+
+const employeeIsInManagerScope = (manager, employee) => {
+  if (manager.manager_scope === 'ALL_TRUCKS') return true;
+  if (manager.manager_scope !== 'TRUCK_UNIT' || !manager.manager_truck_unit_id) {
+    return false;
+  }
+  const managerTruckId = manager.manager_truck_unit_id.toString();
+  if (employee.assigned_truck_unit_id?.toString() === managerTruckId) return true;
+  return (employee.schedule_assignments || []).some(
+    (assignment) => assignment.truck_unit_id?.toString() === managerTruckId
+  );
+};
+
+const assertManagerCanManageEmployee = (manager, employee) => {
+  if (!isManager(manager)) {
+    const error = new Error('Manager access is required.');
+    error.code = 403;
+    throw error;
+  }
+  if (!employeeIsInManagerScope(manager, employee)) {
+    const error = new Error('This employee is outside your assigned food truck scope.');
+    error.code = 403;
+    throw error;
+  }
+};
 
 const sendAdminPinResetEmail = async ({
   vendor,
@@ -87,6 +116,39 @@ exports.list = async (req, res, next) => {
     return res.data(
       { [`${entityName.toLocaleLowerCase()}List`]: data },
       `${entityName} items`
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.managerList = async (req, res, next) => {
+  try {
+    const { user, query } = req;
+    if (!isManager(user)) {
+      return res.error(new Error('Manager access is required.'), 403);
+    }
+
+    const foodTruck = await Service.getVendorFoodTruck(
+      user.vendor_user_id,
+      user.food_truck_id
+    );
+    await assertEmployeeManagementAllowed(foodTruck);
+    const employees = await Service.listForVendor({
+      vendor_user_id: user.vendor_user_id,
+      food_truck_id: user.food_truck_id,
+      includeArchived: false,
+      archivedOnly: false,
+    });
+    const scopedEmployees = employees.filter(
+      (employee) =>
+        employee.employee_internal_id !== user.employee_internal_id &&
+        employeeIsInManagerScope(user, employee)
+    );
+
+    return res.data(
+      { [`${entityName.toLocaleLowerCase()}List`]: scopedEmployees },
+      'Manager employee list'
     );
   } catch (e) {
     return next(e);
@@ -182,6 +244,53 @@ exports.archiveShiftHistory = async (req, res, next) => {
   }
 };
 
+const runManagedShiftAction = async ({ employee, foodTruck, action, reason, approvedByUserId }) => {
+  let employeeSession = null;
+  if (action === 'END') {
+    employeeSession = await EmployeeSessionService.endSession({
+      employeeInternalId: employee.employee_internal_id,
+    });
+    if (!employeeSession) {
+      throw Object.assign(new Error('No active shift found to end'), { code: 409 });
+    }
+  } else if (action === 'OVERRIDE_START') {
+    const timeZone = foodTruck.schedule_time_zone || 'America/New_York';
+    const latestSession = await EmployeeSessionService.getLatestOperationalDaySession(
+      employee.employee_internal_id,
+      employee.food_truck_id,
+      timeZone
+    );
+    if (latestSession?.is_active) {
+      throw Object.assign(new Error('Employee shift is already active'), { code: 409 });
+    }
+    if (!latestSession?.ended_at && !isEmployeeScheduledToday(employee, new Date(), timeZone)) {
+      throw Object.assign(new Error('Employee is not scheduled to work today.'), { code: 403 });
+    }
+    const scheduled = employee.schedule_assignments?.length
+      ? getEmployeeScheduleAssignment(employee.schedule_assignments, new Date(), timeZone)
+      : null;
+    const overrideLocationId =
+      scheduled?.assignment?.location_id || latestSession?.location_id || employee.assigned_location_id;
+    employeeSession = await EmployeeSessionService.startSessionForEmployee({
+      employee,
+      foodTruck,
+      assignedLocation: (foodTruck.locations || []).find(
+        (location) => location._id?.toString() === overrideLocationId?.toString()
+      ),
+      isVendorOverride: true,
+      overrideReason: reason,
+      approvedByUserId,
+    });
+    if (!employee.is_working) {
+      employee.is_working = true;
+      await employee.save();
+    }
+  } else {
+    throw Object.assign(new Error('Invalid shift action'), { code: 409 });
+  }
+  return employeeSession;
+};
+
 exports.vendorShiftAction = async (req, res, next) => {
   try {
     const {
@@ -210,52 +319,52 @@ exports.vendorShiftAction = async (req, res, next) => {
     );
     await assertEmployeeManagementAllowed(foodTruck);
 
-    let employeeSession = null;
-    if (action === 'END') {
-      employeeSession = await EmployeeSessionService.endSession({
-        employeeInternalId: employee.employee_internal_id,
-      });
-      if (!employeeSession) {
-        return res.error(new Error('No active shift found to end'), 409);
-      }
-    } else if (action === 'OVERRIDE_START') {
-      const latestSession = await EmployeeSessionService.getLatestOperationalDaySession(
-        employee.employee_internal_id,
-        employee.food_truck_id,
-        foodTruck.schedule_time_zone || 'America/New_York'
-      );
-      if (!latestSession?.ended_at || latestSession.is_active) {
-        return res.error(new Error('No clocked-out shift exists for this operational day'), 409);
-      }
-      const scheduled = employee.schedule_assignments?.length
-        ? getEmployeeScheduleAssignment(
-            employee.schedule_assignments,
-            new Date(),
-            foodTruck.schedule_time_zone || 'America/New_York'
-          )
-        : null;
-      const overrideLocationId =
-        scheduled?.assignment?.location_id ||
-        latestSession.location_id ||
-        employee.assigned_location_id;
-      employeeSession = await EmployeeSessionService.startSessionForEmployee({
-        employee,
-        foodTruck,
-        assignedLocation: (foodTruck.locations || []).find(
-          (location) => location._id?.toString() === overrideLocationId?.toString()
-        ),
-        isVendorOverride: true,
-        overrideReason: reason,
-        approvedByUserId: user._id,
-      });
-      if (!employee.is_working) {
-        employee.is_working = true;
-        await employee.save();
-      }
-    } else {
-      return res.error(new Error('Invalid shift action'), 409);
-    }
+    const employeeSession = await runManagedShiftAction({
+      employee,
+      foodTruck,
+      action,
+      reason,
+      approvedByUserId: user._id,
+    });
 
+    return res.data({ employeeSession }, 'Employee shift updated');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.managerShiftAction = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { action, reason } = req.body;
+    const { user } = req;
+    const employee = await Service.getScopedEmployee({
+      vendor_user_id: user.vendor_user_id,
+      employee_id: id,
+      includeArchived: true,
+    });
+    assertManagerCanManageEmployee(user, employee);
+    if (employee.employee_internal_id === user.employee_internal_id) {
+      return res.error(
+        new Error('Managers cannot override their own shift. Please see the vendor.'),
+        403
+      );
+    }
+    if (employee.is_archived || !employee.is_active) {
+      return res.error(new Error('Employee is not active.'), 403);
+    }
+    const foodTruck = await Service.getVendorFoodTruck(
+      user.vendor_user_id,
+      employee.food_truck_id
+    );
+    await assertEmployeeManagementAllowed(foodTruck);
+    const employeeSession = await runManagedShiftAction({
+      employee,
+      foodTruck,
+      action,
+      reason,
+      approvedByUserId: user._id,
+    });
     return res.data({ employeeSession }, 'Employee shift updated');
   } catch (e) {
     return next(e);
@@ -282,6 +391,9 @@ exports.add = async (req, res, next) => {
 	        employee_tax_identifier,
 	        employee_rate,
 	        pin,
+        role,
+        manager_scope,
+        manager_truck_unit_id,
         is_active,
         is_working,
       },
@@ -309,6 +421,9 @@ exports.add = async (req, res, next) => {
 	      employee_tax_identifier,
 	      employee_rate,
 	      pin,
+      role,
+      manager_scope,
+      manager_truck_unit_id,
       is_active,
       is_working,
     });
@@ -537,6 +652,9 @@ exports.adminAdd = async (req, res, next) => {
 	        employee_rate,
 	        tap_to_pay_serial_number,
 	        pin,
+        role,
+        manager_scope,
+        manager_truck_unit_id,
         is_active,
         is_working,
       },
@@ -561,6 +679,9 @@ exports.adminAdd = async (req, res, next) => {
 	      employee_rate,
 	      tap_to_pay_serial_number,
 	      pin,
+      role,
+      manager_scope,
+      manager_truck_unit_id,
       is_active,
       is_working,
     });
@@ -1062,10 +1183,36 @@ exports.reviewRefundCancelRequest = async (req, res, next) => {
       user,
     } = req;
 
+    let vendorUserId = user._id;
+    let reviewedByEmployeeInternalId = null;
+    if (user.userType === 'EMPLOYEE') {
+      if (!isManager(user)) {
+        return res.error(new Error('Manager access is required.'), 403);
+      }
+      const requests = await EmployeeRefundCancelRequestService.listForVendor({
+        vendorUserId: user.vendor_user_id,
+        foodTruckId: user.food_truck_id,
+        limit: 250,
+      });
+      const request = requests.find((item) => item.request_id === requestId);
+      if (!request) return res.error(new Error('Request not found or access denied.'), 404);
+      const employee = await Service.getByData(
+        {
+          employee_internal_id: request.employee_internal_id,
+          vendor_user_id: user.vendor_user_id,
+        },
+        { singleResult: true }
+      );
+      assertManagerCanManageEmployee(user, employee);
+      vendorUserId = user.vendor_user_id;
+      reviewedByEmployeeInternalId = user.employee_internal_id;
+    }
+
     const result = await EmployeeRefundCancelRequestService.reviewForVendor({
-      vendorUserId: user._id,
+      vendorUserId,
       requestId,
       ...body,
+      reviewedByEmployeeInternalId,
     });
 
     return res.data(result, 'Refund/cancel request reviewed');

@@ -249,7 +249,7 @@ class EmployeeRefundCancelRequestService extends BaseService {
       .lean();
   }
 
-  async reviewForVendor({ vendorUserId, requestId, request_status, vendor_response_notes }) {
+  async reviewForVendor({ vendorUserId, requestId, request_status, vendor_response_notes, reviewedByEmployeeInternalId = null }) {
     const request = await Model.findOne({ request_id: requestId });
     if (!request) {
       throw buildError('Request not found.', 404);
@@ -279,6 +279,7 @@ class EmployeeRefundCancelRequestService extends BaseService {
       request.request_status = 'REJECTED';
       request.reviewed_at = new Date();
       request.reviewed_by_vendor_user_id = vendorUserId;
+      request.reviewed_by_employee_internal_id = reviewedByEmployeeInternalId;
       request.vendor_response_notes = vendor_response_notes || null;
       const order = await OrderService.getById(request.order_id);
       if (order && request.request_type === 'REFUND') {
@@ -298,6 +299,7 @@ class EmployeeRefundCancelRequestService extends BaseService {
     request.request_status = 'APPROVED';
     request.reviewed_at = new Date();
     request.reviewed_by_vendor_user_id = vendorUserId;
+    request.reviewed_by_employee_internal_id = reviewedByEmployeeInternalId;
     request.vendor_response_notes = vendor_response_notes || null;
     await request.save();
 

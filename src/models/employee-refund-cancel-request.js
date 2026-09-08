@@ -86,6 +86,10 @@ const mSchema = mongoose.Schema(
       ref: 'users',
       default: null,
     },
+    reviewed_by_employee_internal_id: {
+      type: String,
+      default: null,
+    },
     vendor_response_notes: {
       type: String,
       default: null,

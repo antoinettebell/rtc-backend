@@ -26,6 +26,19 @@ router.post(
 
 router.get('/dashboard', allowedTo(['EMPLOYEE']), Controller.dashboard);
 
+router.get(
+  '/manager/employees',
+  allowedTo(['EMPLOYEE']),
+  Controller.managerList
+);
+
+router.post(
+  '/manager/employees/:id/session/action',
+  allowedTo(['EMPLOYEE']),
+  validate(Validation.vendorShiftAction),
+  Controller.managerShiftAction
+);
+
 router.post('/session/end', allowedTo(['EMPLOYEE']), Controller.endSession);
 
 router.post('/session/duty', allowedTo(['EMPLOYEE']), Controller.toggleDuty);
@@ -50,7 +63,7 @@ router.post(
 
 router.put(
   '/refund-cancel-requests/:requestId/review',
-  allowedTo(['VENDOR']),
+  allowedTo(['VENDOR', 'EMPLOYEE']),
   validate(Validation.reviewRefundCancelRequest),
   Controller.reviewRefundCancelRequest
 );
