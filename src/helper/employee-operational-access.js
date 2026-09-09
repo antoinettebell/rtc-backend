@@ -21,11 +21,20 @@ const isAssignedEmployeeLocationOpen = ({
     return false;
   }
 
-  return (assignedTruckUnit.open_locations || []).some(
+  const isTruckLocationOpen = (assignedTruckUnit.open_locations || []).some(
     (location) =>
       idsMatch(location?.locationId || location?.location_id, assignedLocationId) &&
       location?.isOrderingOpen === true
   );
+
+  // Weekly schedule reconciliation also updates the canonical location record.
+  // Keep employee order access consistent with the dashboard when an older
+  // truck-unit record has not yet reflected that reconciled state.
+  const assignedLocation = (foodTruck.locations || []).find((location) =>
+    idsMatch(location?._id, assignedLocationId)
+  );
+
+  return isTruckLocationOpen || assignedLocation?.isOrderingOpen === true;
 };
 
 const assertAssignedEmployeeLocationOpen = (context) => {

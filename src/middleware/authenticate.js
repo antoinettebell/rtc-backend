@@ -163,7 +163,7 @@ const Authenticate = async (req, res, next) => {
 
       if (!isShiftExempt && isEmployeeOrderOperation(req)) {
         const foodTruck = await FoodTruckModel.findById(employee.food_truck_id)
-          .select('truck_units')
+          .select('truck_units locations')
           .lean();
         try {
           assertAssignedEmployeeLocationOpen({

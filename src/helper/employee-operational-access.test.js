@@ -26,6 +26,21 @@ const buildFoodTruck = ({ assignedOpen = false, otherOpen = false } = {}) => ({
   ],
 });
 
+const buildFoodTruckWithReconciledLocation = () => ({
+  truck_units: [
+    {
+      _id: assignedTruckUnitId,
+      open_locations: [],
+    },
+  ],
+  locations: [
+    {
+      _id: assignedLocationId,
+      isOrderingOpen: true,
+    },
+  ],
+});
+
 assert.equal(
   isAssignedEmployeeLocationOpen({
     foodTruck: buildFoodTruck({ assignedOpen: true }),
@@ -34,6 +49,16 @@ assert.equal(
   }),
   true,
   'the exact assigned truck/location is operational'
+);
+
+assert.equal(
+  isAssignedEmployeeLocationOpen({
+    foodTruck: buildFoodTruckWithReconciledLocation(),
+    assignedTruckUnitId,
+    assignedLocationId,
+  }),
+  true,
+  'the reconciled assigned location authorizes orders when its truck-unit cache is stale'
 );
 
 assert.throws(
