@@ -4,6 +4,7 @@ const {
   getEmployeeScheduleAssignment,
   getEffectiveEmployeeAssignment,
   isEmployeeScheduledToday,
+  findOverlappingScheduleAssignment,
 } = require('./employee-weekly-schedule');
 
 const monday = [{ day: 'mon', enabled: true, clock_in: '09:00', clock_out: '17:00' }];
@@ -66,6 +67,39 @@ assert.equal(
 assert.equal(
   isEmployeeScheduledToday({ weekly_schedule: monday }, new Date('2026-08-04T23:00:00Z'), 'UTC'),
   false
+);
+
+const splitDayAssignments = [
+  { truck_unit_id: 'truck-a', location_id: 'location-a', days: [{ day: 'tue', enabled: true, clock_in: '09:00', clock_out: '13:00' }] },
+  { truck_unit_id: 'truck-b', location_id: 'location-b', days: [{ day: 'tue', enabled: true, clock_in: '13:00', clock_out: '17:00' }] },
+];
+assert.equal(
+  findOverlappingScheduleAssignment(splitDayAssignments),
+  null,
+  'back-to-back shifts on different trucks are allowed'
+);
+assert.equal(
+  getEmployeeScheduleAssignment(
+    splitDayAssignments,
+    new Date('2026-08-04T13:00:00Z'),
+    'UTC'
+  ).assignment.truck_unit_id,
+  'truck-b',
+  'a back-to-back handoff selects the later truck at its scheduled start'
+);
+assert.ok(
+  findOverlappingScheduleAssignment([
+    splitDayAssignments[0],
+    { truck_unit_id: 'truck-b', location_id: 'location-b', days: [{ day: 'tue', enabled: true, clock_in: '12:30', clock_out: '17:00' }] },
+  ]),
+  'overlapping shifts on the same day are rejected'
+);
+assert.ok(
+  findOverlappingScheduleAssignment([
+    { truck_unit_id: 'truck-a', location_id: 'location-a', days: [{ day: 'sat', enabled: true, clock_in: '22:00', clock_out: '02:00' }] },
+    { truck_unit_id: 'truck-b', location_id: 'location-b', days: [{ day: 'sun', enabled: true, clock_in: '01:00', clock_out: '05:00' }] },
+  ]),
+  'overnight shifts cannot overlap a next-day assignment'
 );
 
 console.log('employee weekly schedule tests passed');

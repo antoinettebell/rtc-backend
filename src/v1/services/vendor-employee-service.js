@@ -13,6 +13,7 @@ const {
   getEmployeeScheduleState,
   getEmployeeScheduleAssignment,
   getEffectiveEmployeeAssignment,
+  findOverlappingScheduleAssignment,
 } = require('../../helper/employee-weekly-schedule');
 const {
   assertVendorPlanCapability,
@@ -565,18 +566,11 @@ class VendorEmployeeService extends BaseService {
 
     if (update.schedule_assignments !== undefined) {
       const foodTruck = await this.getVendorFoodTruck(vendor_user_id, employee.food_truck_id);
-      const usedDays = new Set();
       const assignments = update.schedule_assignments.map((assignment) => {
         const location = this.getAssignedLocation(foodTruck, assignment.location_id);
         if (!location) throw buildError('Every employee schedule card needs a saved location.');
         const truck = this.getAssignedTruckUnit(foodTruck, assignment.truck_unit_id);
         const days = assignment.days.map((day) => {
-          if (day.enabled) {
-            if (usedDays.has(day.day)) {
-              throw buildError('An employee can only have one truck and location assignment per day.');
-            }
-            usedDays.add(day.day);
-          }
           return day;
         });
         return {
@@ -587,8 +581,11 @@ class VendorEmployeeService extends BaseService {
           days,
         };
       });
-      if (!usedDays.size) {
+      if (!assignments.some((assignment) => assignment.days.some((day) => day.enabled))) {
         throw buildError('Employee schedule must include at least one workday.');
+      }
+      if (findOverlappingScheduleAssignment(assignments)) {
+        throw buildError('Employee schedule assignments cannot overlap.');
       }
       employee.schedule_assignments = assignments;
       const firstActive = assignments.find((assignment) => assignment.days.some((day) => day.enabled));
