@@ -299,6 +299,11 @@ class VendorEmployeeService extends BaseService {
             week: weekShiftSummary,
           },
           has_open_shift: !!activeSession,
+          shift: {
+            is_active: !!activeSession?.is_active,
+            shift_status: activeSession?.shift_status || null,
+            break_count: activeSession?.break_count || 0,
+          },
         };
       })
     );

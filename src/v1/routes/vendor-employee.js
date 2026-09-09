@@ -96,6 +96,13 @@ router.put(
   Controller.adminUpdateShiftHistory
 );
 
+router.post(
+  '/admin/:id/shift-history/archive',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.archiveShiftHistory),
+  Controller.adminArchiveShiftHistory
+);
+
 router.put(
   '/admin/:id',
   allowedTo(['SUPER_ADMIN']),

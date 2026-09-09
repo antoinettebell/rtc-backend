@@ -253,6 +253,14 @@ const runManagedShiftAction = async ({ employee, foodTruck, action, reason, appr
     if (!employeeSession) {
       throw Object.assign(new Error('No active shift found to end'), { code: 409 });
     }
+  } else if (action === 'PAUSE') {
+    employeeSession = await EmployeeSessionService.pauseSession({
+      employeeInternalId: employee.employee_internal_id,
+    });
+  } else if (action === 'RESUME') {
+    employeeSession = await EmployeeSessionService.resumeSession({
+      employeeInternalId: employee.employee_internal_id,
+    });
   } else if (action === 'OVERRIDE_START') {
     const timeZone = foodTruck.schedule_time_zone || 'America/New_York';
     const latestSession = await EmployeeSessionService.getLatestOperationalDaySession(
@@ -739,6 +747,38 @@ exports.adminUpdateShiftHistory = async (req, res, next) => {
       allowArchived: true,
     });
     return res.data({ session }, 'Employee timecard updated');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.adminArchiveShiftHistory = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const employee = await Service.getByData(
+      { _id: id },
+      { singleResult: true }
+    );
+    if (!employee) return res.error(new Error('Employee not found'), 404);
+
+    const activeSession = await EmployeeSessionService.getActiveSession(
+      null,
+      employee.employee_internal_id
+    );
+    if (activeSession) {
+      return res.error(
+        new Error('End the employee open shift before archiving timecards.'),
+        409
+      );
+    }
+
+    const result = await EmployeeSessionService.archiveCompletedTimecards({
+      foodTruckId: employee.food_truck_id,
+      employeeInternalId: employee.employee_internal_id,
+      sessionIds: req.body.session_ids,
+      vendorUserId: req.user?._id,
+    });
+    return res.data(result, 'Employee timecards archived');
   } catch (e) {
     return next(e);
   }
