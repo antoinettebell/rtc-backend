@@ -542,14 +542,22 @@ class EmployeeSessionService extends BaseService {
     );
 
     const truckOpenLocations = assignedTruckUnit?.open_locations || [];
-    const locationIsOpen = !!assignedTruckUnit
-      ? truckOpenLocations.some(
-          (location) =>
-            location.locationId?.toString() ===
-              user.assigned_location_id?.toString() &&
-            location.isOrderingOpen
-        )
-      : false;
+    const assignedLocationId = user.assigned_location_id?.toString();
+    const isAssignedTruckLocationOpen = truckOpenLocations.some(
+      (location) =>
+        (location.locationId || location.location_id)?.toString() ===
+          assignedLocationId && location.isOrderingOpen === true,
+    );
+    const activeTruckUnitCount = (foodTruck?.truck_units || []).filter(
+      (truckUnit) => !truckUnit.is_archived,
+    ).length;
+    // Weekly scheduling maintains the location-level flag as well as the
+    // truck-unit pair. Legacy/single-truck records can lack the nested pair,
+    // so use that canonical location state only where it cannot grant access
+    // to a different active truck.
+    const locationIsOpen =
+      isAssignedTruckLocationOpen ||
+      (activeTruckUnitCount <= 1 && assignedLocation?.isOrderingOpen === true);
 
     return {
       employee: {
