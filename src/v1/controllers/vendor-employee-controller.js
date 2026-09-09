@@ -17,6 +17,9 @@ const {
   getEffectiveEmployeeAssignment,
   isEmployeeScheduledToday,
 } = require('../../helper/employee-weekly-schedule');
+const {
+  reconcileFoodTruckWeeklySchedule,
+} = require('./webhook-controller');
 
 const entityName = 'VendorEmployee';
 
@@ -1100,6 +1103,19 @@ exports.dashboard = async (req, res, next) => {
     const { user } = req;
     const { employee, foodTruck, assignedLocation, assignedTruckUnit } =
       await assertEmployeeCanUseShift(user);
+
+    // Employee Home and POS both rely on this response for operational
+    // access. Reconcile here as well as in the scheduled webhook/vendor
+    // reads so a currently open scheduled location is never reported closed
+    // merely because the maintenance timer has not run yet.
+    const scheduleResult = reconcileFoodTruckWeeklySchedule(
+      foodTruck,
+      new Date(),
+      foodTruck.schedule_time_zone || 'America/New_York'
+    );
+    if (scheduleResult.changed) {
+      await foodTruck.save();
+    }
 
     const dashboard = await EmployeeSessionService.getEmployeeDashboard({
       user: {
