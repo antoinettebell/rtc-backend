@@ -221,17 +221,6 @@ exports.archiveShiftHistory = async (req, res, next) => {
     );
     if (!employee) return res.error(new Error('Employee not found'), 404);
 
-    const activeSession = await EmployeeSessionService.getActiveSession(
-      null,
-      employee.employee_internal_id
-    );
-    if (activeSession) {
-      return res.error(
-        new Error('End the employee open shift before archiving shift history.'),
-        409
-      );
-    }
-
     const result = await EmployeeSessionService.archiveCompletedTimecards({
       foodTruckId: employee.food_truck_id,
       employeeInternalId: employee.employee_internal_id,
@@ -760,17 +749,6 @@ exports.adminArchiveShiftHistory = async (req, res, next) => {
       { singleResult: true }
     );
     if (!employee) return res.error(new Error('Employee not found'), 404);
-
-    const activeSession = await EmployeeSessionService.getActiveSession(
-      null,
-      employee.employee_internal_id
-    );
-    if (activeSession) {
-      return res.error(
-        new Error('End the employee open shift before archiving timecards.'),
-        409
-      );
-    }
 
     const result = await EmployeeSessionService.archiveCompletedTimecards({
       foodTruckId: employee.food_truck_id,
