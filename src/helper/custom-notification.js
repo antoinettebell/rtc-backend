@@ -7,7 +7,7 @@ exports.getFCMTokens = async (userIds, toGrouped = true) => {
     {
       _id: { $in: userIds },
     },
-    { _id: 1, fcmTokens: 1, firstName: 1, lastName: 1 }
+    { _id: 1, userType: 1, fcmTokens: 1, firstName: 1, lastName: 1 }
   );
   if (!toGrouped) {
     return data;
@@ -30,6 +30,7 @@ exports.getFCMTokens = async (userIds, toGrouped = true) => {
 exports.sendNotificationToUsers = async (notificationData) => {
   const tokensWithId =
     (await this.getFCMTokens(Object.keys(notificationData), false)) || [];
+  const deliveries = [];
   tokensWithId.forEach((item) => {
     const note = notificationData[item._id.toString()];
     if (note) {
@@ -40,10 +41,40 @@ exports.sendNotificationToUsers = async (notificationData) => {
         .replaceAll('{firstName}', item.firstName)
         .replaceAll('{lastName}', item.lastName);
       (item.fcmTokens || []).forEach((itm) => {
-        FCM.sendNotification(title, body, note.data || {}, itm.token);
+        if (!itm?.token) return;
+
+        deliveries.push(
+          FCM.sendNotification(
+            title,
+            body,
+            note.data || {},
+            itm.token,
+            item.userType
+          ).catch(async (error) => {
+            if (FCM.isStaleTokenError(error)) {
+              await UserModel.updateOne(
+                { _id: item._id },
+                { $pull: { fcmTokens: { token: itm.token } } }
+              );
+              console.info('Removed stale FCM token after provider rejection.', {
+                userId: item._id.toString(),
+                code: error.code,
+              });
+              return;
+            }
+
+            console.error('Push notification delivery failed.', {
+              userId: item._id.toString(),
+              userType: item.userType,
+              code: error?.code,
+              message: error?.message,
+            });
+          })
+        );
       });
     }
   });
+  await Promise.all(deliveries);
 };
 
 exports.sendNewOrderNotification = async (vendor, orderId) => {
