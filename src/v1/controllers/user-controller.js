@@ -1223,14 +1223,35 @@ exports.setFCMToken = async (req, res, next) => {
       user,
     } = req;
 
-    const item = await Service.getById(user._id);
-    item.fcmTokens = item.fcmTokens || [];
+    const normalizedToken = String(token || '').trim();
+    const normalizedDeviceId = String(deviceId || '').trim();
 
-    item.fcmTokens.push({ token, deviceId });
+    if (!normalizedToken || !normalizedDeviceId) {
+      return res.message('Token and device ID are required', 422);
+    }
+
+    const item = await Service.getById(user._id);
+    const existingTokens = item.fcmTokens || [];
+
+    // A device can refresh its FCM token at any time. Keep one current record
+    // per device/token instead of adding a duplicate on every sign-in.
+    item.fcmTokens = existingTokens.filter((entry) => {
+      const entryToken = String(entry?.token || '').trim();
+      const entryDeviceId = String(entry?.deviceId || '').trim();
+      return (
+        entryToken &&
+        entryDeviceId &&
+        entryToken !== normalizedToken &&
+        entryDeviceId !== normalizedDeviceId
+      );
+    });
+    item.fcmTokens.push({
+      token: normalizedToken,
+      deviceId: normalizedDeviceId,
+    });
 
     await item.save();
-    const data = item.fcmTokens.pop();
-    return res.data({ token: data }, 'Token added');
+    return res.data({ deviceId: normalizedDeviceId }, 'Token registered');
   } catch (e) {
     return next(e);
   }
