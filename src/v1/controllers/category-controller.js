@@ -283,6 +283,13 @@ exports.update = async (req, res, next) => {
       return res.error(new Error('No category found'), 404);
     }
 
+    if (
+      user.userType !== 'SUPER_ADMIN' &&
+      item.userId.toString() !== user._id.toString()
+    ) {
+      return res.error(new Error('No category found'), 404);
+    }
+
     if (name) {
       item.name = name;
     }

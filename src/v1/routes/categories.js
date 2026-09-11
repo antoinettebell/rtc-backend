@@ -16,7 +16,7 @@ router.get('/:id', Controller.list);
 /** [POST] /api/v1/Categories */
 router.post(
   '/',
-  allowedTo(['SUPER_ADMIN']),
+  allowedTo(['SUPER_ADMIN', 'VENDOR']),
   validate(Validation.add),
   Controller.add
 );
@@ -24,13 +24,13 @@ router.post(
 /** [PUT] /api/v1/Categories/:id */
 router.put(
   '/:id',
-  allowedTo(['SUPER_ADMIN']),
+  allowedTo(['SUPER_ADMIN', 'VENDOR']),
   validate(Validation.update),
   Controller.update
 );
 
 /** [DELETE] /api/v1/Categories/:id */
-router.delete('/:id', allowedTo(['SUPER_ADMIN']), Controller.destroy);
+router.delete('/:id', allowedTo(['SUPER_ADMIN', 'VENDOR']), Controller.destroy);
 
 
 module.exports = router;

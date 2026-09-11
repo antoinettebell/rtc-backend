@@ -849,6 +849,13 @@ exports.update = async (req, res, next) => {
       return res.error(new Error('Menu not found.'), 404);
     }
 
+    if (
+      user.userType !== 'SUPER_ADMIN' &&
+      item.userId.toString() !== user._id.toString()
+    ) {
+      return res.error(new Error('Menu not found.'), 404);
+    }
+
     if (newDish) {
       await assertNewDishAllowedForUser(user._id);
     }
