@@ -586,11 +586,6 @@ class MenuCsvImportService {
     }
 
     const addOnNames = this.parseComboAddOnNames(row);
-    const addOnCostMap = this.parseOptionCostMap(
-      row.comboAddOnAdditionalCosts,
-      'comboAddOnAdditionalCosts',
-      row._rowNumber
-    );
     const addOnIds = this.parseObjectIdArray(
       row.comboAddOnItemIds,
       'comboAddOnItemIds',
@@ -607,10 +602,8 @@ class MenuCsvImportService {
           menuItem,
           qty: addOnQuantities[index],
           isAddOn: true,
-          ...this.getConfiguredAdditionalCost(
-            addOnCostMap,
-            addOnNames[index] || menuItem
-          ),
+          hasAdditionalCost: false,
+          additionalCost: 0,
         });
       });
     } else {
@@ -642,7 +635,8 @@ class MenuCsvImportService {
         menuItem: menuItemId,
         qty: addOnQuantities[index],
         isAddOn: true,
-        ...this.getConfiguredAdditionalCost(addOnCostMap, addOnName),
+        hasAdditionalCost: false,
+        additionalCost: 0,
       });
       }
     }

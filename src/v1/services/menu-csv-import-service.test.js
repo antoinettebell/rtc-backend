@@ -194,7 +194,6 @@ assert.equal(
       comboItemAdditionalCosts: `${burgerId}:2.00`,
       comboAddOnItemIds: addOnId.toString(),
       comboAddOnQuantities: '1',
-      comboAddOnAdditionalCosts: `${addOnId}:3.00`,
     },
     new Types.ObjectId(),
     new Map()
@@ -208,7 +207,7 @@ assert.equal(
     })),
     [
       { isAddOn: false, qty: 1, hasAdditionalCost: true, additionalCost: 2 },
-      { isAddOn: true, qty: 1, hasAdditionalCost: true, additionalCost: 3 },
+      { isAddOn: true, qty: 1, hasAdditionalCost: false, additionalCost: 0 },
     ]
   );
 

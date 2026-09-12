@@ -1626,14 +1626,18 @@ const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName })
         comboMenuItemId: getComboChildId(subItemMatch),
         qty: comboItem.qty || 1,
         isAddOn: !!subItemMatch?.isAddOn,
-        hasAdditionalCost: !!subItemMatch?.hasAdditionalCost,
-        additionalCost: subItemMatch?.hasAdditionalCost
+        // Included Combo Details may carry a configured surcharge. Optional
+        // Add Ons always charge the selected item's own menu price instead.
+        hasAdditionalCost: !subItemMatch?.isAddOn && !!subItemMatch?.hasAdditionalCost,
+        additionalCost: !subItemMatch?.isAddOn && subItemMatch?.hasAdditionalCost
           ? Number(subItemMatch?.additionalCost) || 0
           : 0,
         total:
-          (selectedOptionCost + (subItemMatch?.hasAdditionalCost
-            ? Number(subItemMatch?.additionalCost) || 0
-            : 0)) * Math.max(1, Number(comboItem.qty) || 1),
+          (selectedOptionCost + (subItemMatch?.isAddOn
+            ? Number(childMenuItem?.price) || 0
+            : subItemMatch?.hasAdditionalCost
+              ? Number(subItemMatch?.additionalCost) || 0
+              : 0)) * Math.max(1, Number(comboItem.qty) || 1),
         selectedFlavors: childMenuItem?.hasFlavors ? selectedFlavors : [],
         selectedToppings: childMenuItem?.hasToppings ? selectedToppings : [],
         selectedComboSides,
