@@ -129,6 +129,7 @@ module.exports = {
           Joi.object({
             menuItem: Joi.string().trim().required(),
             qty: Joi.number().min(1),
+            isAddOn: Joi.boolean(),
             hasAdditionalCost: Joi.boolean(),
             additionalCost: Joi.number().min(0),
           })
@@ -253,9 +254,10 @@ module.exports = {
       diet: Joi.array().items(Joi.string()),
       subItem: Joi.array().items(
         Joi.object({
-          menuItem: Joi.string().trim().required(),
-          qty: Joi.number().min(1),
-          hasAdditionalCost: Joi.boolean(),
+            menuItem: Joi.string().trim().required(),
+            qty: Joi.number().min(1),
+            isAddOn: Joi.boolean(),
+            hasAdditionalCost: Joi.boolean(),
           additionalCost: Joi.number().min(0),
         })
       ),

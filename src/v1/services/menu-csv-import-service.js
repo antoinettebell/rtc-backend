@@ -417,8 +417,8 @@ class MenuCsvImportService {
     return this.parseStringArray(row.comboItemNames);
   }
 
-  parseComboItemQuantities(row, itemCount) {
-    const rawQuantities = String(row.comboItemQuantities || '')
+  parseComboItemQuantities(row, itemCount, fieldName = 'comboItemQuantities') {
+    const rawQuantities = String(row[fieldName] || '')
       .split('|')
       .map((value) => value.trim());
 
@@ -428,7 +428,7 @@ class MenuCsvImportService {
 
       if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) {
         throw new Error(
-          `Row ${row._rowNumber}: comboItemQuantities values must be whole numbers between 1 and 99.`
+          `Row ${row._rowNumber}: ${fieldName} values must be whole numbers between 1 and 99.`
         );
       }
 
@@ -438,6 +438,18 @@ class MenuCsvImportService {
 
   parseBogoItemNames(row) {
     return this.parseStringArray(row.bogoItemNames);
+  }
+
+  parseComboAddOnNames(row) {
+    return this.parseStringArray(row.comboAddOnNames);
+  }
+
+  getConfiguredAdditionalCost(costMap, name) {
+    const additionalCost = costMap.get(String(name || '').toLowerCase()) || 0;
+    return {
+      hasAdditionalCost: additionalCost > 0,
+      additionalCost,
+    };
   }
 
   buildBogoDiscountRules(row) {
@@ -518,17 +530,29 @@ class MenuCsvImportService {
   }
 
   async resolveComboSubItems(row, userId, menuItemNameMap) {
+    const comboItemNames = this.parseComboItemNames(row);
+    const comboItemCostMap = this.parseOptionCostMap(
+      row.comboItemAdditionalCosts,
+      'comboItemAdditionalCosts',
+      row._rowNumber
+    );
     const comboItemIds = this.parseComboSubItems(row);
 
+    let subItems;
     if (comboItemIds.length > 0) {
-      return comboItemIds;
-    }
+      subItems = comboItemIds.map((item, index) => ({
+        ...item,
+        isAddOn: false,
+        ...this.getConfiguredAdditionalCost(
+          comboItemCostMap,
+          comboItemNames[index] || item?.menuItem
+        ),
+      }));
+    } else {
+      const quantities = this.parseComboItemQuantities(row, comboItemNames.length);
+      subItems = [];
 
-    const comboItemNames = this.parseComboItemNames(row);
-    const quantities = this.parseComboItemQuantities(row, comboItemNames.length);
-    const subItems = [];
-
-    for (const [index, comboItemName] of comboItemNames.entries()) {
+      for (const [index, comboItemName] of comboItemNames.entries()) {
       const normalizedName = comboItemName.toLowerCase();
       let menuItemId = menuItemNameMap.get(normalizedName);
 
@@ -552,10 +576,75 @@ class MenuCsvImportService {
         );
       }
 
+        subItems.push({
+          menuItem: menuItemId,
+          qty: quantities[index],
+          isAddOn: false,
+          ...this.getConfiguredAdditionalCost(comboItemCostMap, comboItemName),
+        });
+      }
+    }
+
+    const addOnNames = this.parseComboAddOnNames(row);
+    const addOnCostMap = this.parseOptionCostMap(
+      row.comboAddOnAdditionalCosts,
+      'comboAddOnAdditionalCosts',
+      row._rowNumber
+    );
+    const addOnIds = this.parseObjectIdArray(
+      row.comboAddOnItemIds,
+      'comboAddOnItemIds',
+      row._rowNumber
+    );
+    const addOnQuantities = this.parseComboItemQuantities(
+      row,
+      addOnIds.length || addOnNames.length,
+      'comboAddOnQuantities'
+    );
+    if (addOnIds.length > 0) {
+      addOnIds.forEach((menuItem, index) => {
+        subItems.push({
+          menuItem,
+          qty: addOnQuantities[index],
+          isAddOn: true,
+          ...this.getConfiguredAdditionalCost(
+            addOnCostMap,
+            addOnNames[index] || menuItem
+          ),
+        });
+      });
+    } else {
+      for (const [index, addOnName] of addOnNames.entries()) {
+      const normalizedName = addOnName.toLowerCase();
+      let menuItemId = menuItemNameMap.get(normalizedName);
+
+      if (!menuItemId) {
+        const existingMenuItem = await MenuItemModel.findOne({
+          userId,
+          itemType: 'INDIVIDUAL',
+          name: {
+            $regex: `^${this.escapeRegex(addOnName)}$`,
+            $options: 'i',
+          },
+          deletedAt: null,
+        }).select('_id');
+
+        menuItemId = existingMenuItem?._id;
+      }
+
+      if (!menuItemId) {
+        throw new Error(
+          `Row ${row._rowNumber}: combo add on "${addOnName}" was not found. Load that individual item first.`
+        );
+      }
+
       subItems.push({
         menuItem: menuItemId,
-        qty: quantities[index],
+        qty: addOnQuantities[index],
+        isAddOn: true,
+        ...this.getConfiguredAdditionalCost(addOnCostMap, addOnName),
       });
+      }
     }
 
     return subItems;
@@ -737,10 +826,18 @@ class MenuCsvImportService {
       };
     }
 
-    const comboSideOptions = this.parseStringArray(row.comboSideOptions).slice(
-      0,
-      15
-    );
+    // `comboSideOptions` is the legacy free-text representation. New CSVs
+    // configure actual Combo Details in `comboItemNames` or `comboItemIds`.
+    // The selection count must be validated against the included Combo Detail
+    // pool, not optional add-ons and not the retired legacy field.
+    const legacyComboSideOptions = this.parseStringArray(
+      row.comboSideOptions
+    ).slice(0, 15);
+    const comboDetailChoices = this.parseComboItemNames(row).length
+      ? this.parseComboItemNames(row)
+      : this.parseStringArray(row.comboItemIds).length
+        ? this.parseStringArray(row.comboItemIds)
+        : legacyComboSideOptions;
     const comboSidesPerOrder = this.parseNumber(
       row.comboSidesPerOrder,
       1,
@@ -748,7 +845,7 @@ class MenuCsvImportService {
       row._rowNumber
     );
 
-    if (comboSideOptions.length === 0) {
+    if (comboDetailChoices.length === 0) {
       return {
         comboSideOptions: [],
         comboSideOptionCosts: [],
@@ -762,16 +859,18 @@ class MenuCsvImportService {
       );
     }
 
-    if (comboSidesPerOrder > comboSideOptions.length) {
+    if (comboSidesPerOrder > comboDetailChoices.length) {
       throw new Error(
-        `Row ${row._rowNumber}: comboSidesPerOrder cannot exceed the number of comboSideOptions.`
+        `Row ${row._rowNumber}: comboSidesPerOrder cannot exceed the number of included Combo Details.`
       );
     }
 
     return {
-      comboSideOptions,
+      // Continue importing old files unchanged, but new-format files persist
+      // no legacy free-text side choices.
+      comboSideOptions: legacyComboSideOptions,
       comboSideOptionCosts: this.buildPaidOptions(
-        comboSideOptions,
+        legacyComboSideOptions,
         this.parseOptionCostMap(row.comboSideCosts, 'comboSideCosts', row._rowNumber)
       ),
       comboSidesPerOrder,

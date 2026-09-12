@@ -682,7 +682,9 @@ exports.add = async (req, res, next) => {
       itemType === 'COMBO'
         ? normalizePaidOptions(comboSideOptionCosts, normalizedComboSideOptions)
         : [];
-    const comboChoiceCount = Array.isArray(subItem) ? subItem.length : 0;
+    const comboChoiceCount = Array.isArray(subItem)
+      ? subItem.filter((entry) => !entry?.isAddOn).length
+      : 0;
     if (
       itemType === 'COMBO' &&
       comboChoiceCount > 0 &&
@@ -939,9 +941,10 @@ exports.update = async (req, res, next) => {
             normalizedComboSideOptions
           )
         : [];
-    const nextComboChoiceCount = Array.isArray(subItem)
-      ? subItem.length
-      : Array.isArray(item.subItem) ? item.subItem.length : 0;
+    const nextComboChoiceCount = (Array.isArray(subItem)
+      ? subItem
+      : Array.isArray(item.subItem) ? item.subItem : [])
+      .filter((entry) => !entry?.isAddOn).length;
     const nextComboSidesPerOrder =
       comboSidesPerOrder === undefined
         ? item.comboSidesPerOrder

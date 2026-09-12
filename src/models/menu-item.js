@@ -226,6 +226,21 @@ const mSchema = mongoose.Schema(
           type: Number,
           default: 1,
         },
+        // Included combo choices participate in comboSidesPerOrder. Add-ons are
+        // optional and are priced only when the customer selects them.
+        isAddOn: {
+          type: Boolean,
+          default: false,
+        },
+        hasAdditionalCost: {
+          type: Boolean,
+          default: false,
+        },
+        additionalCost: {
+          type: Number,
+          default: 0,
+          min: 0,
+        },
       },
     ],
     userId: {

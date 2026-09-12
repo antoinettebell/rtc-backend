@@ -1552,13 +1552,16 @@ const findComboSubItem = (subItems = [], comboMenuItemId) => {
 
 const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName }) => {
   const subItems = Array.isArray(parentMenuItem?.subItem) ? parentMenuItem.subItem : [];
+  const includedSubItems = subItems.filter((subItem) => !subItem?.isAddOn);
+  const addOnSubItems = subItems.filter((subItem) => subItem?.isAddOn);
   const requestedItems = Array.isArray(comboItems) ? comboItems : [];
+  const requestedIncludedItems = requestedItems.filter((comboItem) => !comboItem?.isAddOn);
   const requiredCount = Math.min(
     Math.max(Number(parentMenuItem?.comboSidesPerOrder) || 1, 1),
-    subItems.length,
+    includedSubItems.length,
     5
   );
-  if (requestedItems.length !== requiredCount) {
+  if (requestedIncludedItems.length !== requiredCount) {
     throw new Error(
       `Please select exactly ${requiredCount} combo item${requiredCount === 1 ? '' : 's'} for the "${itemName}"`
     );
@@ -1566,9 +1569,12 @@ const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName })
 
   return requestedItems
     .map((comboItem) => {
-      const subItemMatch = findComboSubItem(subItems, comboItem.comboMenuItemId);
+      const subItemMatch = findComboSubItem(
+        comboItem?.isAddOn ? addOnSubItems : includedSubItems,
+        comboItem.comboMenuItemId
+      );
       if (!subItemMatch) {
-        return null;
+        throw new Error(`That item is not available with the "${itemName}" combo`);
       }
 
       const childMenuItem = getComboChildMenuItem(subItemMatch);
@@ -1619,6 +1625,7 @@ const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName })
         _id: getComboChildId(subItemMatch),
         comboMenuItemId: getComboChildId(subItemMatch),
         qty: comboItem.qty || 1,
+        isAddOn: !!subItemMatch?.isAddOn,
         hasAdditionalCost: !!subItemMatch?.hasAdditionalCost,
         additionalCost: subItemMatch?.hasAdditionalCost
           ? Number(subItemMatch?.additionalCost) || 0

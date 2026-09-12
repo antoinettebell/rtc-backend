@@ -65,6 +65,26 @@ assert.deepStrictEqual(sides.comboSideOptionCosts, [
   { name: 'Fried Okra', hasCost: true, cost: 2 },
 ]);
 
+const comboDetailsCount = menuCsvImportService.parseComboSides({
+  _rowNumber: 6,
+  itemType: 'COMBO',
+  comboItemNames: 'Fries|Drink|Pie',
+  comboSidesPerOrder: '2',
+});
+assert.equal(comboDetailsCount.comboSidesPerOrder, 2);
+assert.deepStrictEqual(comboDetailsCount.comboSideOptions, []);
+
+assert.throws(
+  () =>
+    menuCsvImportService.parseComboSides({
+      _rowNumber: 6,
+      itemType: 'COMBO',
+      comboItemNames: 'Fries|Drink',
+      comboSidesPerOrder: '3',
+    }),
+  /cannot exceed the number of included Combo Details/
+);
+
 assert.deepStrictEqual(
   menuCsvImportService.parseComboItemQuantities({ _rowNumber: 6 }, 2),
   [1, 1],
@@ -163,6 +183,34 @@ assert.equal(
   assert.equal(bogoItems[0].itemId.toString(), individualId.toString());
   assert.equal(bogoItems[0].qty, 1);
   assert.equal(bogoItems[0].isSameItem, false);
+
+  const addOnId = new Types.ObjectId();
+  const comboWithAddOns = await menuCsvImportService.resolveComboSubItems(
+    {
+      _rowNumber: 15,
+      itemType: 'COMBO',
+      comboItemIds: burgerId.toString(),
+      comboItemQuantities: '1',
+      comboItemAdditionalCosts: `${burgerId}:2.00`,
+      comboAddOnItemIds: addOnId.toString(),
+      comboAddOnQuantities: '1',
+      comboAddOnAdditionalCosts: `${addOnId}:3.00`,
+    },
+    new Types.ObjectId(),
+    new Map()
+  );
+  assert.deepStrictEqual(
+    comboWithAddOns.map((item) => ({
+      isAddOn: item.isAddOn,
+      qty: item.qty,
+      hasAdditionalCost: item.hasAdditionalCost,
+      additionalCost: item.additionalCost,
+    })),
+    [
+      { isAddOn: false, qty: 1, hasAdditionalCost: true, additionalCost: 2 },
+      { isAddOn: true, qty: 1, hasAdditionalCost: true, additionalCost: 3 },
+    ]
+  );
 
   assert.throws(
     () =>
