@@ -641,8 +641,10 @@ class OrderService extends BaseService {
     };
 
     // Calculate all periods
-    const [total, todayEarning, weeklyEarning, monthlyEarning] = await Promise.all([
+    const startOfYear = new Date(today.getFullYear(), 0, 1);
+    const [total, yearToDateEarning, todayEarning, weeklyEarning, monthlyEarning] = await Promise.all([
       getEarningsInRange(new Date(0), new Date()), // all time
+      getEarningsInRange(startOfYear, new Date()),
       getEarningsInRange(startOfDay, endOfDay),
       getEarningsInRange(startOfWeek, endOfWeek),
       getEarningsInRange(startOfMonth, endOfMonth)
@@ -650,6 +652,7 @@ class OrderService extends BaseService {
 
     return {
       totalEarning: total.adminPayment,
+      yearToDateEarning: yearToDateEarning.adminPayment,
       todayEarning: todayEarning.adminPayment,
       weeklyEarning: weeklyEarning.adminPayment,  
       monthlyEarning: monthlyEarning.adminPayment,
@@ -731,6 +734,10 @@ if (startDate && endDate) {
       case 'monthly':
         startDate = startOfMonth;
         endDate = endOfMonth;
+        break;
+      case 'yearly':
+        startDate = new Date(today.getFullYear(), 0, 1);
+        endDate = endOfDay;
         break;
       default:
         startDate = new Date(0);
@@ -942,10 +949,11 @@ if (startDate && endDate) {
     const today = new Date();
     const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
     const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-     const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+    const startOfYear = new Date(today.getFullYear(), 0, 1);
 
-    const [todayData, monthlyData] = await Promise.all([
+    const [todayData, monthlyData, yearToDateData] = await Promise.all([
       this.getHomeCountInRange(
         foodTruckId,
         startOfDay,
@@ -957,6 +965,12 @@ if (startDate && endDate) {
         startOfMonth,
         endOfMonth,
         fallbackVendorTierRate
+      ),
+      this.getHomeCountInRange(
+        foodTruckId,
+        startOfYear,
+        endOfDay,
+        fallbackVendorTierRate
       )
     ]);
 
@@ -965,6 +979,7 @@ if (startDate && endDate) {
       todayTotalOrders: todayData.totalOrders,
       todayActiveCustomers: todayData.activeCustomerCount,
       monthlyEarning: monthlyData.totalSales,
+      yearToDateEarning: yearToDateData.totalSales,
       monthlyDeliveredDessertsCount: monthlyData.deliveredDessertsCount,
       monthlyDeliveredDessertsSum: monthlyData.deliveredDessertsSum,
       monthlyActiveCustomers: monthlyData.activeCustomerCount
