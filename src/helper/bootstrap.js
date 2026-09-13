@@ -90,6 +90,7 @@ const meattExistfNotExist = async () => {
       { name: 'Pork' },
       { name: 'Lam/Goat' },
       { name: 'Fish' },
+      { name: 'Shell Fish' },
       { name: 'Vegetarian' },
       { name: 'Vegan' },
       { name: 'Mix(chicken,beef,pork,lamb,fish)' },
