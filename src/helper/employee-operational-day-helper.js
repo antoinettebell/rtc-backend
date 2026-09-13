@@ -19,4 +19,15 @@ const getOperationalDayKey = (value = new Date(), timeZone = 'America/New_York')
   return localDate.toISOString().slice(0, 10);
 };
 
-module.exports = { getOperationalDayKey };
+const isOperationalDayInRange = ({
+  value,
+  operationalDayKey,
+  startDayKey,
+  endDayKey,
+  timeZone = 'America/New_York',
+}) => {
+  const dayKey = operationalDayKey || getOperationalDayKey(value, timeZone);
+  return dayKey >= startDayKey && dayKey <= endDayKey;
+};
+
+module.exports = { getOperationalDayKey, isOperationalDayInRange };

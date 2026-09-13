@@ -5,7 +5,10 @@ const {
   EmployeeRefundCancelRequestModel,
 } = require('../../models');
 const { BaseService } = require('../../common-services');
-const { getOperationalDayKey } = require('../../helper/employee-operational-day-helper');
+const {
+  getOperationalDayKey,
+  isOperationalDayInRange,
+} = require('../../helper/employee-operational-day-helper');
 const { isEmployeeScheduledToday } = require('../../helper/employee-weekly-schedule');
 
 const toNumber = (value) => {
@@ -630,6 +633,7 @@ class EmployeeSessionService extends BaseService {
     refundCancelStatus,
   }) {
     const now = new Date();
+    const timeZone = foodTruck.schedule_time_zone || 'America/New_York';
     const start = startDate ? new Date(startDate) : new Date(now);
     if (!startDate) {
       start.setHours(0, 0, 0, 0);
@@ -699,7 +703,19 @@ class EmployeeSessionService extends BaseService {
       }).lean(),
     ]);
 
-    const sessionsByEmployee = sessions.reduce((map, session) => {
+    const startOperationalDayKey = startDate || getOperationalDayKey(start, timeZone);
+    const endOperationalDayKey = endDate || getOperationalDayKey(now, timeZone);
+    const periodSessions = sessions.filter((session) =>
+      isOperationalDayInRange({
+        value: session.started_at,
+        operationalDayKey: session.operational_day_key,
+        startDayKey: startOperationalDayKey,
+        endDayKey: endOperationalDayKey,
+        timeZone,
+      })
+    );
+
+    const sessionsByEmployee = periodSessions.reduce((map, session) => {
       if (!map[session.employee_internal_id]) {
         map[session.employee_internal_id] = session;
       }
@@ -777,11 +793,10 @@ class EmployeeSessionService extends BaseService {
         );
 	        const session =
 	          sessionsByEmployee[employee.employee_internal_id] || null;
-	        const employeeSessions = sessions.filter(
+	        const employeeSessions = periodSessions.filter(
 	          (item) => item.employee_internal_id === employee.employee_internal_id
 	        );
 	        const shiftSummary = summarizeSessions(employeeSessions);
-	        const timeZone = foodTruck.schedule_time_zone || 'America/New_York';
 	        const currentOperationalDayKey = getOperationalDayKey(now, timeZone);
 	        const sessionOperationalDayKey = session
 	          ? session.operational_day_key || getOperationalDayKey(session.started_at, timeZone)
