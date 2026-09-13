@@ -586,9 +586,6 @@ class VendorEmployeeService extends BaseService {
           days,
         };
       });
-      if (!assignments.some((assignment) => assignment.days.some((day) => day.enabled))) {
-        throw buildError('Employee schedule must include at least one workday.');
-      }
       if (findOverlappingScheduleAssignment(assignments)) {
         throw buildError('Employee schedule assignments cannot overlap.');
       }
