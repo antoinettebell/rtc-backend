@@ -952,11 +952,20 @@ if (startDate && endDate) {
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
     const startOfYear = new Date(today.getFullYear(), 0, 1);
+    const startOfWeek = new Date(today);
+    startOfWeek.setDate(today.getDate() - today.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
 
-    const [todayData, monthlyData, yearToDateData] = await Promise.all([
+    const [todayData, weeklyData, monthlyData, yearToDateData] = await Promise.all([
       this.getHomeCountInRange(
         foodTruckId,
         startOfDay,
+        endOfDay,
+        fallbackVendorTierRate
+      ),
+      this.getHomeCountInRange(
+        foodTruckId,
+        startOfWeek,
         endOfDay,
         fallbackVendorTierRate
       ),
@@ -978,6 +987,7 @@ if (startDate && endDate) {
       todaySales: todayData.totalSales,
       todayTotalOrders: todayData.totalOrders,
       todayActiveCustomers: todayData.activeCustomerCount,
+      weeklyEarning: weeklyData.totalSales,
       monthlyEarning: monthlyData.totalSales,
       yearToDateEarning: yearToDateData.totalSales,
       monthlyDeliveredDessertsCount: monthlyData.deliveredDessertsCount,
