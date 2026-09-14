@@ -300,6 +300,7 @@ class EmployeeRefundCancelRequestService extends BaseService {
       ...(orderId ? { order_id: orderId } : {}),
     })
       .sort({ requested_at: -1 })
+      .populate('order_id', 'orderNumber')
       .lean();
   }
 

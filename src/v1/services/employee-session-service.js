@@ -3,6 +3,7 @@ const {
   OrderModel,
   VendorEmployeeModel,
   EmployeeRefundCancelRequestModel,
+  FoodTruckModel,
 } = require('../../models');
 const { BaseService } = require('../../common-services');
 const {
@@ -29,6 +30,14 @@ const getCurrentDayRange = () => {
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
 
+  return { start, end };
+};
+
+const getOperationalDayQueryEnvelope = (operationalDayKey) => {
+  const start = new Date(`${operationalDayKey}T00:00:00.000Z`);
+  start.setUTCDate(start.getUTCDate() - 1);
+  const end = new Date(`${operationalDayKey}T00:00:00.000Z`);
+  end.setUTCDate(end.getUTCDate() + 2);
   return { start, end };
 };
 
@@ -433,7 +442,12 @@ class EmployeeSessionService extends BaseService {
   }
 
   async getEmployeeCurrentDayOrders(user, statuses = null) {
-    const { start, end } = getCurrentDayRange();
+    const foodTruck = await FoodTruckModel.findById(user.food_truck_id)
+      .select('schedule_time_zone')
+      .lean();
+    const timeZone = foodTruck?.schedule_time_zone || 'America/New_York';
+    const operationalDayKey = getOperationalDayKey(new Date(), timeZone);
+    const { start, end } = getOperationalDayQueryEnvelope(operationalDayKey);
     const query = {
       created_by_type: 'EMPLOYEE',
       employee_internal_id: user.employee_internal_id,
@@ -452,7 +466,15 @@ class EmployeeSessionService extends BaseService {
         : {}),
     };
 
-    return OrderModel.find(query).sort({ created_at: -1, createdAt: -1 }).lean();
+    const orders = await OrderModel.find(query)
+      .sort({ created_at: -1, createdAt: -1 })
+      .lean();
+
+    return orders.filter(
+      (order) =>
+        getOperationalDayKey(order.created_at || order.createdAt, timeZone) ===
+        operationalDayKey
+    );
   }
 
   async getEmployeeDashboard({
@@ -461,7 +483,10 @@ class EmployeeSessionService extends BaseService {
     assignedLocation,
     assignedTruckUnit = null,
   }) {
-    const { start: startOfToday, end: endOfToday } = getCurrentDayRange();
+    const timeZone = foodTruck?.schedule_time_zone || 'America/New_York';
+    const operationalDayKey = getOperationalDayKey(new Date(), timeZone);
+    const { start: startOfToday, end: endOfToday } =
+      getOperationalDayQueryEnvelope(operationalDayKey);
 
     const activeSession = await this.getActiveSession(
       user.employee_session_id,
@@ -475,7 +500,7 @@ class EmployeeSessionService extends BaseService {
         foodTruck?.schedule_time_zone || 'America/New_York'
       ));
 
-    const [todayOrders, requests, todayShiftSummary, weekShiftSummary] = await Promise.all([
+    const [queriedOrders, queriedRequests, todayShiftSummary, weekShiftSummary] = await Promise.all([
       OrderModel.find({
         created_by_type: 'EMPLOYEE',
         employee_internal_id: user.employee_internal_id,
@@ -507,6 +532,16 @@ class EmployeeSessionService extends BaseService {
         range: 'week',
       }),
     ]);
+
+    const todayOrders = queriedOrders.filter(
+      (order) =>
+        getOperationalDayKey(order.created_at || order.createdAt, timeZone) ===
+        operationalDayKey
+    );
+    const requests = queriedRequests.filter(
+      (request) =>
+        getOperationalDayKey(request.requested_at, timeZone) === operationalDayKey
+    );
 
     const completedOrders = todayOrders.filter(
       (order) => order.orderStatus === 'COMPLETED'
@@ -634,17 +669,17 @@ class EmployeeSessionService extends BaseService {
   }) {
     const now = new Date();
     const timeZone = foodTruck.schedule_time_zone || 'America/New_York';
-    const start = startDate ? new Date(startDate) : new Date(now);
-    if (!startDate) {
-      start.setHours(0, 0, 0, 0);
-    }
-
-    const end = endDate ? new Date(endDate) : new Date(start);
-    if (endDate) {
-      end.setHours(23, 59, 59, 999);
-    } else {
-      end.setDate(end.getDate() + 1);
-    }
+    const startOperationalDayKey =
+      startDate || getOperationalDayKey(now, timeZone);
+    const endOperationalDayKey =
+      endDate || getOperationalDayKey(now, timeZone);
+    // Calendar dates sent by the app describe the vendor's operational days,
+    // not UTC days. Query a safe envelope and then apply the canonical 4 AM
+    // operational-day key so late-night orders and requests stay together.
+    const queryStart = new Date(`${startOperationalDayKey}T00:00:00.000Z`);
+    queryStart.setUTCDate(queryStart.getUTCDate() - 1);
+    const queryEnd = new Date(`${endOperationalDayKey}T00:00:00.000Z`);
+    queryEnd.setUTCDate(queryEnd.getUTCDate() + 2);
 
     const employees = await VendorEmployeeModel.find({
       vendor_user_id: vendorUserId,
@@ -679,15 +714,15 @@ class EmployeeSessionService extends BaseService {
           }
         : {}),
       $or: [
-        { created_at: { $gte: start, $lte: end } },
+        { created_at: { $gte: queryStart, $lt: queryEnd } },
         {
           created_at: null,
-          createdAt: { $gte: start, $lte: end },
+          createdAt: { $gte: queryStart, $lt: queryEnd },
         },
       ],
     };
 
-    const [sessions, orders, requests] = await Promise.all([
+    const [sessions, queriedOrders, queriedRequests] = await Promise.all([
       Model.find(sessionQuery)
         .sort({ last_active_at: -1, started_at: -1 })
         .lean(),
@@ -695,7 +730,7 @@ class EmployeeSessionService extends BaseService {
       EmployeeRefundCancelRequestModel.find({
         employee_internal_id: { $in: employeeIds },
         food_truck_id: foodTruck._id,
-        requested_at: { $gte: start, $lte: end },
+        requested_at: { $gte: queryStart, $lt: queryEnd },
         ...(locationId ? { location_id: locationId } : {}),
         ...(refundCancelStatus
           ? { request_status: refundCancelStatus.toUpperCase() }
@@ -703,8 +738,22 @@ class EmployeeSessionService extends BaseService {
       }).lean(),
     ]);
 
-    const startOperationalDayKey = startDate || getOperationalDayKey(start, timeZone);
-    const endOperationalDayKey = endDate || getOperationalDayKey(now, timeZone);
+    const orders = queriedOrders.filter((order) =>
+      isOperationalDayInRange({
+        value: order.created_at || order.createdAt,
+        startDayKey: startOperationalDayKey,
+        endDayKey: endOperationalDayKey,
+        timeZone,
+      })
+    );
+    const requests = queriedRequests.filter((request) =>
+      isOperationalDayInRange({
+        value: request.requested_at,
+        startDayKey: startOperationalDayKey,
+        endDayKey: endOperationalDayKey,
+        timeZone,
+      })
+    );
     const periodSessions = sessions.filter((session) =>
       isOperationalDayInRange({
         value: session.started_at,
@@ -887,11 +936,11 @@ class EmployeeSessionService extends BaseService {
 
     return {
       filters: {
-        startDate: start,
-        endDate: end,
-	        locationId: locationId || null,
-	        truckUnitId: truckUnitId || null,
-	        employeeInternalId: employeeInternalId || null,
+        startDate: startOperationalDayKey,
+        endDate: endOperationalDayKey,
+        locationId: locationId || null,
+        truckUnitId: truckUnitId || null,
+        employeeInternalId: employeeInternalId || null,
         paymentMethod: paymentMethod || null,
         refundCancelStatus: refundCancelStatus || null,
       },

@@ -4393,6 +4393,16 @@ exports.update = async (req, res, next) => {
       }
     }
 
+    if (
+      orderStatus &&
+      (item.paymentStatus === 'REFUNDED' || item.refundStatus === 'SUCCESS')
+    ) {
+      return res.error(
+        new Error('Refunded orders can not be advanced to another status'),
+        409
+      );
+    }
+
     if (paymentStatus) {
       if (
         !(
