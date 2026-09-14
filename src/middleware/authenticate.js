@@ -12,6 +12,7 @@ const {
   getEmployeeScheduleState,
   getEmployeeScheduleAssignment,
   getEffectiveEmployeeAssignment,
+  getEmployeeScheduledEndAt,
 } = require('../helper/employee-weekly-schedule');
 const { FoodTruckModel } = require('../models');
 const EmployeeSessionService = require('../v1/services/employee-session-service');
@@ -125,9 +126,17 @@ const Authenticate = async (req, res, next) => {
               assignmentFoodTruck?.schedule_time_zone || 'America/New_York'
             );
         if (!scheduleState.withinWindow) {
+          const now = new Date();
           await EmployeeSessionService.endSession({
             employeeSessionId: activeSession.employee_session_id,
             employeeInternalId: employee.employee_internal_id,
+            endedAt: getEmployeeScheduledEndAt({
+              employee,
+              session: activeSession,
+              now,
+              timeZone:
+                assignmentFoodTruck?.schedule_time_zone || 'America/New_York',
+            }) || now,
           });
           await VendorEmployeeModel.updateOne(
             { _id: employee._id },

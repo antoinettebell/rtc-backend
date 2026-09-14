@@ -263,7 +263,7 @@ class EmployeeSessionService extends BaseService {
     );
   }
 
-  async endSession({ employeeSessionId, employeeInternalId }) {
+  async endSession({ employeeSessionId, employeeInternalId, endedAt = new Date() }) {
     if (!employeeSessionId && !employeeInternalId) {
       return null;
     }
@@ -273,10 +273,18 @@ class EmployeeSessionService extends BaseService {
       return null;
     }
 
+    const requestedEnd = new Date(endedAt);
+    const startedAt = new Date(session.started_at);
     const now = new Date();
+    const safeEnd = Number.isNaN(requestedEnd.getTime())
+      ? now
+      : new Date(Math.min(requestedEnd.getTime(), now.getTime()));
+    if (!Number.isNaN(startedAt.getTime()) && safeEnd.getTime() < startedAt.getTime()) {
+      safeEnd.setTime(startedAt.getTime());
+    }
     return Model.findOneAndUpdate(
       { _id: session._id },
-      getCloseShiftUpdate(session, now),
+      getCloseShiftUpdate(session, safeEnd),
       { new: true }
     );
   }

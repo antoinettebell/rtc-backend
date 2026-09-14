@@ -45,10 +45,118 @@ const findOverlappingScheduleAssignment = (assignments = []) => {
 };
 
 const getZonedParts = (date, timeZone) => {
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
     .formatToParts(date)
     .reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
-  return { dayIndex: DAY_KEYS.indexOf(String(parts.weekday || '').slice(0, 3).toLowerCase()), minutes: Number(parts.hour) * 60 + Number(parts.minute) };
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    dayOfMonth: Number(parts.day),
+    dayIndex: DAY_KEYS.indexOf(String(parts.weekday || '').slice(0, 3).toLowerCase()),
+    minutes: Number(parts.hour) * 60 + Number(parts.minute),
+  };
+};
+
+const getTimeZoneOffsetMs = (date, timeZone) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  })
+    .formatToParts(date)
+    .reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
+  return Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second)
+  ) - date.getTime();
+};
+
+const zonedDateTimeToUtc = ({ year, month, day, hour, minute }, timeZone) => {
+  const utcGuess = new Date(Date.UTC(year, month - 1, day, hour, minute));
+  let result = new Date(utcGuess.getTime() - getTimeZoneOffsetMs(utcGuess, timeZone));
+  const correctedOffset = getTimeZoneOffsetMs(result, timeZone);
+  if (correctedOffset !== getTimeZoneOffsetMs(utcGuess, timeZone)) {
+    result = new Date(utcGuess.getTime() - correctedOffset);
+  }
+  return result;
+};
+
+const getEmployeeScheduledEndAt = ({
+  employee = {},
+  session = {},
+  now = new Date(),
+  timeZone = 'America/New_York',
+}) => {
+  const startedAt = new Date(session?.started_at);
+  if (Number.isNaN(startedAt.getTime())) return null;
+
+  const assignments = Array.isArray(employee.schedule_assignments)
+    ? employee.schedule_assignments
+    : [];
+  const schedules = assignments.length
+    ? assignments.map((assignment) => assignment.days || [])
+    : [employee.weekly_schedule || []];
+  const localStart = getZonedParts(startedAt, timeZone);
+  const candidates = [];
+
+  for (const dayOffset of [-1, 0, 1]) {
+    const localDate = new Date(Date.UTC(
+      localStart.year,
+      localStart.month - 1,
+      localStart.dayOfMonth + dayOffset
+    ));
+    const dayKey = DAY_KEYS[localDate.getUTCDay()];
+
+    for (const schedule of schedules) {
+      for (const entry of schedule || []) {
+        if (!entry?.enabled || entry.day !== dayKey) continue;
+        const startMinutes = parseTime(entry.clock_in);
+        const endMinutes = parseTime(entry.clock_out);
+        if (startMinutes === null || endMinutes === null) continue;
+
+        const startAt = zonedDateTimeToUtc({
+          year: localDate.getUTCFullYear(),
+          month: localDate.getUTCMonth() + 1,
+          day: localDate.getUTCDate(),
+          hour: Math.floor(startMinutes / 60),
+          minute: startMinutes % 60,
+        }, timeZone);
+        const endDate = new Date(localDate);
+        if (endMinutes <= startMinutes) endDate.setUTCDate(endDate.getUTCDate() + 1);
+        const endAt = zonedDateTimeToUtc({
+          year: endDate.getUTCFullYear(),
+          month: endDate.getUTCMonth() + 1,
+          day: endDate.getUTCDate(),
+          hour: Math.floor(endMinutes / 60),
+          minute: endMinutes % 60,
+        }, timeZone);
+        const earliestStart = startAt.getTime() - EARLY_MINUTES * 60000;
+        const latestStart = endAt.getTime() + LATE_MINUTES * 60000;
+        if (startedAt.getTime() >= earliestStart && startedAt.getTime() <= latestStart) {
+          candidates.push({ startAt, endAt });
+        }
+      }
+    }
+  }
+
+  if (!candidates.length) return null;
+  candidates.sort(
+    (left, right) =>
+      Math.abs(left.startAt.getTime() - startedAt.getTime()) -
+      Math.abs(right.startAt.getTime() - startedAt.getTime())
+  );
+  const scheduledEnd = candidates[0].endAt;
+  if (scheduledEnd.getTime() > new Date(now).getTime()) return null;
+  return new Date(Math.max(scheduledEnd.getTime(), startedAt.getTime()));
 };
 
 const isEmployeeScheduledToday = (
@@ -176,5 +284,6 @@ module.exports = {
   isWithinScheduledShift,
   getEmployeeScheduleAssignment,
   getEffectiveEmployeeAssignment,
+  getEmployeeScheduledEndAt,
   isEmployeeScheduledToday,
 };
