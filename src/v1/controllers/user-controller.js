@@ -7,6 +7,7 @@ const {
   OrderService,
   SettingService,
   AdminNotificationService,
+  VendorEmployeeService,
 } = require('../services');
 const EncryptionService = require('../../helper/encryption');
 const { normalizeVendorPlan } = require('../../helper/vendor-plan-helper');
@@ -28,6 +29,11 @@ const {
 } = require('../../helper/bank-detail-payment-method');
 const CustomNotification = require('../../helper/custom-notification');
 const { hydrateEventVendorUser } = require('../../helper/event-vendor-user-hydration');
+
+const getPushTokenOwner = (user) =>
+  user.userType === 'EMPLOYEE'
+    ? VendorEmployeeService.getById(user._id)
+    : Service.getById(user._id);
 
 /**
  * To list out or find data by id of given collection
@@ -1230,7 +1236,7 @@ exports.setFCMToken = async (req, res, next) => {
       return res.message('Token and device ID are required', 422);
     }
 
-    const item = await Service.getById(user._id);
+    const item = await getPushTokenOwner(user);
     const existingTokens = item.fcmTokens || [];
 
     // A device can refresh its FCM token at any time. Keep one current record
@@ -1274,7 +1280,7 @@ exports.updateFCMToken = async (req, res, next) => {
     } = req;
 
     let data = null;
-    const item = await Service.getById(user._id);
+    const item = await getPushTokenOwner(user);
     item.fcmTokens = (item.fcmTokens || []).map((itm) => {
       if (itm.deviceId.toString() === deviceId) {
         itm.token = token;
@@ -1309,7 +1315,7 @@ exports.removeFCMToken = async (req, res, next) => {
       user,
     } = req;
 
-    const item = await Service.getById(user._id);
+    const item = await getPushTokenOwner(user);
     item.fcmTokens = (item.fcmTokens || []).filter(
       (itm) => itm.deviceId.toString() !== deviceId
     );

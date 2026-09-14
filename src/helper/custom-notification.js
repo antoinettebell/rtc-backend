@@ -1,4 +1,4 @@
-const { UserModel } = require('../models');
+const { UserModel, VendorEmployeeModel } = require('../models');
 const FCM = require('./fcm');
 
 exports.getFCMTokens = async (userIds, toGrouped = true) => {
@@ -77,6 +77,38 @@ exports.sendNotificationToUsers = async (notificationData) => {
   await Promise.all(deliveries);
 };
 
+exports.sendNotificationToEmployees = async (employees, note) => {
+  const deliveries = [];
+  (employees || []).forEach((employee) => {
+    (employee.fcmTokens || []).forEach((item) => {
+      if (!item?.token) return;
+      deliveries.push(
+        FCM.sendNotification(
+          note.title,
+          note.body,
+          note.data || {},
+          item.token,
+          'EMPLOYEE'
+        ).catch(async (error) => {
+          if (FCM.isStaleTokenError(error)) {
+            await VendorEmployeeModel.updateOne(
+              { _id: employee._id },
+              { $pull: { fcmTokens: { token: item.token } } }
+            );
+            return;
+          }
+          console.error('Manager push notification delivery failed.', {
+            employeeInternalId: employee.employee_internal_id,
+            code: error?.code,
+            message: error?.message,
+          });
+        })
+      );
+    });
+  });
+  await Promise.all(deliveries);
+};
+
 exports.sendNewOrderNotification = async (vendor, orderId) => {
   try {
     const title = 'New order';
@@ -101,7 +133,8 @@ exports.sendNewOrderNotification = async (vendor, orderId) => {
 exports.sendEmployeeRefundCancelRequestNotification = async (
   vendor,
   request,
-  order
+  order,
+  eligibleManagers = []
 ) => {
   try {
     const title = 'Employee refund/cancel request';
@@ -119,6 +152,11 @@ exports.sendEmployeeRefundCancelRequestNotification = async (
     };
 
     await this.sendNotificationToUsers(noteData);
+    await this.sendNotificationToEmployees(eligibleManagers, {
+      title,
+      body,
+      data: noteData[vendor._id.toString()].data,
+    });
   } catch (e) {
     console.log('========Error in sendEmployeeRefundCancelRequestNotification', e);
   }

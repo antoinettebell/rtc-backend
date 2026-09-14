@@ -1,5 +1,6 @@
 const {
   EmployeeRefundCancelRequestModel: Model,
+  VendorEmployeeModel,
 } = require('../../models');
 const { BaseService } = require('../../common-services');
 const FoodTruckService = require('./food-truck-service');
@@ -28,6 +29,25 @@ const isCashPaymentMethod = (paymentMethod) =>
 
 const isGatewayPaymentMethod = (paymentMethod) =>
   !isCashPaymentMethod(paymentMethod);
+
+const currentEligibleManagers = ({ vendorUserId, foodTruckId, locationId, truckUnitId, submittingEmployeeId }) =>
+  VendorEmployeeModel.find({
+    vendor_user_id: vendorUserId,
+    food_truck_id: foodTruckId,
+    role: 'MANAGER',
+    is_active: true,
+    is_archived: { $ne: true },
+    is_working: true,
+    assigned_location_id: String(locationId),
+    employee_internal_id: { $ne: submittingEmployeeId },
+    $or: [
+      { manager_scope: 'ALL_TRUCKS' },
+      {
+        manager_scope: 'TRUCK_UNIT',
+        manager_truck_unit_id: truckUnitId || null,
+      },
+    ],
+  });
 
 const PAID_PAYMENT_STATUSES = ['PAID', 'COMPLETED', 'CAPTURED'];
 const POST_PICKUP_STATUSES = ['DRIVER_PICKED_UP', 'DELIVERED', 'COMPLETED'];
@@ -163,6 +183,13 @@ class EmployeeRefundCancelRequestService extends BaseService {
       return { request: existing, existing: true };
     }
 
+    const eligibleManagers = await currentEligibleManagers({
+      vendorUserId: user.vendor_user_id,
+      foodTruckId: user.food_truck_id,
+      locationId: user.assigned_location_id,
+      truckUnitId: order.truck_unit_id || user.assigned_truck_unit_id,
+      submittingEmployeeId: user.employee_internal_id,
+    });
     const request = await this.create({
       order_id: order._id,
       employee_internal_id: user.employee_internal_id,
@@ -177,12 +204,16 @@ class EmployeeRefundCancelRequestService extends BaseService {
       original_payment_method: order.paymentMethod || order.payment_method || null,
       original_order_status: order.orderStatus || null,
       original_payment_status: order.paymentStatus || null,
+      eligible_manager_internal_ids: eligibleManagers.map(
+        (manager) => manager.employee_internal_id
+      ),
     });
 
     await CustomNotification.sendEmployeeRefundCancelRequestNotification(
       { _id: user.vendor_user_id },
       request,
-      order
+      order,
+      eligibleManagers
     );
 
     if (request_type === 'REFUND') {
@@ -246,6 +277,28 @@ class EmployeeRefundCancelRequestService extends BaseService {
       ...(orderId ? { order_id: orderId } : {}),
     })
       .sort({ requested_at: -1 })
+      .lean();
+  }
+
+  async listForManager({ manager, status, limit = 50 }) {
+    if (
+      !manager?.is_working ||
+      !manager?.assigned_location_id ||
+      manager?.is_archived ||
+      !manager?.is_active
+    ) {
+      return [];
+    }
+    return Model.find({
+      vendor_user_id: manager.vendor_user_id,
+      food_truck_id: manager.food_truck_id,
+      location_id: String(manager.assigned_location_id),
+      eligible_manager_internal_ids: manager.employee_internal_id,
+      ...(status ? { request_status: status } : {}),
+    })
+      .sort({ requested_at: -1 })
+      .limit(Number(limit) || 50)
+      .populate('order_id')
       .lean();
   }
 

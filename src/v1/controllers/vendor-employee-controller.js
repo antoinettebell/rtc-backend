@@ -1188,6 +1188,16 @@ exports.listRefundCancelRequests = async (req, res, next) => {
   try {
     const { user, query } = req;
 
+    if (isManager(user)) {
+      const manager = await Service.getById(user._id);
+      const requests = await EmployeeRefundCancelRequestService.listForManager({
+        manager,
+        status: query.status,
+        limit: query.limit,
+      });
+      return res.data({ requests }, 'Manager refund/cancel requests');
+    }
+
     if (user.userType === 'EMPLOYEE') {
       const requests = await EmployeeRefundCancelRequestService.listForEmployee(
         {
@@ -1227,13 +1237,18 @@ exports.reviewRefundCancelRequest = async (req, res, next) => {
       if (!isManager(user)) {
         return res.error(new Error('Manager access is required.'), 403);
       }
-      const requests = await EmployeeRefundCancelRequestService.listForVendor({
-        vendorUserId: user.vendor_user_id,
-        foodTruckId: user.food_truck_id,
+      const manager = await Service.getById(user._id);
+      const requests = await EmployeeRefundCancelRequestService.listForManager({
+        manager,
         limit: 250,
       });
       const request = requests.find((item) => item.request_id === requestId);
-      if (!request) return res.error(new Error('Request not found or access denied.'), 404);
+      if (!request) {
+        return res.error(
+          new Error('You must remain on duty at the request location to review it.'),
+          403
+        );
+      }
       const employee = await Service.getByData(
         {
           employee_internal_id: request.employee_internal_id,

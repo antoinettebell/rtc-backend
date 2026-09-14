@@ -94,6 +94,10 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    eligible_manager_internal_ids: {
+      type: [String],
+      default: [],
+    },
     original_payment_method: {
       type: String,
       default: null,
