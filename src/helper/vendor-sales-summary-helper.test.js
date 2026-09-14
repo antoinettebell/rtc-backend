@@ -1,5 +1,8 @@
 const assert = require('assert');
-const { summarizeVendorSales } = require('./vendor-sales-summary-helper');
+const {
+  getCashDrawerAmount,
+  summarizeVendorSales,
+} = require('./vendor-sales-summary-helper');
 
 const foodTruck = {
   name: 'Pizza House',
@@ -41,6 +44,7 @@ const summary = summarizeVendorSales({
       paymentStatus: 'REFUNDED',
       refundStatus: 'SUCCESS',
       totalAfterDiscount: 10,
+      tipsAmount: 1,
       truck_unit_id: 'truck-1',
       truck_unit_name: 'Pizza House',
     },
@@ -57,37 +61,113 @@ const summary = summarizeVendorSales({
 assert.deepStrictEqual(
   {
     grossSales: summary.grossSales,
+    netEarnings: summary.netEarnings,
     orders: summary.orders,
+    paidOrders: summary.paidOrders,
     refundsCancels: summary.refundsCancels,
     averageTicket: summary.averageTicket,
   },
-  { grossSales: 52, orders: 2, refundsCancels: 2, averageTicket: 26 }
+  {
+    grossSales: 113,
+    netEarnings: 53,
+    orders: 5,
+    paidOrders: 4,
+    refundsCancels: 2,
+    averageTicket: 28.25,
+  }
 );
 
 assert.deepStrictEqual(
   summary.breakdown.map((truck) => ({
     label: truck.label,
     grossSales: truck.grossSales,
+    netEarnings: truck.netEarnings,
     orders: truck.orders,
+    paidOrders: truck.paidOrders,
     refundsCancels: truck.refundsCancels,
     averageTicket: truck.averageTicket,
   })),
   [
     {
       label: 'Pizza House',
-      grossSales: 22,
-      orders: 1,
+      grossSales: 33,
+      netEarnings: 23,
+      orders: 3,
+      paidOrders: 2,
       refundsCancels: 1,
-      averageTicket: 22,
+      averageTicket: 16.5,
     },
     {
       label: 'Pizza House 2',
-      grossSales: 30,
-      orders: 1,
+      grossSales: 80,
+      netEarnings: 30,
+      orders: 2,
+      paidOrders: 2,
       refundsCancels: 1,
-      averageTicket: 30,
+      averageTicket: 40,
     },
   ]
+);
+
+assert.strictEqual(
+  getCashDrawerAmount({
+    paymentMethod: 'CASH',
+    paymentStatus: 'REFUNDED',
+    refundStatus: 'SUCCESS',
+    total: 14.01,
+    tipsAmount: 1.2,
+  }),
+  1.2
+);
+
+const refundRegressionSummary = summarizeVendorSales({
+  orders: [
+    {
+      orderNumber: 18,
+      orderStatus: 'PREPARING',
+      paymentStatus: 'REFUNDED',
+      refundStatus: 'SUCCESS',
+      totalAfterDiscount: 12,
+      tipsAmount: 1.2,
+      paymentMethod: 'CASH',
+    },
+    {
+      orderNumber: 19,
+      orderStatus: 'PREPARING',
+      paymentStatus: 'REFUNDED',
+      refundStatus: 'SUCCESS',
+      totalAfterDiscount: 0.01,
+      tipsAmount: 0.01,
+      paymentMethod: 'CASH',
+    },
+    {
+      orderNumber: 20,
+      orderStatus: 'PREPARING',
+      paymentStatus: 'PAID',
+      totalAfterDiscount: 0.02,
+      tipsAmount: 0.01,
+      paymentMethod: 'CASH',
+    },
+  ],
+});
+
+assert.deepStrictEqual(
+  {
+    grossSales: refundRegressionSummary.grossSales,
+    netEarnings: refundRegressionSummary.netEarnings,
+    orders: refundRegressionSummary.orders,
+    paidOrders: refundRegressionSummary.paidOrders,
+    refundsCancels: refundRegressionSummary.refundsCancels,
+    averageTicket: refundRegressionSummary.averageTicket,
+  },
+  {
+    grossSales: 13.25,
+    netEarnings: 1.24,
+    orders: 3,
+    paidOrders: 3,
+    refundsCancels: 2,
+    averageTicket: 4.42,
+  }
 );
 
 console.log('vendor sales summary helper tests passed');

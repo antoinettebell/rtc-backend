@@ -4972,7 +4972,7 @@ exports.getVendorDashboard = async (req, res, next) => {
 
     const fallbackVendorTierRate = await getFoodTruckVendorTierRate(foodTruck);
     const vendorHomeData = await Service.getVendorDashboardCountDetails(
-      foodTruckId,
+      foodTruck,
       fallbackVendorTierRate
     );
 
@@ -5026,14 +5026,14 @@ exports.getVendorEarnings = async (req, res, next) => {
 
     const fallbackVendorTierRate = await getFoodTruckVendorTierRate(foodTruck);
     const earnings = await Service.getVendorEarningsWithFreeDessert(
-      foodTruckId,
+      foodTruck,
       startDate,
       endDate,
       truckUnitId,
       fallbackVendorTierRate
     );
     const earningsFulldata = await Service.getVendorEarningsWithFreeDessertTest(
-      foodTruckId,
+      foodTruck,
       fallbackVendorTierRate,
       truckUnitId
     );
@@ -5201,7 +5201,7 @@ exports.getVendorEarningsList = async (req, res, next) => {
       page,
       user,
       search,
-      foodTruckId,
+      foodTruck,
       earning_list,
       is_list,
       startDate,

@@ -30,4 +30,16 @@ const isOperationalDayInRange = ({
   return dayKey >= startDayKey && dayKey <= endDayKey;
 };
 
-module.exports = { getOperationalDayKey, isOperationalDayInRange };
+const getOperationalDayQueryEnvelope = (startDayKey, endDayKey = startDayKey) => {
+  const start = new Date(`${startDayKey}T00:00:00.000Z`);
+  start.setUTCDate(start.getUTCDate() - 1);
+  const end = new Date(`${endDayKey}T00:00:00.000Z`);
+  end.setUTCDate(end.getUTCDate() + 2);
+  return { start, end };
+};
+
+module.exports = {
+  getOperationalDayKey,
+  getOperationalDayQueryEnvelope,
+  isOperationalDayInRange,
+};
