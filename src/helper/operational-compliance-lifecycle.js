@@ -12,14 +12,41 @@ const buildEmployeeFormIdentity = ({ scope, type }) => (
       }
 );
 
-const buildFreshChecklistDraft = ({ scope, type, employeeName, checklistItems }) => ({
+const buildActorAuditIdentity = (user = {}) => {
+  const isEmployee = user.userType === 'EMPLOYEE' || user.role === 'EMPLOYEE';
+  const firstName = isEmployee ? user.first_name : user.firstName;
+  const lastName = isEmployee ? user.last_name : user.lastName;
+  const initials = [firstName, lastName]
+    .filter(Boolean)
+    .map((value) => String(value).trim().charAt(0).toUpperCase())
+    .join('');
+  return {
+    prepared_by_name: isEmployee
+      ? [firstName, lastName].filter(Boolean).join(' ').trim()
+      : 'Vendor',
+    initials,
+  };
+};
+
+const buildVendorChecklistIdentity = () => ({
+  employee_internal_id: null,
+  employee_session_id: null,
+});
+
+const buildFreshChecklistDraft = ({
+  scope,
+  type,
+  employeeName,
+  employeeInitials = '',
+  checklistItems,
+}) => ({
   vendor_user_id: scope.vendor_user_id,
   food_truck_id: scope.food_truck_id,
   ...buildEmployeeFormIdentity({ scope, type }),
   form_type: type,
   status: 'DRAFT',
   prepared_by_name: employeeName,
-  initials: '',
+  initials: employeeInitials,
   truck_unit: scope.truck_unit_label || '',
   location_label: scope.location_label || '',
   checklist_items: checklistItems.map((item) => ({
@@ -37,7 +64,7 @@ const isEmployeeFormAssignmentMatch = ({ form, scope }) =>
       form.employee_session_id === scope.employee_session_id));
 
 const getEmployeeEditablePayload = (payload = {}) =>
-  ['initials', 'form_date', 'inventory_items', 'checklist_items'].reduce(
+  ['form_date', 'inventory_items', 'checklist_items'].reduce(
     (result, field) => (
       payload[field] === undefined
         ? result
@@ -47,7 +74,9 @@ const getEmployeeEditablePayload = (payload = {}) =>
   );
 
 module.exports = {
+  buildActorAuditIdentity,
   buildEmployeeFormIdentity,
+  buildVendorChecklistIdentity,
   buildFreshChecklistDraft,
   isEmployeeFormAssignmentMatch,
   getEmployeeEditablePayload,

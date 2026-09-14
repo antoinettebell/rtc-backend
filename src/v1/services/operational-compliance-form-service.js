@@ -9,8 +9,10 @@ const {
 } = require('../../helper/operational-compliance-form');
 const CustomNotification = require('../../helper/custom-notification');
 const {
+  buildActorAuditIdentity,
   buildEmployeeFormIdentity,
   buildFreshChecklistDraft,
+  buildVendorChecklistIdentity,
   isEmployeeFormAssignmentMatch,
   getEmployeeEditablePayload,
 } = require('../../helper/operational-compliance-lifecycle');
@@ -25,8 +27,6 @@ const {
 
 const FORM_TYPES = ['INVENTORY', 'OPENING_CHECKLIST', 'CLOSING_CHECKLIST'];
 const editableFields = [
-  'prepared_by_name',
-  'initials',
   'truck_unit',
   'form_date',
   'inventory_items',
@@ -44,10 +44,7 @@ const actorType = (user) =>
     ? 'EMPLOYEE'
     : 'VENDOR';
 
-const preparedByName = (user) => {
-  if (actorType(user) === 'VENDOR') return 'Vendor';
-  return [user.first_name, user.last_name].filter(Boolean).join(' ');
-};
+const preparedByName = (user) => buildActorAuditIdentity(user).prepared_by_name;
 
 class OperationalComplianceFormService {
   async getScope(user) {
@@ -143,7 +140,9 @@ class OperationalComplianceFormService {
     await this.assertEmployeeFormAccess({ user, type, scope });
     const identityScope = actorType(user) === 'EMPLOYEE'
       ? buildEmployeeFormIdentity({ scope, type })
-      : {};
+      : type === 'INVENTORY'
+        ? {}
+        : buildVendorChecklistIdentity();
     const existing = await Model.findOne({
       vendor_user_id: scope.vendor_user_id,
       food_truck_id: scope.food_truck_id,
@@ -152,8 +151,12 @@ class OperationalComplianceFormService {
       status: 'DRAFT',
     }).sort({ createdAt: -1 });
     if (existing) {
+      if (type !== 'INVENTORY') {
+        const auditIdentity = buildActorAuditIdentity(user);
+        existing.prepared_by_name = auditIdentity.prepared_by_name;
+        existing.initials = auditIdentity.initials;
+      }
       if (actorType(user) === 'EMPLOYEE') {
-        existing.prepared_by_name = preparedByName(user);
         existing.employee_internal_id = scope.employee_internal_id;
         if (type !== 'INVENTORY') {
           existing.employee_session_id = scope.employee_session_id;
@@ -162,11 +165,11 @@ class OperationalComplianceFormService {
         existing.location_id = scope.location_id;
         existing.truck_unit = scope.truck_unit_label;
         existing.location_label = scope.location_label;
-        await existing.save();
-      } else if (!String(existing.prepared_by_name || '').trim()) {
-        existing.prepared_by_name = preparedByName(user);
-        await existing.save();
+      } else if (type !== 'INVENTORY') {
+        existing.employee_internal_id = null;
+        existing.employee_session_id = null;
       }
+      await existing.save();
       return existing;
     }
     if (actorType(user) === 'EMPLOYEE' && type !== 'INVENTORY') {
@@ -190,6 +193,7 @@ class OperationalComplianceFormService {
         scope,
         type,
         employeeName: preparedByName(user),
+        employeeInitials: buildActorAuditIdentity(user).initials,
         checklistItems: buildChecklistItems(type),
       })
       : {
@@ -198,6 +202,7 @@ class OperationalComplianceFormService {
           ...identityScope,
           form_type: type,
           prepared_by_name: preparedByName(user),
+          initials: buildActorAuditIdentity(user).initials,
           checklist_items: buildChecklistItems(type),
           ...(actorType(user) === 'EMPLOYEE'
             ? {
@@ -310,8 +315,10 @@ class OperationalComplianceFormService {
     form.last_edited_at = new Date();
     form.last_edited_by_id = user._id;
     form.last_edited_by_type = actorType(user);
+    const auditIdentity = buildActorAuditIdentity(user);
+    form.prepared_by_name = auditIdentity.prepared_by_name;
+    form.initials = auditIdentity.initials;
     if (employeeScope) {
-      form.prepared_by_name = preparedByName(user);
       form.employee_internal_id = employeeScope.employee_internal_id;
       form.employee_session_id = employeeScope.employee_session_id;
       form.truck_unit_id = employeeScope.truck_unit_id;
@@ -410,6 +417,10 @@ class OperationalComplianceFormService {
         form_type: form.form_type,
         status: 'DRAFT',
         source_archive_id: form._id,
+        prepared_by_name: buildActorAuditIdentity(user).prepared_by_name,
+        initials: buildActorAuditIdentity(user).initials,
+        truck_unit: form.truck_unit,
+        location_label: form.location_label,
         inventory_items:
           form.form_type === 'INVENTORY'
             ? buildNextInventoryItems(form.inventory_items)
