@@ -1,5 +1,20 @@
 const mongoose = require('mongoose');
 
+const inventoryActionSchema = new mongoose.Schema(
+  {
+    action: {
+      type: String,
+      enum: ['CREATED', 'SAVED_DRAFT', 'SUBMITTED', 'ITEM_UPDATED', 'COUNT_CLOSED', 'ITEM_ARCHIVED'],
+      required: true,
+    },
+    actor_id: { type: mongoose.Schema.Types.ObjectId, default: null },
+    actor_type: { type: String, enum: ['VENDOR', 'EMPLOYEE'], required: true },
+    actor_name: { type: String, trim: true, maxlength: 80, default: '' },
+    occurred_at: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
 const inventoryItemSchema = new mongoose.Schema(
   {
     item_location: { type: String, trim: true, maxlength: 80, default: '' },
@@ -8,11 +23,39 @@ const inventoryItemSchema = new mongoose.Schema(
     purchased_from: { type: String, trim: true, maxlength: 80, default: '' },
     date_purchased: { type: Date, default: null },
     use_by_date: { type: Date, default: null },
-    beginning_quantity: { type: Number, min: 1, max: 100, default: 1 },
-    current_quantity: { type: Number, min: 1, max: 100, default: 1 },
+    beginning_quantity: { type: Number, min: 0, max: 100, default: 0 },
+    current_quantity: { type: Number, min: 0, max: 100, default: 0 },
     max_quantity: { type: Number, min: 1, max: 100, default: 1 },
     reorder_quantity: { type: Number, min: 0, max: 100, default: 0 },
     notes: { type: String, trim: true, maxlength: 250, default: '' },
+    lifecycle_status: {
+      type: String,
+      enum: ['ACTIVE', 'ARCHIVED'],
+      default: 'ACTIVE',
+      index: true,
+    },
+    record_status: {
+      type: String,
+      enum: ['DRAFT', 'SUBMITTED'],
+      default: 'DRAFT',
+    },
+    lineage_id: { type: String, default: null, index: true },
+    source_form_id: { type: mongoose.Schema.Types.ObjectId, default: null },
+    source_item_id: { type: String, default: null },
+    source_employee_internal_id: { type: String, default: null },
+    applied_review_keys: { type: [String], default: [] },
+    archived_at: { type: Date, default: null },
+    archived_by_id: { type: mongoose.Schema.Types.ObjectId, default: null },
+    archive_reason: {
+      type: String,
+      enum: ['COUNT_CLOSED', 'ITEM_ARCHIVED', null],
+      default: null,
+    },
+    expiration_notification_key: { type: String, default: null },
+    pending_close_draft: { type: mongoose.Schema.Types.Mixed, default: null },
+    pending_close_saved_at: { type: Date, default: null },
+    pending_close_saved_by_id: { type: mongoose.Schema.Types.ObjectId, default: null },
+    actions: { type: [inventoryActionSchema], default: [] },
   },
   { _id: true }
 );
@@ -72,6 +115,20 @@ const schema = new mongoose.Schema(
     last_edited_by_type: { type: String, enum: ['VENDOR', 'EMPLOYEE', null], default: null },
     archived_at: { type: Date, default: null },
     archived_by_id: { type: mongoose.Schema.Types.ObjectId, default: null },
+    inventory_review_action: {
+      type: String,
+      enum: ['UPDATED', 'CLOSED_INTO_INVENTORY', 'ARCHIVED', null],
+      default: null,
+    },
+    inventory_reviewed_at: { type: Date, default: null },
+    inventory_reviewed_by_id: { type: mongoose.Schema.Types.ObjectId, default: null },
+    inventory_review_claimed_at: { type: Date, default: null },
+    inventory_review_claim_action: {
+      type: String,
+      enum: ['UPDATED', 'CLOSED_INTO_INVENTORY', 'ARCHIVED', null],
+      default: null,
+    },
+    inventory_review_claimed_by_id: { type: mongoose.Schema.Types.ObjectId, default: null },
     source_archive_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'operational_compliance_forms',

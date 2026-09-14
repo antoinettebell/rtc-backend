@@ -38,6 +38,8 @@ for (const type of ['OPENING_CHECKLIST', 'CLOSING_CHECKLIST']) {
   assert.equal(draft.checklist_items[0].notes, '');
 }
 assert.deepEqual(buildEmployeeFormIdentity({ scope, type: 'INVENTORY' }), {
+  employee_internal_id: 'employee-1',
+  employee_session_id: 'session-new',
   truck_unit_id: 'truck-1',
   location_id: 'location-1',
 });

@@ -93,3 +93,82 @@ exports.archive = async (req, res, next) => {
     return handleOperationalError(req, error, next);
   }
 };
+
+exports.createInventoryItem = async (req, res, next) => {
+  try {
+    const result = await Service.createInventoryItem({ user: req.user, payload: req.body });
+    return res.data(result, 'Inventory item created');
+  } catch (error) {
+    return handleOperationalError(req, error, next);
+  }
+};
+
+exports.updateInventoryItem = async (req, res, next) => {
+  try {
+    const result = await Service.updateInventoryItem({
+      user: req.user,
+      id: req.params.id,
+      itemId: req.params.itemId,
+      payload: req.body,
+      submit: false,
+    });
+    return res.data(result, 'Inventory draft saved');
+  } catch (error) {
+    return handleOperationalError(req, error, next);
+  }
+};
+
+exports.submitInventoryItem = async (req, res, next) => {
+  try {
+    const result = await Service.updateInventoryItem({
+      user: req.user,
+      id: req.params.id,
+      itemId: req.params.itemId,
+      payload: req.body,
+      submit: true,
+    });
+    return res.data(result, 'Inventory item submitted');
+  } catch (error) {
+    return handleOperationalError(req, error, next);
+  }
+};
+
+exports.closeInventoryCount = async (req, res, next) => {
+  try {
+    const result = await Service.closeInventoryCount({
+      user: req.user,
+      id: req.params.id,
+      itemId: req.params.itemId,
+      payload: req.body,
+    });
+    return res.data(result, 'Inventory count closed');
+  } catch (error) {
+    return handleOperationalError(req, error, next);
+  }
+};
+
+exports.archiveInventoryItem = async (req, res, next) => {
+  try {
+    const result = await Service.archiveInventoryItem({
+      user: req.user,
+      id: req.params.id,
+      itemId: req.params.itemId,
+    });
+    return res.data(result, 'Inventory item archived');
+  } catch (error) {
+    return handleOperationalError(req, error, next);
+  }
+};
+
+exports.reviewEmployeeInventory = async (req, res, next) => {
+  try {
+    const result = await Service.reviewEmployeeInventory({
+      user: req.user,
+      id: req.params.id,
+      payload: req.body,
+    });
+    return res.data(result, 'Employee inventory reviewed');
+  } catch (error) {
+    return handleOperationalError(req, error, next);
+  }
+};

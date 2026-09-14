@@ -17,18 +17,22 @@ const CHECKLISTS = {
 
 const clampQuantity = (value) => Math.max(0, Math.min(100, Number(value) || 0));
 const clampInputQuantity = (value) =>
+  Math.max(0, Math.min(100, Number(value) || 0));
+const clampMaximumQuantity = (value) =>
   Math.max(1, Math.min(100, Number(value) || 1));
 
 const normalizeInventoryItems = (items = []) =>
   items.map((item) => {
     const current = clampInputQuantity(item.current_quantity);
-    const maximum = clampInputQuantity(item.max_quantity);
+    const maximum = clampMaximumQuantity(item.max_quantity);
     return {
       ...item,
       beginning_quantity: clampInputQuantity(item.beginning_quantity),
       current_quantity: current,
       max_quantity: maximum,
       reorder_quantity: Math.max(0, maximum - current),
+      lifecycle_status: item.lifecycle_status || 'ACTIVE',
+      record_status: item.record_status || 'DRAFT',
     };
   });
 
@@ -42,21 +46,22 @@ const buildChecklistItems = (type) =>
 
 const buildNextInventoryItems = (items = []) =>
   normalizeInventoryItems(items).map((item) => {
-    const beginning = clampQuantity(
-      item.current_quantity + item.reorder_quantity
-    );
+    const beginning = clampQuantity(item.current_quantity);
     return {
       item_location: item.item_location,
       brand: item.brand,
       item_name: item.item_name,
       purchased_from: item.purchased_from,
       date_purchased: null,
-      use_by_date: item.use_by_date || null,
+      use_by_date: null,
       beginning_quantity: beginning,
       current_quantity: beginning,
       max_quantity: item.max_quantity,
       reorder_quantity: Math.max(0, item.max_quantity - beginning),
       notes: '',
+      lifecycle_status: 'ACTIVE',
+      record_status: 'DRAFT',
+      lineage_id: item.lineage_id || null,
     };
   });
 

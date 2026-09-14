@@ -1,6 +1,8 @@
 const buildEmployeeFormIdentity = ({ scope, type }) => (
   type === 'INVENTORY'
     ? {
+        employee_internal_id: scope.employee_internal_id,
+        employee_session_id: scope.employee_session_id,
         truck_unit_id: scope.truck_unit_id,
         location_id: scope.location_id,
       }

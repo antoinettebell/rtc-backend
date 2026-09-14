@@ -38,6 +38,9 @@ for (const [formType, action] of [
   assert.equal(notification.location_id, 'location-1');
 }
 assert.ok(OperationalNotificationModel.schema.path('acknowledged_at'));
+assert.ok(OperationalNotificationModel.schema.path('push_sent_at'));
+assert.ok(OperationalNotificationModel.schema.path('push_claimed_at'));
+assert.ok(OperationalNotificationModel.schema.path('push_error'));
 const acknowledgement =
   MarketplaceValidation.acknowledgeVendorNotifications.body.validate({
     notification_ids: ['notification-1'],

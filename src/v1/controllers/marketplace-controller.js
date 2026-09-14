@@ -6405,6 +6405,9 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       await OperationalComplianceFormService.retryPendingNotificationsForVendor(
         req.user._id
       );
+      await OperationalComplianceFormService.processExpiredInventoryNotifications({
+        vendorUserId: req.user._id,
+      });
     }
 
     const [questions, bids, applications, closedCandidateBids, closedCandidateApplications, operationalNotifications, refundRequests] = await Promise.all([
@@ -6632,17 +6635,25 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       const formLabel = String(item.form_type || '')
         .toLowerCase()
         .replaceAll('_', ' ');
+      const expired = item.action === 'EXPIRED';
       return {
         id: `operational-${item._id}`,
         notification_id: String(item._id),
         type: 'OPERATIONAL_COMPLIANCE',
-        title: `${item.employee_name} ${item.action === 'SAVED' ? 'saved' : 'submitted'} ${formLabel}`,
-        subtitle: [truckUnit?.name, location?.address || location?.name]
-          .filter(Boolean)
-          .join(' · ') || 'Open the operations form.',
+        title: expired
+          ? `Inventory Item: ${item.inventory_item_name || 'Item'} has expired.`
+          : `${item.employee_name} ${item.action === 'SAVED' ? 'saved' : 'submitted'} ${formLabel}`,
+        subtitle: expired
+          ? `${[truckUnit?.name, location?.address || location?.name]
+            .filter(Boolean)
+            .join(' · ')}${truckUnit || location ? ' · ' : ''}Please update the expiration date or close the inventory count with a fresher item.`
+          : [truckUnit?.name, location?.address || location?.name]
+            .filter(Boolean)
+            .join(' · ') || 'Open the operations form.',
         employee_name: item.employee_name,
         form_id: String(item.form_id),
         form_type: item.form_type,
+        inventory_item_id: item.inventory_item_id,
         truck_unit_id: item.truck_unit_id,
         location_id: item.location_id,
         occurred_at: item.occurred_at,

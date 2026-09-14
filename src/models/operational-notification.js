@@ -8,7 +8,7 @@ const schema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    employee_internal_id: { type: String, required: true, index: true },
+    employee_internal_id: { type: String, default: null, index: true },
     employee_name: { type: String, required: true, trim: true },
     form_id: {
       type: mongoose.Schema.Types.ObjectId,
@@ -21,13 +21,18 @@ const schema = new mongoose.Schema(
       enum: ['INVENTORY', 'OPENING_CHECKLIST', 'CLOSING_CHECKLIST'],
       required: true,
     },
-    action: { type: String, enum: ['SAVED', 'SUBMITTED'], required: true },
+    action: { type: String, enum: ['SAVED', 'SUBMITTED', 'EXPIRED'], required: true },
+    inventory_item_id: { type: String, default: null },
+    inventory_item_name: { type: String, trim: true, maxlength: 80, default: null },
     event_key: { type: String, required: true, unique: true, index: true },
     food_truck_id: { type: mongoose.Schema.Types.ObjectId, required: true },
     truck_unit_id: { type: String, default: null },
     location_id: { type: String, default: null },
     occurred_at: { type: Date, default: Date.now, index: true },
     acknowledged_at: { type: Date, default: null, index: true },
+    push_sent_at: { type: Date, default: null },
+    push_claimed_at: { type: Date, default: null },
+    push_error: { type: String, default: null },
   },
   { timestamps: true }
 );

@@ -27,6 +27,7 @@ const {
 
 const FORM_TYPES = ['INVENTORY', 'OPENING_CHECKLIST', 'CLOSING_CHECKLIST'];
 const editableFields = [
+  'truck_unit_id',
   'truck_unit',
   'form_date',
   'inventory_items',
@@ -45,6 +46,58 @@ const actorType = (user) =>
     : 'VENDOR';
 
 const preparedByName = (user) => buildActorAuditIdentity(user).prepared_by_name;
+
+const inventoryEditableFields = [
+  'item_location',
+  'brand',
+  'item_name',
+  'purchased_from',
+  'date_purchased',
+  'use_by_date',
+  'beginning_quantity',
+  'current_quantity',
+  'max_quantity',
+  'notes',
+];
+
+const inventoryPayload = (payload = {}) => inventoryEditableFields.reduce(
+  (result, field) => payload[field] === undefined
+    ? result
+    : { ...result, [field]: payload[field] },
+  {}
+);
+
+const inventorySystemFields = [
+  '_id',
+  'lifecycle_status',
+  'record_status',
+  'lineage_id',
+  'source_form_id',
+  'source_item_id',
+  'source_employee_internal_id',
+  'archived_at',
+  'archived_by_id',
+  'archive_reason',
+  'expiration_notification_key',
+  'pending_close_draft',
+  'pending_close_saved_at',
+  'pending_close_saved_by_id',
+  'actions',
+  'applied_review_keys',
+];
+
+const sanitizeEditableInventoryItems = (existingItems = [], incomingItems = []) => {
+  const existingById = new Map((existingItems || []).map((item) => [String(item._id), item]));
+  return normalizeInventoryItems((incomingItems || []).map((incoming) => {
+    const existing = incoming?._id ? existingById.get(String(incoming._id)) : null;
+    const preserved = existing
+      ? inventorySystemFields.reduce((result, field) => (
+          existing[field] === undefined ? result : { ...result, [field]: existing[field] }
+        ), {})
+      : {};
+    return { ...preserved, ...inventoryPayload(incoming) };
+  }));
+};
 
 class OperationalComplianceFormService {
   async getScope(user) {
@@ -101,6 +154,41 @@ class OperationalComplianceFormService {
     }
   }
 
+  async getEmployeeInventorySeed(scope) {
+    const forms = await Model.find({
+      vendor_user_id: scope.vendor_user_id,
+      food_truck_id: scope.food_truck_id,
+      form_type: 'INVENTORY',
+      status: { $ne: 'ARCHIVED' },
+      employee_internal_id: null,
+      employee_session_id: null,
+      $or: [
+        { truck_unit_id: scope.truck_unit_id },
+        { truck_unit_id: null, truck_unit: scope.truck_unit_label },
+      ],
+    }).sort({ updatedAt: -1 }).lean();
+    const seen = new Set();
+    const seeded = [];
+    forms.forEach((form) => {
+      (form.inventory_items || []).forEach((item) => {
+        if ((item.lifecycle_status || 'ACTIVE') !== 'ACTIVE') return;
+        const lineage = String(item.lineage_id || item._id);
+        if (seen.has(lineage)) return;
+        seen.add(lineage);
+        seeded.push({
+          ...inventoryPayload(item),
+          reorder_quantity: item.reorder_quantity,
+          lifecycle_status: 'ACTIVE',
+          record_status: 'DRAFT',
+          lineage_id: lineage,
+          source_form_id: form._id,
+          source_item_id: String(item._id),
+        });
+      });
+    });
+    return seeded;
+  }
+
   async list({ user, type, status }) {
     const scope = await this.getScope(user);
     const query = {
@@ -110,13 +198,14 @@ class OperationalComplianceFormService {
     if (actorType(user) === 'EMPLOYEE') {
       query.status = { $ne: 'ARCHIVED' };
       if (type === 'INVENTORY') {
+        query.employee_internal_id = scope.employee_internal_id;
         query.truck_unit_id = scope.truck_unit_id;
         query.location_id = scope.location_id;
       } else if (type) {
         query.employee_internal_id = scope.employee_internal_id;
       } else {
         query.$or = [
-          { form_type: 'INVENTORY', truck_unit_id: scope.truck_unit_id, location_id: scope.location_id },
+          { form_type: 'INVENTORY', employee_internal_id: scope.employee_internal_id, truck_unit_id: scope.truck_unit_id, location_id: scope.location_id },
           { form_type: { $ne: 'INVENTORY' }, employee_internal_id: scope.employee_internal_id },
         ];
       }
@@ -141,7 +230,7 @@ class OperationalComplianceFormService {
     const identityScope = actorType(user) === 'EMPLOYEE'
       ? buildEmployeeFormIdentity({ scope, type })
       : type === 'INVENTORY'
-        ? {}
+        ? buildVendorChecklistIdentity()
         : buildVendorChecklistIdentity();
     const existing = await Model.findOne({
       vendor_user_id: scope.vendor_user_id,
@@ -172,7 +261,7 @@ class OperationalComplianceFormService {
       await existing.save();
       return existing;
     }
-    if (actorType(user) === 'EMPLOYEE' && type !== 'INVENTORY') {
+    if (actorType(user) === 'EMPLOYEE') {
       const submittedForShift = await Model.findOne({
         vendor_user_id: scope.vendor_user_id,
         food_truck_id: scope.food_truck_id,
@@ -188,6 +277,9 @@ class OperationalComplianceFormService {
       }
     }
 
+    const employeeInventorySeed = actorType(user) === 'EMPLOYEE' && type === 'INVENTORY'
+      ? await this.getEmployeeInventorySeed(scope)
+      : [];
     const draftPayload = actorType(user) === 'EMPLOYEE' && type !== 'INVENTORY'
       ? buildFreshChecklistDraft({
         scope,
@@ -204,6 +296,7 @@ class OperationalComplianceFormService {
           prepared_by_name: preparedByName(user),
           initials: buildActorAuditIdentity(user).initials,
           checklist_items: buildChecklistItems(type),
+          inventory_items: employeeInventorySeed,
           ...(actorType(user) === 'EMPLOYEE'
             ? {
                 truck_unit: scope.truck_unit_label,
@@ -249,7 +342,8 @@ class OperationalComplianceFormService {
     if (
       actorType(user) === 'EMPLOYEE' &&
       form.form_type === 'INVENTORY' &&
-      (String(form.truck_unit_id || '') !== scope.truck_unit_id ||
+      (form.employee_internal_id !== scope.employee_internal_id ||
+        String(form.truck_unit_id || '') !== scope.truck_unit_id ||
         String(form.location_id || '') !== scope.location_id)
     ) {
       throw errorWithCode('Operational compliance form not found.', 404);
@@ -297,6 +391,13 @@ class OperationalComplianceFormService {
       id,
       enforceOperationalAccess: true,
     });
+    if (
+      actorType(user) === 'VENDOR' &&
+      form.form_type === 'INVENTORY' &&
+      form.employee_internal_id
+    ) {
+      throw errorWithCode('Employee inventory submissions are immutable. Use Employee Inventory Review.', 409);
+    }
     if (form.status !== 'DRAFT') {
       throw errorWithCode('Click the pencil to edit this submitted form.', 409);
     }
@@ -304,13 +405,15 @@ class OperationalComplianceFormService {
     const editablePayload = employeeScope
       ? getEmployeeEditablePayload(payload)
       : payload;
-    editableFields.forEach((field) => {
+    editableFields.filter((field) => field !== 'inventory_items').forEach((field) => {
       if (editablePayload[field] !== undefined) {
         form[field] = editablePayload[field];
       }
     });
     if (form.form_type === 'INVENTORY') {
-      form.inventory_items = normalizeInventoryItems(form.inventory_items);
+      form.inventory_items = editablePayload.inventory_items === undefined
+        ? normalizeInventoryItems(form.inventory_items)
+        : sanitizeEditableInventoryItems(form.inventory_items, editablePayload.inventory_items);
     }
     form.last_edited_at = new Date();
     form.last_edited_by_id = user._id;
@@ -376,6 +479,9 @@ class OperationalComplianceFormService {
       throw errorWithCode('Only the vendor can unlock a submitted form.', 403);
     }
     const form = await this.getScopedForm({ user, id });
+    if (form.form_type === 'INVENTORY' && form.employee_internal_id) {
+      throw errorWithCode('Employee inventory submissions are immutable. Use Employee Inventory Review.', 409);
+    }
     if (form.status === 'ARCHIVED') {
       throw errorWithCode('Archived forms are permanent read-only records.', 409);
     }
@@ -394,14 +500,12 @@ class OperationalComplianceFormService {
       throw errorWithCode('Only the vendor can archive a submitted form.', 403);
     }
     const form = await this.getScopedForm({ user, id });
+    if (form.form_type === 'INVENTORY' && form.employee_internal_id) {
+      throw errorWithCode('Use Employee Inventory Review to archive an employee submission.', 409);
+    }
     if (form.status !== 'SUBMITTED') {
       throw errorWithCode('Submit the form before archiving it.', 409);
     }
-
-    form.status = 'ARCHIVED';
-    form.archived_at = new Date();
-    form.archived_by_id = user._id;
-    await form.save();
 
     let next = await Model.findOne({ source_archive_id: form._id });
     if (!next) {
@@ -428,7 +532,403 @@ class OperationalComplianceFormService {
         checklist_items: buildChecklistItems(form.form_type),
       });
     }
+    form.status = 'ARCHIVED';
+    form.archived_at = new Date();
+    form.archived_by_id = user._id;
+    await form.save();
     return { archived: form, next };
+  }
+
+  assertVendor(user) {
+    if (actorType(user) !== 'VENDOR') {
+      throw errorWithCode('Only the vendor can manage final inventory.', 403);
+    }
+  }
+
+  inventoryAction(user, action, now = new Date()) {
+    return {
+      action,
+      actor_id: user._id,
+      actor_type: actorType(user),
+      actor_name: preparedByName(user),
+      occurred_at: now,
+    };
+  }
+
+  async getVendorInventoryForm({ user, truckUnitId, truckUnit }) {
+    this.assertVendor(user);
+    const scope = await this.getScope(user);
+    const unit = (await this.getTruckUnits(user)).find(
+      (item) => String(item._id) === String(truckUnitId || '') || item.name === truckUnit
+    );
+    if (!unit) throw errorWithCode('Choose an active truck unit.', 422);
+    let form = await Model.findOne({
+      vendor_user_id: scope.vendor_user_id,
+      food_truck_id: scope.food_truck_id,
+      form_type: 'INVENTORY',
+      status: 'DRAFT',
+      employee_internal_id: null,
+      employee_session_id: null,
+      $or: [
+        { truck_unit_id: String(unit._id) },
+        { truck_unit_id: null, truck_unit: unit.name },
+      ],
+    }).sort({ createdAt: -1 });
+    if (!form) {
+      form = await Model.create({
+        vendor_user_id: scope.vendor_user_id,
+        food_truck_id: scope.food_truck_id,
+        employee_internal_id: null,
+        employee_session_id: null,
+        truck_unit_id: String(unit._id),
+        form_type: 'INVENTORY',
+        status: 'DRAFT',
+        prepared_by_name: preparedByName(user),
+        initials: buildActorAuditIdentity(user).initials,
+        truck_unit: unit.name,
+      });
+    } else if (!form.truck_unit_id) {
+      form.truck_unit_id = String(unit._id);
+    }
+    return form;
+  }
+
+  async getVendorInventoryItem({ user, id, itemId }) {
+    this.assertVendor(user);
+    const form = await this.getScopedForm({ user, id });
+    if (
+      form.form_type !== 'INVENTORY' ||
+      form.employee_internal_id ||
+      form.employee_session_id
+    ) {
+      throw errorWithCode('Vendor inventory item not found.', 404);
+    }
+    const item = form.inventory_items.id(itemId);
+    if (!item) throw errorWithCode('Inventory item not found.', 404);
+    return { form, item };
+  }
+
+  async createInventoryItem({ user, payload = {} }) {
+    const form = await this.getVendorInventoryForm({
+      user,
+      truckUnitId: payload.truck_unit_id,
+      truckUnit: payload.truck_unit,
+    });
+    const now = new Date();
+    const normalized = normalizeInventoryItems([inventoryPayload(payload.item || payload)])[0];
+    if (!String(normalized.item_name || '').trim()) {
+      throw errorWithCode('Inventory item name is required.', 422);
+    }
+    const item = form.inventory_items.create({
+      ...normalized,
+      lifecycle_status: 'ACTIVE',
+      record_status: 'DRAFT',
+      actions: [this.inventoryAction(user, 'CREATED', now)],
+    });
+    item.lineage_id = String(item._id);
+    form.inventory_items.push(item);
+    form.last_edited_at = now;
+    form.last_edited_by_id = user._id;
+    form.last_edited_by_type = 'VENDOR';
+    await form.save();
+    return { form, item: form.inventory_items.id(item._id) };
+  }
+
+  async updateInventoryItem({ user, id, itemId, payload = {}, submit = false }) {
+    const { form, item } = await this.getVendorInventoryItem({ user, id, itemId });
+    if ((item.lifecycle_status || 'ACTIVE') !== 'ACTIVE') {
+      throw errorWithCode('Archived inventory is read-only.', 409);
+    }
+    const now = new Date();
+    const normalized = normalizeInventoryItems([{ ...item.toObject(), ...inventoryPayload(payload.item || payload) }])[0];
+    if (!String(normalized.item_name || '').trim()) {
+      throw errorWithCode('Inventory item name is required.', 422);
+    }
+    if (payload.close_count_draft) {
+      item.pending_close_draft = inventoryPayload(normalized);
+      item.pending_close_saved_at = now;
+      item.pending_close_saved_by_id = user._id;
+      item.actions.push(this.inventoryAction(user, 'SAVED_DRAFT', now));
+      form.last_edited_at = now;
+      form.last_edited_by_id = user._id;
+      form.last_edited_by_type = 'VENDOR';
+      await form.save();
+      return { form, item };
+    }
+    inventoryEditableFields.forEach((field) => { item[field] = normalized[field]; });
+    item.reorder_quantity = normalized.reorder_quantity;
+    item.record_status = submit ? 'SUBMITTED' : 'DRAFT';
+    item.expiration_notification_key = null;
+    item.actions.push(this.inventoryAction(user, submit ? 'SUBMITTED' : 'SAVED_DRAFT', now));
+    form.last_edited_at = now;
+    form.last_edited_by_id = user._id;
+    form.last_edited_by_type = 'VENDOR';
+    await form.save();
+    return { form, item };
+  }
+
+  async closeInventoryCount({ user, id, itemId, payload = {} }) {
+    const { form, item } = await this.getVendorInventoryItem({ user, id, itemId });
+    if ((item.lifecycle_status || 'ACTIVE') !== 'ACTIVE') {
+      throw errorWithCode('This inventory count is already closed.', 409);
+    }
+    const now = new Date();
+    const edited = normalizeInventoryItems([{ ...item.toObject(), ...inventoryPayload(payload.item || payload) }])[0];
+    const previousUseBy = item.use_by_date
+      ? new Date(item.use_by_date).toISOString().slice(0, 10)
+      : null;
+    const nextUseBy = edited.use_by_date
+      ? new Date(edited.use_by_date).toISOString().slice(0, 10)
+      : null;
+    if (!nextUseBy || nextUseBy === previousUseBy) {
+      throw errorWithCode('Enter the fresh item use-by date before closing this inventory count.', 422);
+    }
+    const replacement = form.inventory_items.create({
+      ...inventoryPayload(edited),
+      beginning_quantity: edited.current_quantity,
+      current_quantity: edited.current_quantity,
+      reorder_quantity: Math.max(0, edited.max_quantity - edited.current_quantity),
+      use_by_date: edited.use_by_date,
+      lifecycle_status: 'ACTIVE',
+      record_status: 'SUBMITTED',
+      lineage_id: item.lineage_id || String(item._id),
+      actions: [this.inventoryAction(user, 'COUNT_CLOSED', now)],
+    });
+    item.lifecycle_status = 'ARCHIVED';
+    item.archived_at = now;
+    item.archived_by_id = user._id;
+    item.archive_reason = 'COUNT_CLOSED';
+    item.pending_close_draft = null;
+    item.pending_close_saved_at = null;
+    item.pending_close_saved_by_id = null;
+    item.actions.push(this.inventoryAction(user, 'COUNT_CLOSED', now));
+    form.inventory_items.push(replacement);
+    form.last_edited_at = now;
+    form.last_edited_by_id = user._id;
+    form.last_edited_by_type = 'VENDOR';
+    await form.save();
+    return { form, archived: item, next: form.inventory_items.id(replacement._id) };
+  }
+
+  async archiveInventoryItem({ user, id, itemId }) {
+    const { form, item } = await this.getVendorInventoryItem({ user, id, itemId });
+    if ((item.lifecycle_status || 'ACTIVE') !== 'ACTIVE') {
+      throw errorWithCode('This inventory item is already archived.', 409);
+    }
+    const now = new Date();
+    item.lifecycle_status = 'ARCHIVED';
+    item.archived_at = now;
+    item.archived_by_id = user._id;
+    item.archive_reason = 'ITEM_ARCHIVED';
+    item.actions.push(this.inventoryAction(user, 'ITEM_ARCHIVED', now));
+    form.last_edited_at = now;
+    form.last_edited_by_id = user._id;
+    form.last_edited_by_type = 'VENDOR';
+    await form.save();
+    return { form, item };
+  }
+
+  async reviewEmployeeInventory({ user, id, payload = {} }) {
+    this.assertVendor(user);
+    let source = await this.getScopedForm({ user, id });
+    if (
+      source.form_type !== 'INVENTORY' ||
+      source.status !== 'SUBMITTED' ||
+      !source.employee_internal_id
+    ) {
+      throw errorWithCode('Employee inventory submission not found.', 404);
+    }
+    if (source.inventory_review_action) {
+      throw errorWithCode('This employee inventory submission was already reviewed.', 409);
+    }
+    const action = payload.action;
+    if (!['UPDATED', 'CLOSED_INTO_INVENTORY', 'ARCHIVED'].includes(action)) {
+      throw errorWithCode('Choose a valid inventory review action.', 422);
+    }
+    const claimTime = new Date();
+    const staleClaimBefore = new Date(claimTime.getTime() - 5 * 60 * 1000);
+    source = await Model.findOneAndUpdate(
+      {
+        _id: source._id,
+        vendor_user_id: source.vendor_user_id,
+        food_truck_id: source.food_truck_id,
+        inventory_review_action: null,
+        $or: [
+          { inventory_review_claimed_at: null },
+          { inventory_review_claimed_at: { $lt: staleClaimBefore } },
+        ],
+      },
+      {
+        $set: {
+          inventory_review_claimed_at: claimTime,
+          inventory_review_claim_action: action,
+          inventory_review_claimed_by_id: user._id,
+        },
+      },
+      { new: true }
+    );
+    if (!source) {
+      throw errorWithCode('This employee inventory submission is already being reviewed.', 409);
+    }
+    let reviewCompleted = false;
+    try {
+    const linkedSourceFormId = (source.inventory_items || []).find((item) => item.source_form_id)?.source_form_id;
+    let form = linkedSourceFormId
+      ? await Model.findOne({
+          _id: linkedSourceFormId,
+          vendor_user_id: source.vendor_user_id,
+          food_truck_id: source.food_truck_id,
+          form_type: 'INVENTORY',
+          status: { $ne: 'ARCHIVED' },
+          employee_internal_id: null,
+          employee_session_id: null,
+        })
+      : null;
+    if (!form) {
+      form = await this.getVendorInventoryForm({
+        user,
+        truckUnitId: source.truck_unit_id,
+        truckUnit: source.truck_unit,
+      });
+    }
+    const now = new Date();
+    const submittedItems = source.inventory_items || [];
+    const submittedById = new Map(submittedItems.map((item) => [String(item._id), item]));
+    const reviewedItems = normalizeInventoryItems(payload.inventory_items || submittedItems).map((item) => {
+      const submitted = submittedById.get(String(item._id));
+      if (!submitted) return item;
+      return {
+        ...item,
+        lineage_id: submitted.lineage_id || item.lineage_id,
+        source_form_id: submitted.source_form_id || item.source_form_id,
+        source_item_id: submitted.source_item_id || item.source_item_id,
+      };
+    });
+    const activeMatch = (sourceItem) => {
+      const exact = form.inventory_items.find((candidate) => {
+        if ((candidate.lifecycle_status || 'ACTIVE') !== 'ACTIVE') return false;
+        if (sourceItem.lineage_id && String(candidate.lineage_id || candidate._id) === String(sourceItem.lineage_id)) {
+          return true;
+        }
+        return sourceItem.source_item_id && String(candidate._id) === String(sourceItem.source_item_id);
+      });
+      if (exact) return exact;
+      const normalizedName = String(sourceItem.item_name || '').trim().toLowerCase();
+      if (!normalizedName) return null;
+      const nameMatches = form.inventory_items.filter((candidate) => (
+        (candidate.lifecycle_status || 'ACTIVE') === 'ACTIVE' &&
+        String(candidate.item_name || '').trim().toLowerCase() === normalizedName
+      ));
+      return nameMatches.length === 1 ? nameMatches[0] : null;
+    };
+    if (action === 'CLOSED_INTO_INVENTORY') {
+      reviewedItems.forEach((sourceItem) => {
+        const existing = activeMatch(sourceItem);
+        const previousUseBy = existing?.use_by_date
+          ? new Date(existing.use_by_date).toISOString().slice(0, 10)
+          : null;
+        const nextUseBy = sourceItem.use_by_date
+          ? new Date(sourceItem.use_by_date).toISOString().slice(0, 10)
+          : null;
+        if (!nextUseBy || (previousUseBy && nextUseBy === previousUseBy)) {
+          throw errorWithCode(
+            `Enter a fresh use-by date for ${sourceItem.item_name || 'each inventory item'} before closing this inventory count.`,
+            422
+          );
+        }
+      });
+    }
+    reviewedItems.forEach((sourceItem) => {
+      const reviewKey = `${source._id}:${sourceItem._id}:${action}`;
+      if (form.inventory_items.some((candidate) => (
+        candidate.applied_review_keys || []
+      ).includes(reviewKey))) return;
+      const existing = activeMatch(sourceItem);
+      if (existing && action === 'UPDATED') {
+        const normalized = inventoryPayload(sourceItem);
+        inventoryEditableFields.forEach((field) => { existing[field] = normalized[field]; });
+        existing.reorder_quantity = Math.max(0, existing.max_quantity - existing.current_quantity);
+        existing.record_status = 'SUBMITTED';
+        existing.expiration_notification_key = null;
+        existing.applied_review_keys ||= [];
+        existing.applied_review_keys.push(reviewKey);
+        existing.actions.push(this.inventoryAction(user, 'ITEM_UPDATED', now));
+        return;
+      }
+      if (existing) {
+        existing.lifecycle_status = 'ARCHIVED';
+        existing.archived_at = now;
+        existing.archived_by_id = user._id;
+        existing.archive_reason = action === 'ARCHIVED' ? 'ITEM_ARCHIVED' : 'COUNT_CLOSED';
+        existing.applied_review_keys ||= [];
+        existing.applied_review_keys.push(reviewKey);
+        existing.actions.push(this.inventoryAction(
+          user,
+          action === 'ARCHIVED' ? 'ITEM_ARCHIVED' : 'COUNT_CLOSED',
+          now
+        ));
+      }
+      if (action === 'ARCHIVED' && existing) return;
+      const copied = form.inventory_items.create({
+        ...inventoryPayload(sourceItem),
+        lifecycle_status: action === 'ARCHIVED' ? 'ARCHIVED' : 'ACTIVE',
+        record_status: 'SUBMITTED',
+        archived_at: action === 'ARCHIVED' ? now : null,
+        archived_by_id: action === 'ARCHIVED' ? user._id : null,
+        archive_reason: action === 'ARCHIVED' ? 'ITEM_ARCHIVED' : null,
+        actions: [this.inventoryAction(
+          user,
+          action === 'ARCHIVED'
+            ? 'ITEM_ARCHIVED'
+            : action === 'UPDATED'
+              ? 'ITEM_UPDATED'
+              : 'COUNT_CLOSED',
+          now
+        )],
+        source_form_id: source._id,
+        source_item_id: String(sourceItem._id || ''),
+        source_employee_internal_id: source.employee_internal_id,
+        applied_review_keys: [reviewKey],
+      });
+      if (action === 'CLOSED_INTO_INVENTORY') {
+        copied.beginning_quantity = sourceItem.current_quantity;
+        copied.current_quantity = sourceItem.current_quantity;
+        copied.reorder_quantity = Math.max(0, copied.max_quantity - copied.current_quantity);
+      }
+      copied.lineage_id = sourceItem.lineage_id || String(copied._id);
+      form.inventory_items.push(copied);
+    });
+    source.inventory_review_action = action;
+    source.inventory_reviewed_at = now;
+    source.inventory_reviewed_by_id = user._id;
+    source.inventory_review_claimed_at = null;
+    source.inventory_review_claim_action = null;
+    source.inventory_review_claimed_by_id = null;
+    form.last_edited_at = now;
+    form.last_edited_by_id = user._id;
+    form.last_edited_by_type = 'VENDOR';
+    await form.save();
+    await source.save();
+    reviewCompleted = true;
+    return { source, form };
+    } finally {
+      if (!reviewCompleted) {
+        await Model.updateOne(
+          {
+            _id: source._id,
+            inventory_review_action: null,
+            inventory_review_claimed_by_id: user._id,
+          },
+          {
+            $set: {
+              inventory_review_claimed_at: null,
+              inventory_review_claim_action: null,
+              inventory_review_claimed_by_id: null,
+            },
+          }
+        ).catch(() => {});
+      }
+    }
   }
 
   async notifyVendor({ form, user, action, sendPush = true }) {
@@ -515,6 +1015,118 @@ class OperationalComplianceFormService {
       action: form.notification_pending_action,
       sendPush: false,
     })));
+  }
+
+  async processExpiredInventoryNotifications({ vendorUserId = null, now = new Date() } = {}) {
+    const {
+      OperationalNotificationModel,
+    } = require('../../models');
+    const { getOperationalDayKey } = require('../../helper/employee-operational-day-helper');
+    const query = {
+      form_type: 'INVENTORY',
+      status: { $ne: 'ARCHIVED' },
+      employee_internal_id: null,
+      employee_session_id: null,
+      inventory_items: {
+        $elemMatch: {
+          lifecycle_status: { $ne: 'ARCHIVED' },
+          use_by_date: { $ne: null },
+        },
+      },
+    };
+    if (vendorUserId) query.vendor_user_id = vendorUserId;
+    const timeZoneByTruck = new Map();
+    let created = 0;
+    const cursor = Model.find(query).cursor();
+    for await (const form of cursor) {
+      const foodTruckId = String(form.food_truck_id);
+      if (!timeZoneByTruck.has(foodTruckId)) {
+        const foodTruck = await FoodTruckModel.findById(form.food_truck_id)
+          .select('schedule_time_zone')
+          .lean();
+        timeZoneByTruck.set(
+          foodTruckId,
+          foodTruck?.schedule_time_zone || 'America/New_York'
+        );
+      }
+      const timeZone = timeZoneByTruck.get(foodTruckId);
+      const operationalDay = getOperationalDayKey(now, timeZone);
+      for (const item of form.inventory_items || []) {
+        if ((item.lifecycle_status || 'ACTIVE') !== 'ACTIVE' || !item.use_by_date) continue;
+        const useByDay = new Date(item.use_by_date).toISOString().slice(0, 10);
+        if (operationalDay < useByDay) continue;
+        const eventKey = `inventory-expired:${form._id}:${item._id}:${useByDay}`;
+        try {
+          let notification;
+          try {
+            notification = await OperationalNotificationModel.create({
+            vendor_user_id: form.vendor_user_id,
+            employee_internal_id: null,
+            employee_name: 'Inventory',
+            form_id: form._id,
+            form_type: 'INVENTORY',
+            action: 'EXPIRED',
+            event_key: eventKey,
+            food_truck_id: form.food_truck_id,
+            truck_unit_id: form.truck_unit_id,
+            location_id: form.location_id,
+            inventory_item_id: String(item._id),
+            inventory_item_name: item.item_name,
+            occurred_at: now,
+            });
+            created += 1;
+          } catch (error) {
+            if (error?.code !== 11000) throw error;
+            notification = await OperationalNotificationModel.findOne({ event_key: eventKey });
+          }
+          if (!notification || notification.push_sent_at) continue;
+          const retryBefore = new Date(now.getTime() - 5 * 60 * 1000);
+          notification = await OperationalNotificationModel.findOneAndUpdate(
+            {
+              _id: notification._id,
+              push_sent_at: null,
+              $or: [
+                { push_claimed_at: null },
+                { push_claimed_at: { $lt: retryBefore } },
+              ],
+            },
+            { $set: { push_claimed_at: now } },
+            { new: true }
+          );
+          if (!notification) continue;
+          try {
+            await CustomNotification.sendNotificationToUsers({
+            [form.vendor_user_id.toString()]: {
+              title: `Inventory Item: ${item.item_name} has expired.`,
+              body: 'Please update the expiration date or close the inventory count with a fresher item.',
+              data: {
+                activityType: 'INVENTORY_ITEM_EXPIRED',
+                formId: String(form._id),
+                formType: 'INVENTORY',
+                inventoryItemId: String(item._id),
+              },
+            },
+            });
+            notification.push_sent_at = new Date();
+            notification.push_claimed_at = null;
+            notification.push_error = null;
+            await notification.save();
+          } catch (error) {
+            notification.push_error = String(error?.message || 'Push notification failed').slice(0, 500);
+            notification.push_claimed_at = null;
+            await notification.save().catch(() => {});
+            console.error('Inventory expiration push failed', {
+              form_id: form._id,
+              inventory_item_id: item._id,
+              message: error.message,
+            });
+          }
+        } catch (error) {
+          throw error;
+        }
+      }
+    }
+    return created;
   }
 }
 

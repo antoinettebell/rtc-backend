@@ -10,6 +10,7 @@ const cors = require('cors');
 const app = express();
 const { validatePublicReviewUrl } = require('./helper/review-url-helper');
 const { startEventVendorPhotoCleanup } = require('./helper/event-vendor-photo-cleanup');
+const { startInventoryExpirationMonitor } = require('./helper/inventory-expiration-monitor');
 
 app.set('trust proxy', 'loopback');
 
@@ -25,6 +26,7 @@ const reshelper = require('reshelper');
 
 require('./db/connection');
 startEventVendorPhotoCleanup();
+startInventoryExpirationMonitor();
 
 app.use(reshelper);
 
