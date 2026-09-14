@@ -14,6 +14,7 @@ const {
   getEmployeeScheduleAssignment,
   getEffectiveEmployeeAssignment,
   getEmployeeScheduledEndAt,
+  shouldAutoCloseEmployeeSession,
   findOverlappingScheduleAssignment,
 } = require('../../helper/employee-weekly-schedule');
 const {
@@ -283,7 +284,7 @@ class VendorEmployeeService extends BaseService {
         const hasSchedule =
           safeEmployee.schedule_assignments?.length > 0 ||
           safeEmployee.weekly_schedule?.length > 0;
-        if (activeSession && !activeSession.is_vendor_override && hasSchedule) {
+        if (activeSession && hasSchedule) {
           const foodTruck = await this.getVendorFoodTruck(
             vendor_user_id,
             safeEmployee.food_truck_id
@@ -298,23 +299,25 @@ class VendorEmployeeService extends BaseService {
               ) || { withinWindow: false }
             : getEmployeeScheduleState(safeEmployee.weekly_schedule, now, timeZone);
           if (!scheduleState.withinWindow) {
-            const endedAt = getEmployeeScheduledEndAt({
+            const scheduledEndAt = getEmployeeScheduledEndAt({
               employee: safeEmployee,
               session: activeSession,
               now,
               timeZone,
-            }) || now;
-            await EmployeeSessionService.endSession({
-              employeeSessionId: activeSession.employee_session_id,
-              employeeInternalId: safeEmployee.employee_internal_id,
-              endedAt,
             });
-            await Model.updateOne(
-              { _id: safeEmployee._id },
-              { $set: { is_working: false } }
-            );
-            safeEmployee.is_working = false;
-            activeSession = null;
+            if (shouldAutoCloseEmployeeSession({ session: activeSession, scheduledEndAt })) {
+              await EmployeeSessionService.endSession({
+                employeeSessionId: activeSession.employee_session_id,
+                employeeInternalId: safeEmployee.employee_internal_id,
+                endedAt: scheduledEndAt || now,
+              });
+              await Model.updateOne(
+                { _id: safeEmployee._id },
+                { $set: { is_working: false } }
+              );
+              safeEmployee.is_working = false;
+              activeSession = null;
+            }
           }
         }
         const [todayShiftSummary, weekShiftSummary] = await Promise.all([
@@ -682,25 +685,38 @@ class VendorEmployeeService extends BaseService {
         null,
         employee.employee_internal_id
       );
-      if (activeSession?.is_vendor_override) {
+      const scheduleState = employee.schedule_assignments?.length
+        ? getEmployeeScheduleAssignment(
+            employee.schedule_assignments,
+            new Date(),
+            foodTruck.schedule_time_zone || 'America/New_York'
+          ) || { withinWindow: false }
+        : getEmployeeScheduleState(
+            employee.weekly_schedule,
+            new Date(),
+            foodTruck.schedule_time_zone || 'America/New_York'
+          );
+      const now = new Date();
+      const scheduledEndAt = activeSession
+        ? getEmployeeScheduledEndAt({
+            employee,
+            session: activeSession,
+            now,
+            timeZone: foodTruck.schedule_time_zone || 'America/New_York',
+          })
+        : null;
+      if (
+        activeSession &&
+        !shouldAutoCloseEmployeeSession({ session: activeSession, scheduledEndAt })
+      ) {
         employee.is_working = true;
       } else {
-        const scheduleState = employee.schedule_assignments?.length
-          ? getEmployeeScheduleAssignment(
-              employee.schedule_assignments,
-              new Date(),
-              foodTruck.schedule_time_zone || 'America/New_York'
-            ) || { withinWindow: false }
-          : getEmployeeScheduleState(
-              employee.weekly_schedule,
-              new Date(),
-              foodTruck.schedule_time_zone || 'America/New_York'
-            );
         employee.is_working = scheduleState.withinWindow;
         if (!scheduleState.withinWindow && activeSession) {
           await EmployeeSessionService.endSession({
             employeeSessionId: activeSession.employee_session_id,
             employeeInternalId: employee.employee_internal_id,
+            endedAt: scheduledEndAt || now,
           });
         }
       }
@@ -880,25 +896,32 @@ class VendorEmployeeService extends BaseService {
     }
 
     if (hasCardSchedule) {
-      employee.is_working = !!scheduled?.withinWindow;
       const activeSession = !scheduled?.withinWindow
         ? await EmployeeSessionService.getActiveSession(
             null,
             employee.employee_internal_id
           )
         : null;
-      if (activeSession && !activeSession.is_vendor_override) {
+      if (activeSession) {
         const now = new Date();
-        await EmployeeSessionService.endSession({
-          employeeSessionId: activeSession.employee_session_id,
-          employeeInternalId: employee.employee_internal_id,
-          endedAt: getEmployeeScheduledEndAt({
-            employee,
-            session: activeSession,
-            now,
-            timeZone: foodTruck.schedule_time_zone || 'America/New_York',
-          }) || now,
+        const scheduledEndAt = getEmployeeScheduledEndAt({
+          employee,
+          session: activeSession,
+          now,
+          timeZone: foodTruck.schedule_time_zone || 'America/New_York',
         });
+        if (shouldAutoCloseEmployeeSession({ session: activeSession, scheduledEndAt })) {
+          await EmployeeSessionService.endSession({
+            employeeSessionId: activeSession.employee_session_id,
+            employeeInternalId: employee.employee_internal_id,
+            endedAt: scheduledEndAt || now,
+          });
+          employee.is_working = false;
+        } else {
+          employee.is_working = true;
+        }
+      } else {
+        employee.is_working = !!scheduled?.withinWindow;
       }
     }
     employee.last_login_at = new Date();

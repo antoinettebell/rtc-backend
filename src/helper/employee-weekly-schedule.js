@@ -159,6 +159,12 @@ const getEmployeeScheduledEndAt = ({
   return new Date(Math.max(scheduledEnd.getTime(), startedAt.getTime()));
 };
 
+// Vendor-started shifts may be genuinely unscheduled and must remain under
+// manual control. When an override started within a saved schedule, however,
+// it still belongs to that scheduled window and should close at its end.
+const shouldAutoCloseEmployeeSession = ({ session = {}, scheduledEndAt = null }) =>
+  !session.is_vendor_override || !!scheduledEndAt;
+
 const isEmployeeScheduledToday = (
   employee = {},
   now = new Date(),
@@ -285,5 +291,6 @@ module.exports = {
   getEmployeeScheduleAssignment,
   getEffectiveEmployeeAssignment,
   getEmployeeScheduledEndAt,
+  shouldAutoCloseEmployeeSession,
   isEmployeeScheduledToday,
 };
