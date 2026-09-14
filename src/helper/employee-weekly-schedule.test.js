@@ -4,6 +4,7 @@ const {
   getEmployeeScheduleAssignment,
   getEffectiveEmployeeAssignment,
   getEmployeeScheduledEndAt,
+  shouldAutoCloseEmployeeSession,
   isEmployeeScheduledToday,
   findOverlappingScheduleAssignment,
 } = require('./employee-weekly-schedule');
@@ -62,6 +63,22 @@ assert.equal(
   }).toISOString(),
   '2026-09-14T05:00:00.000Z',
   'an overnight shift closes at the saved local clock-out time'
+);
+assert.equal(
+  shouldAutoCloseEmployeeSession({
+    session: { is_vendor_override: true },
+    scheduledEndAt: new Date('2026-09-14T05:00:00Z'),
+  }),
+  true,
+  'a vendor-started shift tied to a saved schedule still closes automatically'
+);
+assert.equal(
+  shouldAutoCloseEmployeeSession({
+    session: { is_vendor_override: true },
+    scheduledEndAt: null,
+  }),
+  false,
+  'a genuinely unscheduled vendor override stays open for manual control'
 );
 
 const assignments = [

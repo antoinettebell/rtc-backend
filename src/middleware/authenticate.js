@@ -13,6 +13,7 @@ const {
   getEmployeeScheduleAssignment,
   getEffectiveEmployeeAssignment,
   getEmployeeScheduledEndAt,
+  shouldAutoCloseEmployeeSession,
 } = require('../helper/employee-weekly-schedule');
 const { FoodTruckModel } = require('../models');
 const EmployeeSessionService = require('../v1/services/employee-session-service');
@@ -110,7 +111,6 @@ const Authenticate = async (req, res, next) => {
       const effectiveAssignedTruckUnitId = effectiveAssignment.truckUnitId;
       if (
         activeSession &&
-        !activeSession.is_vendor_override &&
         ((Array.isArray(employee.schedule_assignments) && employee.schedule_assignments.length > 0) ||
           (Array.isArray(employee.weekly_schedule) && employee.weekly_schedule.length > 0))
       ) {
@@ -127,22 +127,25 @@ const Authenticate = async (req, res, next) => {
             );
         if (!scheduleState.withinWindow) {
           const now = new Date();
-          await EmployeeSessionService.endSession({
-            employeeSessionId: activeSession.employee_session_id,
-            employeeInternalId: employee.employee_internal_id,
-            endedAt: getEmployeeScheduledEndAt({
-              employee,
-              session: activeSession,
-              now,
-              timeZone:
-                assignmentFoodTruck?.schedule_time_zone || 'America/New_York',
-            }) || now,
+          const scheduledEndAt = getEmployeeScheduledEndAt({
+            employee,
+            session: activeSession,
+            now,
+            timeZone:
+              assignmentFoodTruck?.schedule_time_zone || 'America/New_York',
           });
-          await VendorEmployeeModel.updateOne(
-            { _id: employee._id },
-            { $set: { is_working: false } }
-          );
-          activeSession = null;
+          if (shouldAutoCloseEmployeeSession({ session: activeSession, scheduledEndAt })) {
+            await EmployeeSessionService.endSession({
+              employeeSessionId: activeSession.employee_session_id,
+              employeeInternalId: employee.employee_internal_id,
+              endedAt: scheduledEndAt || now,
+            });
+            await VendorEmployeeModel.updateOne(
+              { _id: employee._id },
+              { $set: { is_working: false } }
+            );
+            activeSession = null;
+          }
         }
       }
       const isShiftExempt = EMPLOYEE_SHIFT_EXEMPT_ROUTES.some((route) =>

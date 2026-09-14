@@ -12,6 +12,7 @@ const {
   getEmployeeScheduleState,
   getEmployeeScheduleAssignment,
   getEmployeeScheduledEndAt,
+  shouldAutoCloseEmployeeSession,
 } = require('../../helper/employee-weekly-schedule');
 
 const WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES = 0;
@@ -620,7 +621,6 @@ exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
         food_truck_id: employee.food_truck_id,
         is_active: true,
       }).sort({ started_at: -1 });
-      if (activeSession?.is_vendor_override) continue;
       const scheduleState = employee.schedule_assignments?.length
         ? getEmployeeScheduleAssignment(
             employee.schedule_assignments,
@@ -632,22 +632,31 @@ exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
             new Date(),
             truck.schedule_time_zone || DEFAULT_VENDOR_SCHEDULE_TIME_ZONE
           );
-      if (employee.is_working !== scheduleState.withinWindow) {
-        employee.is_working = scheduleState.withinWindow;
-        await employee.save();
-      }
-      if (!scheduleState.withinWindow && activeSession) {
-        const now = new Date();
-        await EmployeeSessionService.endSession({
-          employeeSessionId: activeSession.employee_session_id,
-          employeeInternalId: employee.employee_internal_id,
-          endedAt: getEmployeeScheduledEndAt({
+      const now = new Date();
+      const scheduledEndAt = activeSession
+        ? getEmployeeScheduledEndAt({
             employee,
             session: activeSession,
             now,
             timeZone:
               truck.schedule_time_zone || DEFAULT_VENDOR_SCHEDULE_TIME_ZONE,
-          }) || now,
+          })
+        : null;
+      const preserveUnscheduledOverride =
+        activeSession &&
+        !shouldAutoCloseEmployeeSession({ session: activeSession, scheduledEndAt });
+      if (
+        !preserveUnscheduledOverride &&
+        employee.is_working !== scheduleState.withinWindow
+      ) {
+        employee.is_working = scheduleState.withinWindow;
+        await employee.save();
+      }
+      if (!scheduleState.withinWindow && activeSession && !preserveUnscheduledOverride) {
+        await EmployeeSessionService.endSession({
+          employeeSessionId: activeSession.employee_session_id,
+          employeeInternalId: employee.employee_internal_id,
+          endedAt: scheduledEndAt || now,
         });
         employeeShiftsEnded += 1;
       }
