@@ -185,6 +185,12 @@ const mSchema = mongoose.Schema(
       default: null,
       trim: true,
     },
+    fcmTokens: [
+      {
+        token: { type: String, default: null },
+        deviceId: { type: String, default: null },
+      },
+    ],
     employee_rate_history: [
       {
         previous_rate: {

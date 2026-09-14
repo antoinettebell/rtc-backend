@@ -118,6 +118,7 @@ const { docusign } = require('../../config');
 const {
   EventVendorApplicationModel,
   EventVendorProfileModel,
+  EmployeeRefundCancelRequestModel,
   MarketplaceAdminAuditModel,
   MarketplaceAdminDraftModel,
   MarketplaceApplicationModel,
@@ -6406,7 +6407,7 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       );
     }
 
-    const [questions, bids, applications, closedCandidateBids, closedCandidateApplications, operationalNotifications] = await Promise.all([
+    const [questions, bids, applications, closedCandidateBids, closedCandidateApplications, operationalNotifications, refundRequests] = await Promise.all([
       MarketplaceEventQuestionService.getByData(
         {
           vendor_user_id: req.user._id,
@@ -6491,6 +6492,14 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       OperationalNotificationModel.find({ vendor_user_id: req.user._id })
         .sort({ occurred_at: -1 })
         .limit(50)
+        .lean(),
+      EmployeeRefundCancelRequestModel.find({
+        vendor_user_id: req.user._id,
+        request_status: 'PENDING',
+      })
+        .sort({ requested_at: -1 })
+        .limit(50)
+        .populate('order_id')
         .lean(),
     ]);
 
@@ -6641,7 +6650,19 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       };
     });
 
+    const refundNotificationList = refundRequests.map((item) => ({
+      id: `employee-refund-${item.request_id}`,
+      type: 'EMPLOYEE_REFUND_CANCEL_REQUEST',
+      title: 'Employee refund/cancel request',
+      subtitle: `Order #${item.order_id?.orderNumber || item.order_id?._id || item.order_id} needs review.`,
+      request_id: item.request_id,
+      order_id: item.order_id?._id || item.order_id,
+      requested_at: item.requested_at,
+      acknowledged: false,
+    }));
+
     const marketplaceNotificationList = [
+      ...refundNotificationList,
       ...operationalNotificationList,
       ...messageNotifications,
       ...bidNotifications,
@@ -6656,6 +6677,7 @@ exports.vendorNotificationSummary = async (req, res, next) => {
         marketplaceNotificationList,
         unread_message_count: messageNotifications.filter((item) => item.unread).length,
         action_required_count:
+          refundNotificationList.length +
           bidNotifications.length +
           applicationNotifications.length +
           closedBidNotifications.length +
