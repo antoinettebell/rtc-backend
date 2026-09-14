@@ -1,5 +1,6 @@
 const {
   EmployeeRefundCancelRequestModel: Model,
+  EmployeeSessionModel,
   VendorEmployeeModel,
 } = require('../../models');
 const { BaseService } = require('../../common-services');
@@ -30,15 +31,14 @@ const isCashPaymentMethod = (paymentMethod) =>
 const isGatewayPaymentMethod = (paymentMethod) =>
   !isCashPaymentMethod(paymentMethod);
 
-const currentEligibleManagers = ({ vendorUserId, foodTruckId, locationId, truckUnitId, submittingEmployeeId }) =>
-  VendorEmployeeModel.find({
+const currentEligibleManagers = async ({ vendorUserId, foodTruckId, locationId, truckUnitId, submittingEmployeeId }) => {
+  const managers = await VendorEmployeeModel.find({
     vendor_user_id: vendorUserId,
     food_truck_id: foodTruckId,
     role: 'MANAGER',
     is_active: true,
     is_archived: { $ne: true },
     is_working: true,
-    assigned_location_id: String(locationId),
     employee_internal_id: { $ne: submittingEmployeeId },
     $or: [
       { manager_scope: 'ALL_TRUCKS' },
@@ -48,6 +48,29 @@ const currentEligibleManagers = ({ vendorUserId, foodTruckId, locationId, truckU
       },
     ],
   });
+
+  if (!managers.length) return [];
+
+  const activeSessions = await EmployeeSessionModel.find({
+    employee_internal_id: {
+      $in: managers.map((manager) => manager.employee_internal_id),
+    },
+    vendor_user_id: vendorUserId,
+    food_truck_id: foodTruckId,
+    location_id: String(locationId),
+    is_active: true,
+    shift_status: { $in: ['STARTED', 'ON_BREAK'] },
+  })
+    .select('employee_internal_id')
+    .lean();
+  const managerIdsAtLocation = new Set(
+    activeSessions.map((session) => session.employee_internal_id)
+  );
+
+  return managers.filter((manager) =>
+    managerIdsAtLocation.has(manager.employee_internal_id)
+  );
+};
 
 const PAID_PAYMENT_STATUSES = ['PAID', 'COMPLETED', 'CAPTURED'];
 const POST_PICKUP_STATUSES = ['DRIVER_PICKED_UP', 'DELIVERED', 'COMPLETED'];
@@ -283,17 +306,34 @@ class EmployeeRefundCancelRequestService extends BaseService {
   async listForManager({ manager, status, limit = 50 }) {
     if (
       !manager?.is_working ||
-      !manager?.assigned_location_id ||
       manager?.is_archived ||
       !manager?.is_active
     ) {
       return [];
     }
+
+    const activeSession = await EmployeeSessionModel.findOne({
+      employee_internal_id: manager.employee_internal_id,
+      vendor_user_id: manager.vendor_user_id,
+      food_truck_id: manager.food_truck_id,
+      is_active: true,
+      shift_status: { $in: ['STARTED', 'ON_BREAK'] },
+    })
+      .sort({ started_at: -1 })
+      .lean();
+    if (!activeSession?.location_id) return [];
+
     return Model.find({
       vendor_user_id: manager.vendor_user_id,
       food_truck_id: manager.food_truck_id,
-      location_id: String(manager.assigned_location_id),
-      eligible_manager_internal_ids: manager.employee_internal_id,
+      location_id: String(activeSession.location_id),
+      $or: [
+        { eligible_manager_internal_ids: manager.employee_internal_id },
+        {
+          eligible_manager_internal_ids: { $size: 0 },
+          requested_at: { $gte: activeSession.started_at },
+        },
+      ],
       ...(status ? { request_status: status } : {}),
     })
       .sort({ requested_at: -1 })
