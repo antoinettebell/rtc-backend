@@ -8,14 +8,22 @@ const {
 const { BaseService } = require('../../common-services');
 const {
   getOperationalDayKey,
+  getOperationalDayQueryEnvelope,
   isOperationalDayInRange,
 } = require('../../helper/employee-operational-day-helper');
 const { isEmployeeScheduledToday } = require('../../helper/employee-weekly-schedule');
+const {
+  getCashDrawerAmount,
+  getOrderGrossSalesAmount,
+  isRefundedOrder,
+  isRevenueOrder,
+} = require('../../helper/vendor-sales-summary-helper');
 
 const toNumber = (value) => {
   const amount = Number(value);
   return Number.isFinite(amount) ? amount : 0;
 };
+const roundMoney = (value) => Number(toNumber(value).toFixed(2));
 
 const isCashPayment = (paymentMethod) =>
   ['CASH', 'COD'].includes(String(paymentMethod || '').toUpperCase());
@@ -31,46 +39,6 @@ const getCurrentDayRange = () => {
   end.setDate(end.getDate() + 1);
 
   return { start, end };
-};
-
-const getOperationalDayQueryEnvelope = (operationalDayKey) => {
-  const start = new Date(`${operationalDayKey}T00:00:00.000Z`);
-  start.setUTCDate(start.getUTCDate() - 1);
-  const end = new Date(`${operationalDayKey}T00:00:00.000Z`);
-  end.setUTCDate(end.getUTCDate() + 2);
-  return { start, end };
-};
-
-const getOrderSubtotal = (order) =>
-  toNumber(order.subTotal || order.subtotal || order.sub_total);
-
-const getOrderTax = (order) =>
-  toNumber(order.taxAmount || order.tax || order.tax_amount);
-
-const getOrderVendorTip = (order) =>
-  toNumber(order.tipsAmount || order.foodTruckTip || order.vendorTip);
-
-const isWalkUpOrder = (order) =>
-  ['VENDOR_POS', 'WALK_UP_EMPLOYEE'].includes(
-    String(order.order_source || order.orderSource || '').toUpperCase()
-  );
-
-const getOrderFoodSalesAmount = (order) => {
-  const hasTotalAfterDiscount =
-    order.totalAfterDiscount !== undefined && order.totalAfterDiscount !== null;
-  const foodSubtotal = hasTotalAfterDiscount
-    ? toNumber(order.totalAfterDiscount)
-    : Math.max(
-        0,
-        getOrderSubtotal(order) -
-          toNumber(order.discount || order.discountAmount || order.disAmount)
-      );
-
-  return (
-    foodSubtotal +
-    getOrderVendorTip(order) +
-    (isWalkUpOrder(order) ? getOrderTax(order) : 0)
-  );
 };
 
 const getShiftRange = (range = 'week') => {
@@ -544,24 +512,25 @@ class EmployeeSessionService extends BaseService {
     );
 
     const completedOrders = todayOrders.filter(
-      (order) => order.orderStatus === 'COMPLETED'
-    );
-    const salesOrders = todayOrders.filter(
-      (order) =>
-        !['CANCEL', 'REJECTED'].includes(order.orderStatus) &&
-        order.paymentStatus !== 'REFUNDED'
+      (order) => order.orderStatus === 'COMPLETED' && !isRefundedOrder(order)
     );
 
-    const grossSalesToday = salesOrders.reduce(
-      (sum, order) => sum + getOrderFoodSalesAmount(order),
-      0
+    const grossSalesToday = roundMoney(
+      todayOrders.reduce(
+        (sum, order) => sum + getOrderGrossSalesAmount(order),
+        0
+      )
     );
-    const cashSalesOrders = salesOrders.filter((order) =>
-      isCashPayment(order.payment_method || order.paymentMethod)
+    const cashSalesOrders = todayOrders.filter(
+      (order) =>
+        isCashPayment(order.payment_method || order.paymentMethod) &&
+        isRevenueOrder(order)
     );
-    const cashDrawerTotal = cashSalesOrders.reduce(
-      (sum, order) => sum + getOrderSubtotal(order) + getOrderTax(order),
-      0
+    const cashDrawerTotal = roundMoney(
+      cashSalesOrders.reduce(
+        (sum, order) => sum + getCashDrawerAmount(order),
+        0
+      )
     );
 
     const refundCancelStatusCounts = requests.reduce(
@@ -638,13 +607,13 @@ class EmployeeSessionService extends BaseService {
         orders_created_today: todayOrders.length,
         completed_orders_today: completedOrders.length,
         gross_sales_today: grossSalesToday,
-        cash_orders_today: todayOrders.filter((order) =>
-          isCashPayment(order.payment_method || order.paymentMethod)
-        ).length,
+        cash_orders_today: cashSalesOrders.length,
         cash_drawer_total: cashDrawerTotal,
         cash_drawer_order_count: cashSalesOrders.length,
-        tap_orders_today: todayOrders.filter((order) =>
-          isTapPayment(order.payment_method || order.paymentMethod)
+        tap_orders_today: todayOrders.filter(
+          (order) =>
+            isTapPayment(order.payment_method || order.paymentMethod) &&
+            isRevenueOrder(order)
         ).length,
         refund_cancel_requests_submitted: requests.length,
 	        refund_cancel_request_status_counts: refundCancelStatusCounts,
@@ -819,12 +788,7 @@ class EmployeeSessionService extends BaseService {
             )
           : employeeOrders;
         const completedOrders = filteredOrders.filter(
-          (order) => order.orderStatus === 'COMPLETED'
-        );
-        const salesOrders = filteredOrders.filter(
-          (order) =>
-            !['CANCEL', 'REJECTED'].includes(order.orderStatus) &&
-            order.paymentStatus !== 'REFUNDED'
+          (order) => order.orderStatus === 'COMPLETED' && !isRefundedOrder(order)
         );
         const employeeRequests = requests.filter(
           (request) =>
@@ -894,16 +858,23 @@ class EmployeeSessionService extends BaseService {
           },
           metrics: {
             orders_processed: filteredOrders.length,
+            paid_orders: filteredOrders.filter(isRevenueOrder).length,
             completed_orders: completedOrders.length,
-            gross_sales: salesOrders.reduce(
-              (sum, order) => sum + getOrderFoodSalesAmount(order),
-              0
+            gross_sales: roundMoney(
+              filteredOrders.reduce(
+                (sum, order) => sum + getOrderGrossSalesAmount(order),
+                0
+              )
             ),
-            cash_orders: filteredOrders.filter((order) =>
-              isCashPayment(order.payment_method || order.paymentMethod)
+            cash_orders: filteredOrders.filter(
+              (order) =>
+                isCashPayment(order.payment_method || order.paymentMethod) &&
+                isRevenueOrder(order)
             ).length,
-            tap_orders: filteredOrders.filter((order) =>
-              isTapPayment(order.payment_method || order.paymentMethod)
+            tap_orders: filteredOrders.filter(
+              (order) =>
+                isTapPayment(order.payment_method || order.paymentMethod) &&
+                isRevenueOrder(order)
             ).length,
 	            refund_cancel_requests_submitted: employeeRequests.length,
 	            refund_cancel_request_status_counts: refundCancelStatusCounts,
@@ -928,12 +899,6 @@ class EmployeeSessionService extends BaseService {
           )
         )
       : orders;
-    const summarySalesOrders = summaryOrders.filter(
-      (order) =>
-        !['CANCEL', 'REJECTED'].includes(order.orderStatus) &&
-        order.paymentStatus !== 'REFUNDED'
-    );
-
     return {
       filters: {
         startDate: startOperationalDayKey,
@@ -947,9 +912,12 @@ class EmployeeSessionService extends BaseService {
       employees: employeesData,
       summary: {
         orders_processed: summaryOrders.length,
-        gross_sales: summarySalesOrders.reduce(
-          (sum, order) => sum + getOrderFoodSalesAmount(order),
-          0
+        paid_orders: summaryOrders.filter(isRevenueOrder).length,
+        gross_sales: roundMoney(
+          summaryOrders.reduce(
+            (sum, order) => sum + getOrderGrossSalesAmount(order),
+            0
+          )
         ),
         employee_orders: summaryOrders.filter(
           (order) => order.created_by_type === 'EMPLOYEE'

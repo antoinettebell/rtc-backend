@@ -42,6 +42,36 @@ const isCompletedOrder = (order) =>
     String(order?.orderStatus || '').toUpperCase()
   );
 
+const isRevenueOrder = (order) => {
+  if (isCancelledOrder(order) && !isRefundedOrder(order)) return false;
+  const paymentStatus = String(order?.paymentStatus || '').toUpperCase();
+  return (
+    ['PAID', 'COMPLETED', 'CAPTURED', 'REFUNDED'].includes(paymentStatus) ||
+    isRefundedOrder(order) ||
+    isCompletedOrder(order)
+  );
+};
+
+const getOrderGrossSalesAmount = (order) =>
+  isRevenueOrder(order) ? getOrderFoodSalesAmount(order) : 0;
+
+const getOrderNetEarningsAmount = (order) => {
+  if (!isRevenueOrder(order)) return 0;
+  if (isRefundedOrder(order)) return roundMoney(getOrderVendorTip(order));
+  return getOrderFoodSalesAmount(order);
+};
+
+const getCashDrawerAmount = (order) => {
+  const paymentMethod = String(
+    order?.paymentMethod || order?.payment_method || ''
+  ).toUpperCase();
+  if (!['CASH', 'COD'].includes(paymentMethod) || !isRevenueOrder(order)) {
+    return 0;
+  }
+  if (isRefundedOrder(order)) return roundMoney(getOrderVendorTip(order));
+  return roundMoney(toNumber(order?.total));
+};
+
 const getTruckUnitKey = (order) =>
   order?.truck_unit_id?.toString() || `name:${order?.truck_unit_name || ''}`;
 
@@ -58,7 +88,9 @@ const summarizeVendorSales = ({ orders = [], foodTruck = {} } = {}) => {
         truckUnitId: unit._id?.toString() || null,
         label: unit.name || `Food Truck ${index + 1}`,
         grossSales: 0,
+        netEarnings: 0,
         orders: 0,
+        paidOrders: 0,
         refundsCancels: 0,
       },
     ])
@@ -68,7 +100,6 @@ const summarizeVendorSales = ({ orders = [], foodTruck = {} } = {}) => {
     (summary, order) => {
       const refunded = isRefundedOrder(order);
       const cancelled = isCancelledOrder(order);
-      const completedSale = isCompletedOrder(order) && !refunded && !cancelled;
       const configuredTruck = activeTruckUnits.find(
         (unit) => unit._id?.toString() === order?.truck_unit_id?.toString()
       );
@@ -88,16 +119,24 @@ const summarizeVendorSales = ({ orders = [], foodTruck = {} } = {}) => {
           foodTruck.name ||
           'Food Truck',
         grossSales: 0,
+        netEarnings: 0,
         orders: 0,
+        paidOrders: 0,
         refundsCancels: 0,
       };
 
-      if (completedSale) {
-        const grossSales = getOrderFoodSalesAmount(order);
+      summary.orders += 1;
+      existingTruck.orders += 1;
+
+      if (isRevenueOrder(order)) {
+        const grossSales = getOrderGrossSalesAmount(order);
+        const netEarnings = getOrderNetEarningsAmount(order);
         summary.grossSales += grossSales;
-        summary.orders += 1;
+        summary.netEarnings += netEarnings;
+        summary.paidOrders += 1;
         existingTruck.grossSales += grossSales;
-        existingTruck.orders += 1;
+        existingTruck.netEarnings += netEarnings;
+        existingTruck.paidOrders += 1;
       }
 
       if (refunded || cancelled) {
@@ -108,14 +147,15 @@ const summarizeVendorSales = ({ orders = [], foodTruck = {} } = {}) => {
       breakdownByTruck.set(truckKey, existingTruck);
       return summary;
     },
-    { grossSales: 0, orders: 0, refundsCancels: 0 }
+    { grossSales: 0, netEarnings: 0, orders: 0, paidOrders: 0, refundsCancels: 0 }
   );
 
   const formatSummary = (summary) => ({
     ...summary,
     grossSales: roundMoney(summary.grossSales),
-    averageTicket: summary.orders
-      ? roundMoney(summary.grossSales / summary.orders)
+    netEarnings: roundMoney(summary.netEarnings),
+    averageTicket: summary.paidOrders
+      ? roundMoney(summary.grossSales / summary.paidOrders)
       : 0,
   });
 
@@ -127,8 +167,12 @@ const summarizeVendorSales = ({ orders = [], foodTruck = {} } = {}) => {
 
 module.exports = {
   getOrderFoodSalesAmount,
+  getOrderGrossSalesAmount,
+  getOrderNetEarningsAmount,
+  getCashDrawerAmount,
   isCancelledOrder,
   isCompletedOrder,
   isRefundedOrder,
+  isRevenueOrder,
   summarizeVendorSales,
 };

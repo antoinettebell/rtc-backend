@@ -2,23 +2,90 @@ const { OrderModel: Model } = require('../../models');
 const { BaseService } = require('../../common-services');
 const mongoose = require('mongoose');
 const {
-  buildVendorEarningExpression,
-} = require('../../helper/vendor-earnings-helper');
-const {
+  getOrderNetEarningsAmount,
+  isCompletedOrder,
+  isRefundedOrder,
+  isRevenueOrder,
   summarizeVendorSales,
 } = require('../../helper/vendor-sales-summary-helper');
+const {
+  getOperationalDayKey,
+  getOperationalDayQueryEnvelope,
+  isOperationalDayInRange,
+} = require('../../helper/employee-operational-day-helper');
 
-const deliveredOrderStatuses = ['DELIVERED', 'COMPLETED'];
 const cashPaymentMethods = ['COD', 'CASH'];
 const digitalPaymentMethods = ['APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY'];
-const nonRefundedOrderMatch = {
-  paymentStatus: { $ne: 'REFUNDED' },
-  refundStatus: { $ne: 'SUCCESS' },
-};
 
 class OrderService extends BaseService {
   constructor() {
     super(Model);
+  }
+
+  async getOrdersForOperationalRange({
+    foodTruck,
+    startDayKey,
+    endDayKey = startDayKey,
+    truckUnitId = null,
+    locationId = null,
+    paymentMethod = null,
+  }) {
+    const timeZone = foodTruck.schedule_time_zone || 'America/New_York';
+    const { start, end } = getOperationalDayQueryEnvelope(
+      startDayKey,
+      endDayKey
+    );
+    const query = {
+      foodTruckId: new mongoose.Types.ObjectId(foodTruck._id),
+      deletedAt: null,
+      createdAt: { $gte: start, $lt: end },
+      ...(truckUnitId
+        ? { truck_unit_id: new mongoose.Types.ObjectId(truckUnitId) }
+        : {}),
+      ...(locationId
+        ? { $or: [{ locationId }, { location_id: locationId }] }
+        : {}),
+      ...(paymentMethod
+        ? {
+            $and: [
+              { $or: [{ paymentMethod }, { payment_method: paymentMethod }] },
+            ],
+          }
+        : {}),
+    };
+    const orders = await Model.find(query).lean();
+    return orders.filter((order) =>
+      isOperationalDayInRange({
+        value: order.created_at || order.createdAt,
+        startDayKey,
+        endDayKey,
+        timeZone,
+      })
+    );
+  }
+
+  getVendorEarningsResult(orders, foodTruck) {
+    const summary = summarizeVendorSales({ orders, foodTruck });
+    const eligibleDessertOrders = orders.filter(
+      (order) =>
+        order.freeDessertApplied === true &&
+        isCompletedOrder(order) &&
+        !isRefundedOrder(order)
+    );
+    const totalFreeDessertAmount = eligibleDessertOrders.reduce(
+      (sum, order) => sum + Number(order.freeDessertAmount || 0),
+      0
+    );
+    return {
+      totalOrders: summary.orders,
+      paidOrders: summary.paidOrders,
+      totalRevenue: summary.netEarnings,
+      adminPayment: summary.netEarnings,
+      grossSales: summary.grossSales,
+      averageTicket: summary.averageTicket,
+      totalFreeDessertAmount: Number(totalFreeDessertAmount.toFixed(2)),
+      freeDessertOrders: eligibleDessertOrders.length,
+    };
   }
 
   async getWithAllDetails(
@@ -456,71 +523,23 @@ class OrderService extends BaseService {
   }
 
   async getVendorEarningsWithFreeDessert(
-    foodTruckId,
+    foodTruck,
     startDate,
     endDate,
     truckUnitId = null,
     fallbackVendorTierRate = 0
   ) {
-    const vendorEarningExpression =
-      buildVendorEarningExpression(fallbackVendorTierRate);
-    const matchQuery = {
-      foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
-      orderStatus: { $in: deliveredOrderStatuses },
-      deletedAt: null,
-      ...nonRefundedOrderMatch,
-      ...(truckUnitId ? { truck_unit_id: new mongoose.Types.ObjectId(truckUnitId) } : {}),
-    };
-
-    if (startDate && endDate) {
-      const rangeStart = new Date(startDate);
-      const rangeEnd = new Date(endDate);
-      rangeEnd.setHours(23, 59, 59, 999);
-      matchQuery.createdAt = {
-        $gte: rangeStart,
-        $lte: rangeEnd,
-      };
-    }
-
-    const earnings = await Model.aggregate([
-      { $match: matchQuery },
-      {
-        $group: {
-          _id: null,
-          totalOrders: { $sum: 1 },
-          totalRevenue: { $sum: vendorEarningExpression },
-          totalFreeDessertAmount: { 
-            $sum: { 
-              $cond: [
-                { $eq: ['$freeDessertApplied', true] },
-                '$freeDessertAmount',
-                0
-              ]
-            }
-          },
-          freeDessertOrders: {
-            $sum: {
-              $cond: [
-                { $eq: ['$freeDessertApplied', true] },
-                1,
-                0
-              ]
-            }
-          }
-        }
-      }
-    ]);
-
-    const result = earnings[0] || {
-      totalOrders: 0,
-      totalRevenue: 0,
-      totalFreeDessertAmount: 0,
-      freeDessertOrders: 0
-    };
-
-    result.adminPayment = result.totalRevenue;
-
-    return result;
+    const currentKey = getOperationalDayKey(
+      new Date(),
+      foodTruck.schedule_time_zone || 'America/New_York'
+    );
+    const orders = await this.getOrdersForOperationalRange({
+      foodTruck,
+      startDayKey: startDate || currentKey,
+      endDayKey: endDate || currentKey,
+      truckUnitId,
+    });
+    return this.getVendorEarningsResult(orders, foodTruck);
   }
 
   async getVendorSalesSummary({
@@ -531,124 +550,60 @@ class OrderService extends BaseService {
     truckUnitId = null,
     paymentMethod = null,
   }) {
-    const matchQuery = {
-      foodTruckId: new mongoose.Types.ObjectId(foodTruck._id),
-      deletedAt: null,
-    };
-
-    if (startDate && endDate) {
-      const rangeStart = new Date(startDate);
-      const rangeEnd = new Date(endDate);
-      rangeEnd.setHours(23, 59, 59, 999);
-      matchQuery.createdAt = { $gte: rangeStart, $lte: rangeEnd };
-    }
-
-    if (truckUnitId) {
-      matchQuery.truck_unit_id = new mongoose.Types.ObjectId(truckUnitId);
-    }
-
-    if (locationId) {
-      matchQuery.$or = [{ locationId }, { location_id: locationId }];
-    }
-
-    if (paymentMethod) {
-      const paymentQuery = [
-        { paymentMethod },
-        { payment_method: paymentMethod },
-      ];
-      matchQuery.$and = [
-        ...(matchQuery.$and || []),
-        { $or: paymentQuery },
-      ];
-    }
-
-    const orders = await Model.find(matchQuery)
-      .select(
-        'subTotal subtotal totalAfterDiscount discount taxAmount tax tipsAmount foodTruckTip vendorTip orderStatus orderSource order_source paymentStatus refundStatus truck_unit_id truck_unit_name'
-      )
-      .lean();
+    const currentKey = getOperationalDayKey(
+      new Date(),
+      foodTruck.schedule_time_zone || 'America/New_York'
+    );
+    const orders = await this.getOrdersForOperationalRange({
+      foodTruck,
+      startDayKey: startDate || currentKey,
+      endDayKey: endDate || currentKey,
+      locationId,
+      truckUnitId,
+      paymentMethod,
+    });
 
     return summarizeVendorSales({ orders, foodTruck });
   }
 
   async getVendorEarningsWithFreeDessertTest(
-    foodTruckId,
+    foodTruck,
     fallbackVendorTierRate = 0,
     truckUnitId = null
   ) {
-    const vendorEarningExpression =
-      buildVendorEarningExpression(fallbackVendorTierRate);
-    const baseMatch = {
-      foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
-      orderStatus: { $in: deliveredOrderStatuses },
+    const timeZone = foodTruck.schedule_time_zone || 'America/New_York';
+    const currentKey = getOperationalDayKey(new Date(), timeZone);
+    const currentDate = new Date(`${currentKey}T00:00:00.000Z`);
+    const weekStart = new Date(currentDate);
+    weekStart.setUTCDate(weekStart.getUTCDate() - weekStart.getUTCDay());
+    const weekStartKey = weekStart.toISOString().slice(0, 10);
+    const monthStartKey = `${currentKey.slice(0, 7)}-01`;
+    const yearStartKey = `${currentKey.slice(0, 4)}-01-01`;
+    const allOrders = await Model.find({
+      foodTruckId: new mongoose.Types.ObjectId(foodTruck._id),
       deletedAt: null,
-      ...nonRefundedOrderMatch,
-      ...(truckUnitId ? { truck_unit_id: new mongoose.Types.ObjectId(truckUnitId) } : {}),
-    };
-
-    const today = new Date();
-    const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(today.setHours(23, 59, 59, 999));
-
-    const startOfWeek = new Date();
-    startOfWeek.setDate(today.getDate() - today.getDay());
-    startOfWeek.setHours(0, 0, 0, 0);
-
-    const endOfWeek = new Date();
-    endOfWeek.setDate(startOfWeek.getDate() + 6);
-    endOfWeek.setHours(23, 59, 59, 999);
-
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
-
-    // Helper function to get earnings for a range
-    const getEarningsInRange = async (startDate, endDate) => {
-      const matchQuery = {
-        ...baseMatch,
-        createdAt: { $gte: startDate, $lte: endDate }
-      };
-
-      const data = await Model.aggregate([
-        { $match: matchQuery },
-        {
-          $group: {
-            _id: null,
-            totalOrders: { $sum: 1 },
-            totalRevenue: { $sum: vendorEarningExpression },
-            totalFreeDessertAmount: {
-              $sum: {
-                $cond: [{ $eq: ['$freeDessertApplied', true] }, '$freeDessertAmount', 0]
-              }
-            },
-            freeDessertOrders: {
-              $sum: {
-                $cond: [{ $eq: ['$freeDessertApplied', true] }, 1, 0]
-              }
-            }
-          }
-        }
+      ...(truckUnitId
+        ? { truck_unit_id: new mongoose.Types.ObjectId(truckUnitId) }
+        : {}),
+    }).lean();
+    const getRangeResult = async (startDayKey) =>
+      this.getVendorEarningsResult(
+        await this.getOrdersForOperationalRange({
+          foodTruck,
+          startDayKey,
+          endDayKey: currentKey,
+          truckUnitId,
+        }),
+        foodTruck
+      );
+    const [yearToDateEarning, todayEarning, weeklyEarning, monthlyEarning] =
+      await Promise.all([
+        getRangeResult(yearStartKey),
+        getRangeResult(currentKey),
+        getRangeResult(weekStartKey),
+        getRangeResult(monthStartKey),
       ]);
-
-      const result = data[0] || {
-        totalOrders: 0,
-        totalRevenue: 0,
-        totalFreeDessertAmount: 0,
-        freeDessertOrders: 0
-      };
-
-      result.adminPayment = result.totalRevenue;
-      return result;  
-    };
-
-    // Calculate all periods
-    const startOfYear = new Date(today.getFullYear(), 0, 1);
-    const [total, yearToDateEarning, todayEarning, weeklyEarning, monthlyEarning] = await Promise.all([
-      getEarningsInRange(new Date(0), new Date()), // all time
-      getEarningsInRange(startOfYear, new Date()),
-      getEarningsInRange(startOfDay, endOfDay),
-      getEarningsInRange(startOfWeek, endOfWeek),
-      getEarningsInRange(startOfMonth, endOfMonth)
-    ]);
+    const total = this.getVendorEarningsResult(allOrders, foodTruck);
 
     return {
       totalEarning: total.adminPayment,
@@ -668,331 +623,158 @@ class OrderService extends BaseService {
     page = 1,
     user,
     search,
-    foodTruckId,
+    foodTruck,
     earning_list,
     is_list = 'normal',
     startDate = null,
     endDate = null,
     fallbackVendorTierRate = 0
   ) {
-    const vendorEarningExpression =
-      buildVendorEarningExpression(fallbackVendorTierRate);
-    const today = new Date();
-
-  // Define date ranges
-  const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-  const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-
-  const startOfWeek = new Date(today);
-  startOfWeek.setDate(today.getDate() - today.getDay());
-  startOfWeek.setHours(0, 0, 0, 0);
-
-  const endOfWeek = new Date(startOfWeek);
-  endOfWeek.setDate(startOfWeek.getDate() + 6);
-  endOfWeek.setHours(23, 59, 59, 999);
-
-  const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
-
-  // Choose range based on earning_list
-  // let startDate, endDate;
-  // switch (earning_list?.toLowerCase()) {
-  //   case 'daily':
-  //     startDate = startOfDay;
-  //     endDate = endOfDay;
-  //     break;
-  //   case 'weekly':
-  //     startDate = startOfWeek;
-  //     endDate = endOfWeek;
-  //     break;
-  //   case 'monthly':
-  //     startDate = startOfMonth;
-  //     endDate = endOfMonth;
-  //     break;
-  //   default:
-  //     startDate = new Date(0);
-  //     endDate = new Date();
-  //     break;
-  // }
-if (startDate && endDate) {
-    // startDate = new Date(startDate);
-    // endDate = new Date(endDate);
-    startDate = new Date(`${startDate}T00:00:00.000Z`); // Start of day UTC
-    endDate = new Date(`${endDate}T23:59:59.999Z`);     // End of day UTC
-  
-  } else {
-    // Otherwise use default logic based on earning_list
-    switch (earning_list?.toLowerCase()) {
-      case 'daily':
-        startDate = startOfDay;
-        endDate = endOfDay;
-        break;
-      case 'weekly':
-        startDate = startOfWeek;
-        endDate = endOfWeek;
-        break;
-      case 'monthly':
-        startDate = startOfMonth;
-        endDate = endOfMonth;
-        break;
-      case 'yearly':
-        startDate = new Date(today.getFullYear(), 0, 1);
-        endDate = endOfDay;
-        break;
-      default:
-        startDate = new Date(0);
-        endDate = new Date();
-        break;
-    }
-  }
-
-  // Query condition
-  const q = {
-    foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
-    orderStatus: { $in: deliveredOrderStatuses },
-    deletedAt: null,
-    ...nonRefundedOrderMatch,
-    createdAt: { $gte: startDate, $lte: endDate },
-  };
-
-  // Filter only dessert orders if requested
-  if (is_list === 'dessert') {
-    q['freeDessertApplied'] = true;
-  }
-
-  const skip = (page - 1) * limit;
-
-  // Aggregation pipeline
-  const pipeline = [
-    { $match: q },
-    {
-      $facet: {
-        data: [
-          { $addFields: { vendorEarning: vendorEarningExpression } },
-          { $sort: { createdAt: -1 } },
-          { $skip: skip },
-          { $limit: Number(limit) },
-        ],
-        totals: [
-          {
-            $group: {
-              _id: null,
-              totalOrders: { $sum: 1 },
-              totalRevenue: { $sum: vendorEarningExpression },
-              totalFreeDessertAmount: {
-                $sum: {
-                  $cond: [
-                    { $eq: ['$freeDessertApplied', true] },
-                    '$freeDessertAmount',
-                    0,
-                  ],
-                },
-              },
-               freeDessertOrders: {
-              $sum: {
-                $cond: [{ $eq: ['$freeDessertApplied', true] }, 1, 0]
-              }
-            },
-            codRevenue: {
-              $sum: {
-                $cond: [
-                  { $in: ['$paymentMethod', cashPaymentMethods] },
-                  vendorEarningExpression,
-                  0
-                ]
-              }
-            },
-            digitalRevenue: {
-              $sum: {
-                $cond: [
-                  { $in: ['$paymentMethod', digitalPaymentMethods] },
-                  vendorEarningExpression,
-                  0
-                ]
-              }
-            },
-            codOrders: {
-              $sum: {
-                $cond: [
-                  { $in: ['$paymentMethod', cashPaymentMethods] },
-                  1,
-                  0
-                ]
-              }
-            },
-            digitalOrders: {
-              $sum: {
-                $cond: [
-                  { $in: ['$paymentMethod', digitalPaymentMethods] },
-                  1,
-                  0
-                ]
-              }
-            }
-            },
-          },
-        ],
-      },
-    },
-    {
-      $project: {
-        data: 1,
-        totalOrders: { $ifNull: [{ $arrayElemAt: ['$totals.totalOrders', 0] }, 0] },
-        totalRevenue: { $ifNull: [{ $arrayElemAt: ['$totals.totalRevenue', 0] }, 0] },
-        totalFreeDessertAmount: {
-          $ifNull: [{ $arrayElemAt: ['$totals.totalFreeDessertAmount', 0] }, 0],
-        },
-        freeDessertOrders: { $ifNull: [{ $arrayElemAt: ['$totals.freeDessertOrders', 0] }, 0] },
-        codRevenue: { $ifNull: [{ $arrayElemAt: ['$totals.codRevenue', 0] }, 0] },
-        digitalRevenue: { $ifNull: [{ $arrayElemAt: ['$totals.digitalRevenue', 0] }, 0] },
-        codOrders: { $ifNull: [{ $arrayElemAt: ['$totals.codOrders', 0] }, 0] },
-        digitalOrders: { $ifNull: [{ $arrayElemAt: ['$totals.digitalOrders', 0] }, 0] },
-
-      },
-    },
-  ];
-
-  const result = await Model.aggregate(pipeline);
-  const response =
-    result[0] || { 
-      data: [], 
-      totalOrders: 0, 
-      totalRevenue: 0, 
-      totalFreeDessertAmount: 0,
-      freeDessertOrders: 0,
-      codRevenue: 0,
-      digitalRevenue: 0,
-      codOrders: 0,
-      digitalOrders: 0
-    };
-
-  return {
-    data: response.data,
-    total: response.totalOrders,
-    earning_total:
-      is_list === 'dessert' ? response.totalFreeDessertAmount : response.totalRevenue,
-    totalFreeDessertAmount: response.totalFreeDessertAmount,
-    totalFreeDessertCount: response.freeDessertOrders,
-    cashEarning: response.codRevenue,
-    cashTotalOrder:response.codOrders,
-    digitalEarning: response.digitalRevenue,
-    digitalTotalOrder: response.digitalOrders
-  };
-}
-
-  async getHomeCountInRange(
-    foodTruckId,
-    startDate,
-    endDate,
-    fallbackVendorTierRate = 0
-  ) {
-    const vendorEarningExpression =
-      buildVendorEarningExpression(fallbackVendorTierRate);
-    const result = await Model.aggregate([
-      {
-        $match: {
-          foodTruckId: new mongoose.Types.ObjectId(foodTruckId),
-          deletedAt: null,
-          createdAt: { $gte: startDate, $lte: endDate }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          totalOrders: { $sum: 1 },
-          totalSales: {
-            $sum: { $cond: [{ $in: ['$orderStatus', deliveredOrderStatuses] }, vendorEarningExpression, 0] }
-          },
-          deliveredDessertsCount: {
-            $sum: {
-              $cond: [
-                { $and: [{ $in: ['$orderStatus', deliveredOrderStatuses] }, { $eq: ['$freeDessertApplied', true] }] },
-                1,
-                0
-              ]
-            }
-          },
-          deliveredDessertsSum: {
-            $sum: {
-              $cond: [
-                { $and: [{ $in: ['$orderStatus', deliveredOrderStatuses] }, { $eq: ['$freeDessertApplied', true] }] },
-                '$freeDessertAmount',
-                0
-              ]
-            }
-          },
-          activeCustomers: { $addToSet: '$userId' }
-        }
-      },
-      {
-        $project: {
-          _id: 0,
-          totalOrders: 1,
-          totalSales: 1,
-          deliveredDessertsCount: 1,
-          deliveredDessertsSum: 1,
-          activeCustomerCount: { $size: '$activeCustomers' }
-        }
+    const timeZone = foodTruck.schedule_time_zone || 'America/New_York';
+    const currentKey = getOperationalDayKey(new Date(), timeZone);
+    const currentDate = new Date(`${currentKey}T00:00:00.000Z`);
+    const periodStart = new Date(currentDate);
+    const requestedRange = String(earning_list || '').toLowerCase();
+    if (!startDate || !endDate) {
+      if (requestedRange === 'weekly') {
+        periodStart.setUTCDate(periodStart.getUTCDate() - periodStart.getUTCDay());
+      } else if (requestedRange === 'monthly') {
+        periodStart.setUTCDate(1);
+      } else if (requestedRange === 'yearly') {
+        periodStart.setUTCMonth(0, 1);
       }
-    ]);
-
-    return result[0] || {
-      totalOrders: 0,
-      totalSales: 0,
-      deliveredDessertsCount: 0,
-      deliveredDessertsSum: 0,
-      activeCustomerCount: 0
-    };
-  }
-
-  async getVendorDashboardCountDetails(foodTruckId, fallbackVendorTierRate = 0) {
-    const today = new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0, 0);
-    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59, 999);
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
-    const startOfYear = new Date(today.getFullYear(), 0, 1);
-    const startOfWeek = new Date(today);
-    startOfWeek.setDate(today.getDate() - today.getDay());
-    startOfWeek.setHours(0, 0, 0, 0);
-
-    const [todayData, weeklyData, monthlyData, yearToDateData] = await Promise.all([
-      this.getHomeCountInRange(
-        foodTruckId,
-        startOfDay,
-        endOfDay,
-        fallbackVendorTierRate
-      ),
-      this.getHomeCountInRange(
-        foodTruckId,
-        startOfWeek,
-        endOfDay,
-        fallbackVendorTierRate
-      ),
-      this.getHomeCountInRange(
-        foodTruckId,
-        startOfMonth,
-        endOfMonth,
-        fallbackVendorTierRate
-      ),
-      this.getHomeCountInRange(
-        foodTruckId,
-        startOfYear,
-        endOfDay,
-        fallbackVendorTierRate
-      )
-    ]);
+    }
+    const startDayKey =
+      startDate ||
+      (requestedRange === 'daily' ? currentKey : periodStart.toISOString().slice(0, 10));
+    const endDayKey = endDate || currentKey;
+    let orders;
+    if (!startDate && !endDate && !['daily', 'weekly', 'monthly', 'yearly'].includes(requestedRange)) {
+      orders = await Model.find({
+        foodTruckId: new mongoose.Types.ObjectId(foodTruck._id),
+        deletedAt: null,
+      }).lean();
+    } else {
+      orders = await this.getOrdersForOperationalRange({
+        foodTruck,
+        startDayKey,
+        endDayKey,
+      });
+    }
+    const earningOrders = orders
+      .filter(isRevenueOrder)
+      .filter((order) => is_list !== 'dessert' || order.freeDessertApplied === true)
+      .sort(
+        (left, right) =>
+          new Date(right.created_at || right.createdAt) -
+          new Date(left.created_at || left.createdAt)
+      );
+    const totalFreeDessertOrders = earningOrders.filter(
+      (order) =>
+        order.freeDessertApplied === true &&
+        isCompletedOrder(order) &&
+        !isRefundedOrder(order)
+    );
+    const totalFreeDessertAmount = totalFreeDessertOrders.reduce(
+      (sum, order) => sum + Number(order.freeDessertAmount || 0),
+      0
+    );
+    const isCash = (order) =>
+      cashPaymentMethods.includes(
+        String(order.paymentMethod || order.payment_method || '').toUpperCase()
+      );
+    const isDigital = (order) =>
+      digitalPaymentMethods.includes(
+        String(order.paymentMethod || order.payment_method || '').toUpperCase()
+      );
+    const totalRevenue = earningOrders.reduce(
+      (sum, order) => sum + getOrderNetEarningsAmount(order),
+      0
+    );
+    const skip = (Number(page) - 1) * Number(limit);
 
     return {
-      todaySales: todayData.totalSales,
-      todayTotalOrders: todayData.totalOrders,
+      data: earningOrders.slice(skip, skip + Number(limit)).map((order) => ({
+        ...order,
+        vendorEarning: getOrderNetEarningsAmount(order),
+      })),
+      total: earningOrders.length,
+      earning_total:
+        is_list === 'dessert'
+          ? Number(totalFreeDessertAmount.toFixed(2))
+          : Number(totalRevenue.toFixed(2)),
+      totalFreeDessertAmount: Number(totalFreeDessertAmount.toFixed(2)),
+      totalFreeDessertCount: totalFreeDessertOrders.length,
+      cashEarning: Number(
+        earningOrders
+          .filter(isCash)
+          .reduce((sum, order) => sum + getOrderNetEarningsAmount(order), 0)
+          .toFixed(2)
+      ),
+      cashTotalOrder: earningOrders.filter(isCash).length,
+      digitalEarning: Number(
+        earningOrders
+          .filter(isDigital)
+          .reduce((sum, order) => sum + getOrderNetEarningsAmount(order), 0)
+          .toFixed(2)
+      ),
+      digitalTotalOrder: earningOrders.filter(isDigital).length,
+    };
+  }
+
+  async getVendorDashboardCountDetails(foodTruck) {
+    const timeZone = foodTruck.schedule_time_zone || 'America/New_York';
+    const currentKey = getOperationalDayKey(new Date(), timeZone);
+    const currentDate = new Date(`${currentKey}T00:00:00.000Z`);
+    const weekStart = new Date(currentDate);
+    weekStart.setUTCDate(weekStart.getUTCDate() - weekStart.getUTCDay());
+    const weekStartKey = weekStart.toISOString().slice(0, 10);
+    const monthStartKey = `${currentKey.slice(0, 7)}-01`;
+    const yearStartKey = `${currentKey.slice(0, 4)}-01-01`;
+    const getRange = async (startDayKey) => {
+      const orders = await this.getOrdersForOperationalRange({
+        foodTruck,
+        startDayKey,
+        endDayKey: currentKey,
+      });
+      const summary = summarizeVendorSales({ orders, foodTruck });
+      const deliveredDesserts = orders.filter(
+        (order) =>
+          order.freeDessertApplied === true &&
+          isCompletedOrder(order) &&
+          !isRefundedOrder(order)
+      );
+      return {
+        ...summary,
+        activeCustomerCount: new Set(
+          orders.map((order) => order.userId?.toString()).filter(Boolean)
+        ).size,
+        deliveredDessertsCount: deliveredDesserts.length,
+        deliveredDessertsSum: Number(
+          deliveredDesserts
+            .reduce((sum, order) => sum + Number(order.freeDessertAmount || 0), 0)
+            .toFixed(2)
+        ),
+      };
+    };
+    const [todayData, weeklyData, monthlyData, yearToDateData] =
+      await Promise.all([
+        getRange(currentKey),
+        getRange(weekStartKey),
+        getRange(monthStartKey),
+        getRange(yearStartKey),
+      ]);
+
+    return {
+      todaySales: todayData.grossSales,
+      todayTotalOrders: todayData.orders,
       todayActiveCustomers: todayData.activeCustomerCount,
-      weeklyEarning: weeklyData.totalSales,
-      monthlyEarning: monthlyData.totalSales,
-      yearToDateEarning: yearToDateData.totalSales,
+      weeklyEarning: weeklyData.netEarnings,
+      monthlyEarning: monthlyData.netEarnings,
+      yearToDateEarning: yearToDateData.netEarnings,
       monthlyDeliveredDessertsCount: monthlyData.deliveredDessertsCount,
       monthlyDeliveredDessertsSum: monthlyData.deliveredDessertsSum,
-      monthlyActiveCustomers: monthlyData.activeCustomerCount
+      monthlyActiveCustomers: monthlyData.activeCustomerCount,
     };
   }
 
