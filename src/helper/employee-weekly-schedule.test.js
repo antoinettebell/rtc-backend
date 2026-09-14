@@ -3,6 +3,7 @@ const {
   getEmployeeScheduleState,
   getEmployeeScheduleAssignment,
   getEffectiveEmployeeAssignment,
+  getEmployeeScheduledEndAt,
   isEmployeeScheduledToday,
   findOverlappingScheduleAssignment,
 } = require('./employee-weekly-schedule');
@@ -20,6 +21,48 @@ const overnight = [{ day: 'mon', enabled: true, clock_in: '20:00', clock_out: '0
 assert.equal(isAllowed(overnight, '2026-08-03T19:45:00Z'), true);
 assert.equal(isAllowed(overnight, '2026-08-04T02:15:00Z'), true);
 assert.equal(isAllowed(overnight, '2026-08-04T02:16:00Z'), false);
+assert.equal(
+  getEmployeeScheduledEndAt({
+    employee: { weekly_schedule: monday },
+    session: { started_at: '2026-08-03T09:02:00Z' },
+    now: new Date('2026-08-03T18:00:00Z'),
+    timeZone: 'UTC',
+  }).toISOString(),
+  '2026-08-03T17:00:00.000Z'
+);
+assert.equal(
+  getEmployeeScheduledEndAt({
+    employee: { weekly_schedule: overnight },
+    session: { started_at: '2026-08-03T19:50:00Z' },
+    now: new Date('2026-08-04T03:00:00Z'),
+    timeZone: 'UTC',
+  }).toISOString(),
+  '2026-08-04T02:00:00.000Z'
+);
+assert.equal(
+  getEmployeeScheduledEndAt({
+    employee: { weekly_schedule: monday },
+    session: { started_at: '2026-08-03T09:02:00Z' },
+    now: new Date('2026-08-03T16:00:00Z'),
+    timeZone: 'UTC',
+  }),
+  null,
+  'a future scheduled clock-out is not used'
+);
+assert.equal(
+  getEmployeeScheduledEndAt({
+    employee: {
+      schedule_assignments: [{
+        days: [{ day: 'sun', enabled: true, clock_in: '22:00', clock_out: '01:00' }],
+      }],
+    },
+    session: { started_at: '2026-09-14T02:34:00Z' },
+    now: new Date('2026-09-14T05:27:00Z'),
+    timeZone: 'America/New_York',
+  }).toISOString(),
+  '2026-09-14T05:00:00.000Z',
+  'an overnight shift closes at the saved local clock-out time'
+);
 
 const assignments = [
   { truck_unit_id: 'truck-a', location_id: 'location-a', days: monday },

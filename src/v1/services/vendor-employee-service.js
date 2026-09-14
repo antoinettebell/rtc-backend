@@ -13,6 +13,7 @@ const {
   getEmployeeScheduleState,
   getEmployeeScheduleAssignment,
   getEffectiveEmployeeAssignment,
+  getEmployeeScheduledEndAt,
   findOverlappingScheduleAssignment,
 } = require('../../helper/employee-weekly-schedule');
 const {
@@ -275,7 +276,48 @@ class VendorEmployeeService extends BaseService {
     return Promise.all(
       employees.map(async (employee) => {
         const safeEmployee = toSafeEmployee(employee);
-        const [todayShiftSummary, weekShiftSummary, activeSession] = await Promise.all([
+        let activeSession = await EmployeeSessionService.getActiveSession(
+          null,
+          safeEmployee.employee_internal_id
+        );
+        const hasSchedule =
+          safeEmployee.schedule_assignments?.length > 0 ||
+          safeEmployee.weekly_schedule?.length > 0;
+        if (activeSession && !activeSession.is_vendor_override && hasSchedule) {
+          const foodTruck = await this.getVendorFoodTruck(
+            vendor_user_id,
+            safeEmployee.food_truck_id
+          );
+          const timeZone = foodTruck.schedule_time_zone || 'America/New_York';
+          const now = new Date();
+          const scheduleState = safeEmployee.schedule_assignments?.length
+            ? getEmployeeScheduleAssignment(
+                safeEmployee.schedule_assignments,
+                now,
+                timeZone
+              ) || { withinWindow: false }
+            : getEmployeeScheduleState(safeEmployee.weekly_schedule, now, timeZone);
+          if (!scheduleState.withinWindow) {
+            const endedAt = getEmployeeScheduledEndAt({
+              employee: safeEmployee,
+              session: activeSession,
+              now,
+              timeZone,
+            }) || now;
+            await EmployeeSessionService.endSession({
+              employeeSessionId: activeSession.employee_session_id,
+              employeeInternalId: safeEmployee.employee_internal_id,
+              endedAt,
+            });
+            await Model.updateOne(
+              { _id: safeEmployee._id },
+              { $set: { is_working: false } }
+            );
+            safeEmployee.is_working = false;
+            activeSession = null;
+          }
+        }
+        const [todayShiftSummary, weekShiftSummary] = await Promise.all([
           EmployeeSessionService.getEmployeeShiftSummary({
             foodTruckId: safeEmployee.food_truck_id,
             employeeInternalId: safeEmployee.employee_internal_id,
@@ -286,10 +328,6 @@ class VendorEmployeeService extends BaseService {
             employeeInternalId: safeEmployee.employee_internal_id,
             range: 'week',
           }),
-          EmployeeSessionService.getActiveSession(
-            null,
-            safeEmployee.employee_internal_id
-          ),
         ]);
 
         return {
@@ -841,8 +879,27 @@ class VendorEmployeeService extends BaseService {
       throw customError;
     }
 
-    if (hasCardSchedule && employee.is_working !== !!scheduled?.withinWindow) {
+    if (hasCardSchedule) {
       employee.is_working = !!scheduled?.withinWindow;
+      const activeSession = !scheduled?.withinWindow
+        ? await EmployeeSessionService.getActiveSession(
+            null,
+            employee.employee_internal_id
+          )
+        : null;
+      if (activeSession && !activeSession.is_vendor_override) {
+        const now = new Date();
+        await EmployeeSessionService.endSession({
+          employeeSessionId: activeSession.employee_session_id,
+          employeeInternalId: employee.employee_internal_id,
+          endedAt: getEmployeeScheduledEndAt({
+            employee,
+            session: activeSession,
+            now,
+            timeZone: foodTruck.schedule_time_zone || 'America/New_York',
+          }) || now,
+        });
+      }
     }
     employee.last_login_at = new Date();
     await employee.save();

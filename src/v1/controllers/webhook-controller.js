@@ -11,6 +11,7 @@ const {
 const {
   getEmployeeScheduleState,
   getEmployeeScheduleAssignment,
+  getEmployeeScheduledEndAt,
 } = require('../../helper/employee-weekly-schedule');
 
 const WEEKLY_SCHEDULE_OPEN_BUFFER_MINUTES = 0;
@@ -636,9 +637,17 @@ exports.vendorWeeklyScheduleMaintenance = async (req, res) => {
         await employee.save();
       }
       if (!scheduleState.withinWindow && activeSession) {
+        const now = new Date();
         await EmployeeSessionService.endSession({
           employeeSessionId: activeSession.employee_session_id,
           employeeInternalId: employee.employee_internal_id,
+          endedAt: getEmployeeScheduledEndAt({
+            employee,
+            session: activeSession,
+            now,
+            timeZone:
+              truck.schedule_time_zone || DEFAULT_VENDOR_SCHEDULE_TIME_ZONE,
+          }) || now,
         });
         employeeShiftsEnded += 1;
       }
