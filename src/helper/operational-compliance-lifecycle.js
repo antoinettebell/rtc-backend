@@ -75,6 +75,23 @@ const getEmployeeEditablePayload = (payload = {}) =>
     {}
   );
 
+const sanitizeEmployeeChecklistItems = (existingItems = [], incomingItems = []) => {
+  const incomingById = new Map(
+    incomingItems
+      .filter((item) => item?._id)
+      .map((item) => [String(item._id), item])
+  );
+  return existingItems.map((item, index) => {
+    const existing = typeof item?.toObject === 'function' ? item.toObject() : item;
+    const incoming = incomingById.get(String(existing?._id || '')) || incomingItems[index] || {};
+    return {
+      ...existing,
+      completed: !!incoming.completed,
+      notes: incoming.notes === undefined ? existing.notes : String(incoming.notes || ''),
+    };
+  });
+};
+
 module.exports = {
   buildActorAuditIdentity,
   buildEmployeeFormIdentity,
@@ -82,4 +99,5 @@ module.exports = {
   buildFreshChecklistDraft,
   isEmployeeFormAssignmentMatch,
   getEmployeeEditablePayload,
+  sanitizeEmployeeChecklistItems,
 };

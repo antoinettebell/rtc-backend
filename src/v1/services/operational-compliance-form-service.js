@@ -15,6 +15,7 @@ const {
   buildVendorChecklistIdentity,
   isEmployeeFormAssignmentMatch,
   getEmployeeEditablePayload,
+  sanitizeEmployeeChecklistItems,
 } = require('../../helper/operational-compliance-lifecycle');
 const {
   buildOperationalNotification,
@@ -233,7 +234,7 @@ class OperationalComplianceFormService {
       employee_internal_id: null,
       employee_session_id: null,
       form_type: type,
-      status: 'SUBMITTED',
+      status: { $in: ['SUBMITTED', 'ARCHIVED'] },
       $or: [
         { truck_unit_id: scope.truck_unit_id },
         { truck_unit: scope.truck_unit_label },
@@ -242,6 +243,20 @@ class OperationalComplianceFormService {
     }).sort({ submitted_at: -1, updatedAt: -1 }).lean();
     return submittedTemplate?.checklist_items?.length
       ? submittedTemplate.checklist_items
+      : buildChecklistItems(type);
+  }
+
+  async getVendorChecklistSeed(scope, type) {
+    const latestPublishedList = await Model.findOne({
+      vendor_user_id: scope.vendor_user_id,
+      food_truck_id: scope.food_truck_id,
+      employee_internal_id: null,
+      employee_session_id: null,
+      form_type: type,
+      status: { $in: ['SUBMITTED', 'ARCHIVED'] },
+    }).sort({ submitted_at: -1, updatedAt: -1 }).lean();
+    return latestPublishedList?.checklist_items?.length
+      ? latestPublishedList.checklist_items
       : buildChecklistItems(type);
   }
 
@@ -344,6 +359,9 @@ class OperationalComplianceFormService {
       } else if (type !== 'INVENTORY') {
         existing.employee_internal_id = null;
         existing.employee_session_id = null;
+        if (!existing.last_edited_at) {
+          existing.checklist_items = await this.getVendorChecklistSeed(scope, type);
+        }
       }
       await existing.save();
       return existing;
@@ -384,6 +402,9 @@ class OperationalComplianceFormService {
     const employeeChecklistSeed = actorType(user) === 'EMPLOYEE' && type !== 'INVENTORY'
       ? await this.getEmployeeChecklistSeed(scope, type)
       : [];
+    const vendorChecklistSeed = actorType(user) === 'VENDOR' && type !== 'INVENTORY'
+      ? await this.getVendorChecklistSeed(scope, type)
+      : [];
     const draftPayload = actorType(user) === 'EMPLOYEE' && type !== 'INVENTORY'
       ? buildFreshChecklistDraft({
         scope,
@@ -399,7 +420,7 @@ class OperationalComplianceFormService {
           form_type: type,
           prepared_by_name: preparedByName(user),
           initials: buildActorAuditIdentity(user).initials,
-          checklist_items: buildChecklistItems(type),
+          checklist_items: type === 'INVENTORY' ? [] : vendorChecklistSeed,
           inventory_items: employeeInventorySeed,
           ...(actorType(user) === 'EMPLOYEE'
             ? {
@@ -508,7 +529,7 @@ class OperationalComplianceFormService {
     const editablePayload = employeeScope
       ? getEmployeeEditablePayload(payload)
       : payload;
-    editableFields.filter((field) => field !== 'inventory_items').forEach((field) => {
+    editableFields.filter((field) => !['inventory_items', 'checklist_items'].includes(field)).forEach((field) => {
       if (editablePayload[field] !== undefined) {
         form[field] = editablePayload[field];
       }
@@ -518,6 +539,10 @@ class OperationalComplianceFormService {
         ? normalizeInventoryItems(form.inventory_items)
         : sanitizeEditableInventoryItems(form.inventory_items, editablePayload.inventory_items, employeeScope ? user : null);
       form.inventory_items.forEach(assertInventoryQuantityBounds);
+    } else if (editablePayload.checklist_items !== undefined) {
+      form.checklist_items = employeeScope
+        ? sanitizeEmployeeChecklistItems(form.checklist_items, editablePayload.checklist_items)
+        : editablePayload.checklist_items;
     }
     form.last_edited_at = new Date();
     form.last_edited_by_id = user._id;
@@ -641,7 +666,14 @@ class OperationalComplianceFormService {
           form.form_type === 'INVENTORY'
             ? buildNextInventoryItems(form.inventory_items)
             : [],
-        checklist_items: buildChecklistItems(form.form_type),
+        checklist_items: form.form_type === 'INVENTORY'
+          ? []
+          : (form.checklist_items || []).map((item) => ({
+              area: item.area,
+              task: item.task,
+              completed: false,
+              notes: '',
+            })),
       });
     }
     form.status = 'ARCHIVED';

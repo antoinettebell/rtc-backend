@@ -8,6 +8,7 @@ const {
   buildVendorChecklistIdentity,
   isEmployeeFormAssignmentMatch,
   getEmployeeEditablePayload,
+  sanitizeEmployeeChecklistItems,
 } = require('./operational-compliance-lifecycle');
 
 const scope = {
@@ -77,6 +78,13 @@ const craftedPayload = getEmployeeEditablePayload({
   food_truck_id: 'other-food-truck',
 });
 assert.deepEqual(craftedPayload, {});
+assert.deepEqual(sanitizeEmployeeChecklistItems(
+  [{ _id: 'task-1', area: 'Safety', task: 'Check extinguisher', completed: false, notes: '' }],
+  [
+    { _id: 'task-1', area: 'Forged', task: 'Changed task', completed: true, notes: 'Complete' },
+    { area: 'Added by employee', task: 'Not allowed', completed: true },
+  ]
+), [{ _id: 'task-1', area: 'Safety', task: 'Check extinguisher', completed: true, notes: 'Complete' }]);
 assert.equal(isEmployeeFormAssignmentMatch({
   scope,
   form: { ...scope, location_id: 'other-location', form_type: 'INVENTORY' },
@@ -104,6 +112,8 @@ assert.match(serviceSource, /form\.status !== 'DRAFT'/);
 assert.match(serviceSource, /buildNextInventoryItems/);
 assert.match(serviceSource, /buildVendorChecklistIdentity/);
 assert.match(serviceSource, /getEmployeeChecklistSeed/);
+assert.match(serviceSource, /getVendorChecklistSeed/);
+assert.match(serviceSource, /sanitizeEmployeeChecklistItems/);
 assert.match(serviceSource, /status: 'SUBMITTED'/);
 assert.match(serviceSource, /else if \(!existing\.last_edited_at\)/);
 assert.doesNotMatch(
