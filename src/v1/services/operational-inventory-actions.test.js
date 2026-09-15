@@ -243,6 +243,7 @@ const originalUpdateOne = OperationalComplianceFormModel.updateOne;
       item_name: 'Whole Milk',
       current_quantity: 5,
       reorder_quantity: 5,
+      record_status: 'SUBMITTED',
       notes: 'Vendor note',
     },
     {
@@ -250,6 +251,7 @@ const originalUpdateOne = OperationalComplianceFormModel.updateOne;
       item_name: 'Cheese',
       current_quantity: 4,
       reorder_quantity: 1,
+      record_status: 'SUBMITTED',
       notes: '',
     },
   ];

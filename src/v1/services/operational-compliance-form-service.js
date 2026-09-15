@@ -200,6 +200,7 @@ class OperationalComplianceFormService {
     forms.forEach((form) => {
       (form.inventory_items || []).forEach((item) => {
         if ((item.lifecycle_status || 'ACTIVE') !== 'ACTIVE') return;
+        if (item.record_status !== 'SUBMITTED') return;
         const lineage = String(item.lineage_id || item._id);
         if (seen.has(lineage)) return;
         seen.add(lineage);
@@ -323,6 +324,7 @@ class OperationalComplianceFormService {
         ...identityScope,
         form_type: type,
         status: 'SUBMITTED',
+        ...(type === 'INVENTORY' ? { inventory_review_action: null } : {}),
       }).sort({ submitted_at: -1 });
       if (submittedForShift) {
         submittedForShift.truck_unit = scope.truck_unit_label;
@@ -1138,7 +1140,11 @@ class OperationalComplianceFormService {
       const timeZone = timeZoneByTruck.get(foodTruckId);
       const operationalDay = getOperationalDayKey(now, timeZone);
       for (const item of form.inventory_items || []) {
-        if ((item.lifecycle_status || 'ACTIVE') !== 'ACTIVE' || !item.use_by_date) continue;
+        if (
+          (item.lifecycle_status || 'ACTIVE') !== 'ACTIVE' ||
+          item.record_status !== 'SUBMITTED' ||
+          !item.use_by_date
+        ) continue;
         const useByDay = new Date(item.use_by_date).toISOString().slice(0, 10);
         if (operationalDay < useByDay) continue;
         const eventKey = `inventory-expired:${form._id}:${item._id}:${useByDay}`;
