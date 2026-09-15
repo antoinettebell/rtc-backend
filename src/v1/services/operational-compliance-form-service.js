@@ -332,6 +332,19 @@ class OperationalComplianceFormService {
         await submittedForShift.save();
         return submittedForShift;
       }
+      if (type === 'INVENTORY') {
+        await Model.updateMany(
+          {
+            vendor_user_id: scope.vendor_user_id,
+            food_truck_id: scope.food_truck_id,
+            ...identityScope,
+            form_type: type,
+            status: 'SUBMITTED',
+            inventory_review_action: { $ne: null },
+          },
+          { $set: { status: 'ARCHIVED', archived_at: new Date() } }
+        );
+      }
     }
 
     const employeeInventorySeed = actorType(user) === 'EMPLOYEE' && type === 'INVENTORY'
@@ -1010,6 +1023,9 @@ class OperationalComplianceFormService {
     source.inventory_review_action = action;
     source.inventory_reviewed_at = now;
     source.inventory_reviewed_by_id = user._id;
+    source.status = 'ARCHIVED';
+    source.archived_at = now;
+    source.archived_by_id = user._id;
     source.inventory_review_claimed_at = null;
     source.inventory_review_claim_action = null;
     source.inventory_review_claimed_by_id = null;

@@ -42,6 +42,8 @@ assert.match(service, /inventory-expired:/);
 assert.match(service, /getEmployeeInventorySeed/);
 assert.match(service, /item\.record_status !== 'SUBMITTED'/);
 assert.match(service, /type === 'INVENTORY' \? \{ inventory_review_action: null \} : \{\}/);
+assert.match(service, /inventory_review_action: \{ \$ne: null \}/);
+assert.match(service, /source\.status = 'ARCHIVED'/);
 assert.match(service, /Model\.find\(query\)\.cursor\(\)/);
 assert.match(service, /Inventory Item: \$\{item\.item_name\} has expired\./);
 assert.match(service, /Please update the expiration date or close the inventory count with a fresher item\./);

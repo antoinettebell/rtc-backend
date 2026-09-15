@@ -138,8 +138,10 @@ const originalUpdateOne = OperationalComplianceFormModel.updateOne;
   assert.equal(current.lifecycle_status, 'ACTIVE');
   assert.equal(current.actions.at(-1).action, 'ITEM_UPDATED');
   assert.equal(source.inventory_review_action, 'UPDATED');
+  assert.equal(source.status, 'ARCHIVED', 'a completed employee review must release the shift draft slot');
 
   source.inventory_review_action = null;
+  source.status = 'SUBMITTED';
   await service.reviewEmployeeInventory({
     user,
     id: source._id,
