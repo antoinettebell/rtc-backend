@@ -65,6 +65,7 @@ const inventoryItemSchema = new mongoose.Schema(
 
 const checklistItemSchema = new mongoose.Schema(
   {
+    template_task_id: { type: String, default: null },
     area: { type: String, trim: true, maxlength: 80, required: true },
     task: { type: String, trim: true, maxlength: 250, required: true },
     completed: { type: Boolean, default: false },

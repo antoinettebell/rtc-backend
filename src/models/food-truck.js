@@ -157,6 +157,22 @@ const mSchema = mongoose.Schema(
         ],
       },
     ],
+    operational_checklist_tasks: [
+      {
+        form_type: {
+          type: String,
+          enum: ['OPENING_CHECKLIST', 'CLOSING_CHECKLIST'],
+          required: true,
+        },
+        title: { type: String, trim: true, maxlength: 80, required: true },
+        details: { type: String, trim: true, maxlength: 250, required: true },
+        is_active: { type: Boolean, default: true },
+        created_by_id: { type: mongoose.Schema.Types.ObjectId, ref: 'users', default: null },
+        created_at: { type: Date, default: Date.now },
+        archived_by_id: { type: mongoose.Schema.Types.ObjectId, ref: 'users', default: null },
+        archived_at: { type: Date, default: null },
+      },
+    ],
     photos: [
       {
         type: String,

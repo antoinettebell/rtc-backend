@@ -7,6 +7,9 @@ const access = allowedTo(['VENDOR', 'EMPLOYEE']);
 
 router.get('/', access, Controller.list);
 router.get('/current/:type', access, Controller.current);
+router.get('/checklist-tasks/:type', allowedTo(['VENDOR']), Controller.listChecklistTasks);
+router.post('/checklist-tasks', allowedTo(['VENDOR']), Controller.createChecklistTask);
+router.post('/checklist-tasks/:taskId/archive', allowedTo(['VENDOR']), Controller.archiveChecklistTask);
 router.put('/:id', access, Controller.update);
 router.post('/:id/submit', access, Controller.submit);
 router.patch('/:id/unlock', access, Controller.unlock);

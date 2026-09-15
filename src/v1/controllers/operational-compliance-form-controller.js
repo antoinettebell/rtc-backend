@@ -50,6 +50,39 @@ exports.current = async (req, res, next) => {
   }
 };
 
+exports.listChecklistTasks = async (req, res, next) => {
+  try {
+    const tasks = await Service.listChecklistTasks({
+      user: req.user,
+      type: req.params.type,
+    });
+    return res.data({ tasks }, 'Operational checklist tasks');
+  } catch (error) {
+    return handleOperationalError(req, error, next);
+  }
+};
+
+exports.createChecklistTask = async (req, res, next) => {
+  try {
+    const task = await Service.createChecklistTask({ user: req.user, payload: req.body });
+    return res.data({ task }, 'Operational checklist task created');
+  } catch (error) {
+    return handleOperationalError(req, error, next);
+  }
+};
+
+exports.archiveChecklistTask = async (req, res, next) => {
+  try {
+    const task = await Service.archiveChecklistTask({
+      user: req.user,
+      taskId: req.params.taskId,
+    });
+    return res.data({ task }, 'Operational checklist task archived');
+  } catch (error) {
+    return handleOperationalError(req, error, next);
+  }
+};
+
 exports.update = async (req, res, next) => {
   try {
     const form = await Service.update({

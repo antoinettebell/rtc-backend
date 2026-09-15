@@ -108,6 +108,15 @@ const serviceSource = fs.readFileSync(
 assert.match(serviceSource, /Employees cannot view archived inventory forms/);
 assert.match(serviceSource, /form_type: \{ \$ne: 'INVENTORY' \}.*status: \{ \$ne: 'CANCELLED' \}/);
 assert.match(serviceSource, /Only the vendor can unlock a submitted form/);
+assert.match(serviceSource, /Only the vendor can manage checklist tasks/);
+assert.match(serviceSource, /operational_checklist_tasks/);
+assert.match(serviceSource, /Enter both the task title and task details/);
+const routesSource = fs.readFileSync(
+  path.join(__dirname, '../v1/routes/operational-compliance.js'),
+  'utf8'
+);
+assert.match(routesSource, /checklist-tasks\/\:type/);
+assert.match(routesSource, /checklist-tasks\/\:taskId\/archive/);
 assert.match(serviceSource, /form\.status !== 'DRAFT'/);
 assert.match(serviceSource, /buildNextInventoryItems/);
 assert.match(serviceSource, /buildVendorChecklistIdentity/);

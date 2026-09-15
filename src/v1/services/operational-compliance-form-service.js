@@ -27,6 +27,7 @@ const {
 } = require('../../helper/employee-operational-access');
 
 const FORM_TYPES = ['INVENTORY', 'OPENING_CHECKLIST', 'CLOSING_CHECKLIST'];
+const CHECKLIST_TYPES = ['OPENING_CHECKLIST', 'CLOSING_CHECKLIST'];
 const editableFields = [
   'truck_unit_id',
   'truck_unit',
@@ -227,37 +228,138 @@ class OperationalComplianceFormService {
     return seeded;
   }
 
-  async getEmployeeChecklistSeed(scope, type) {
-    const submittedTemplate = await Model.findOne({
-      vendor_user_id: scope.vendor_user_id,
-      food_truck_id: scope.food_truck_id,
-      employee_internal_id: null,
-      employee_session_id: null,
+  async ensureChecklistTasks(scope, type) {
+    if (!CHECKLIST_TYPES.includes(type)) {
+      throw errorWithCode('Invalid operational checklist type.');
+    }
+    let foodTruck = await FoodTruckModel.findById(scope.food_truck_id)
+      .select('operational_checklist_tasks');
+    if (!foodTruck) throw errorWithCode('Vendor food truck not found.', 404);
+    const existingTasks = (foodTruck.operational_checklist_tasks || [])
+      .filter((item) => item.form_type === type);
+    if (!existingTasks.length) {
+      const submittedTemplate = await Model.findOne({
+        vendor_user_id: scope.vendor_user_id,
+        food_truck_id: scope.food_truck_id,
+        employee_internal_id: null,
+        employee_session_id: null,
+        form_type: type,
+        status: { $in: ['SUBMITTED', 'ARCHIVED'] },
+      }).sort({ submitted_at: -1, updatedAt: -1 }).lean();
+      const seed = submittedTemplate?.checklist_items?.length
+        ? submittedTemplate.checklist_items
+        : buildChecklistItems(type);
+      await FoodTruckModel.updateOne(
+        {
+          _id: scope.food_truck_id,
+          operational_checklist_tasks: { $not: { $elemMatch: { form_type: type } } },
+        },
+        {
+          $push: {
+            operational_checklist_tasks: {
+              $each: seed.map((item) => ({
+                form_type: type,
+                title: item.area,
+                details: item.task,
+                is_active: true,
+              })),
+            },
+          },
+        }
+      );
+      foodTruck = await FoodTruckModel.findById(scope.food_truck_id)
+        .select('operational_checklist_tasks');
+    }
+    return (foodTruck.operational_checklist_tasks || [])
+      .filter((item) => item.form_type === type);
+  }
+
+  async getChecklistSeed(scope, type) {
+    const tasks = await this.ensureChecklistTasks(scope, type);
+    return tasks
+      .filter((item) => item.is_active !== false)
+      .map((item) => ({
+        template_task_id: String(item._id),
+        area: item.title,
+        task: item.details,
+        completed: false,
+        notes: '',
+      }));
+  }
+
+  async listChecklistTasks({ user, type }) {
+    if (actorType(user) !== 'VENDOR') {
+      throw errorWithCode('Only the vendor can manage checklist tasks.', 403);
+    }
+    const scope = await this.getScope(user);
+    const tasks = await this.ensureChecklistTasks(scope, type);
+    return tasks
+      .filter((item) => item.is_active !== false)
+      .map((item) => ({
+        _id: item._id,
+        form_type: item.form_type,
+        title: item.title,
+        details: item.details,
+      }));
+  }
+
+  async createChecklistTask({ user, payload = {} }) {
+    if (actorType(user) !== 'VENDOR') {
+      throw errorWithCode('Only the vendor can manage checklist tasks.', 403);
+    }
+    const type = String(payload.form_type || '').trim();
+    const title = String(payload.title || '').trim();
+    const details = String(payload.details || '').trim();
+    if (!CHECKLIST_TYPES.includes(type)) {
+      throw errorWithCode('Choose an opening or closing checklist.', 422);
+    }
+    if (!title || !details) {
+      throw errorWithCode('Enter both the task title and task details.', 422);
+    }
+    if (title.length > 80 || details.length > 250) {
+      throw errorWithCode('Task titles are limited to 80 characters and details to 250 characters.', 422);
+    }
+    const scope = await this.getScope(user);
+    await this.ensureChecklistTasks(scope, type);
+    const foodTruck = await FoodTruckModel.findById(scope.food_truck_id)
+      .select('operational_checklist_tasks');
+    foodTruck.operational_checklist_tasks.push({
       form_type: type,
-      status: { $in: ['SUBMITTED', 'ARCHIVED'] },
-      $or: [
-        { truck_unit_id: scope.truck_unit_id },
-        { truck_unit: scope.truck_unit_label },
-        { truck_unit_id: null, truck_unit: '' },
-      ],
-    }).sort({ submitted_at: -1, updatedAt: -1 }).lean();
-    return submittedTemplate?.checklist_items?.length
-      ? submittedTemplate.checklist_items
-      : buildChecklistItems(type);
+      title,
+      details,
+      is_active: true,
+      created_by_id: user._id,
+      created_at: new Date(),
+    });
+    await foodTruck.save();
+    const task = foodTruck.operational_checklist_tasks[foodTruck.operational_checklist_tasks.length - 1];
+    return { _id: task._id, form_type: task.form_type, title: task.title, details: task.details };
+  }
+
+  async archiveChecklistTask({ user, taskId }) {
+    if (actorType(user) !== 'VENDOR') {
+      throw errorWithCode('Only the vendor can manage checklist tasks.', 403);
+    }
+    const scope = await this.getScope(user);
+    const foodTruck = await FoodTruckModel.findById(scope.food_truck_id)
+      .select('operational_checklist_tasks');
+    const task = foodTruck?.operational_checklist_tasks?.id(taskId);
+    if (!task || task.is_active === false) {
+      throw errorWithCode('Checklist task not found.', 404);
+    }
+    task.is_active = false;
+    task.archived_at = new Date();
+    task.archived_by_id = user._id;
+    await foodTruck.save();
+    return { _id: task._id, form_type: task.form_type, title: task.title, details: task.details };
+  }
+
+  async getEmployeeChecklistSeed(scope, type) {
+    return this.getChecklistSeed(scope, type);
   }
 
   async getVendorChecklistSeed(scope, type) {
-    const latestPublishedList = await Model.findOne({
-      vendor_user_id: scope.vendor_user_id,
-      food_truck_id: scope.food_truck_id,
-      employee_internal_id: null,
-      employee_session_id: null,
-      form_type: type,
-      status: { $in: ['SUBMITTED', 'ARCHIVED'] },
-    }).sort({ submitted_at: -1, updatedAt: -1 }).lean();
-    return latestPublishedList?.checklist_items?.length
-      ? latestPublishedList.checklist_items
-      : buildChecklistItems(type);
+    return this.getChecklistSeed(scope, type);
   }
 
   async syncEmployeeInventoryDraft(form, scope) {
@@ -669,6 +771,7 @@ class OperationalComplianceFormService {
         checklist_items: form.form_type === 'INVENTORY'
           ? []
           : (form.checklist_items || []).map((item) => ({
+              template_task_id: item.template_task_id,
               area: item.area,
               task: item.task,
               completed: false,
