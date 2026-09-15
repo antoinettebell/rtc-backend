@@ -23,16 +23,7 @@ const inventoryItemSchema = new mongoose.Schema(
     purchased_from: { type: String, trim: true, maxlength: 80, default: '' },
     date_purchased: { type: Date, default: null },
     use_by_date: { type: Date, default: null },
-    beginning_quantity: {
-      type: Number,
-      min: 0,
-      max: 100,
-      default: 0,
-      validate: {
-        validator(value) { return value <= this.max_quantity; },
-        message: 'Beginning quantity cannot exceed max quantity.',
-      },
-    },
+    beginning_quantity: { type: Number, min: 0, max: 100, default: 0 },
     current_quantity: { type: Number, min: 0, max: 100, default: 0 },
     max_quantity: { type: Number, min: 1, max: 100, default: 1 },
     reorder_quantity: { type: Number, min: 0, max: 100, default: 0 },
