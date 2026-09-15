@@ -226,6 +226,25 @@ class OperationalComplianceFormService {
     return seeded;
   }
 
+  async getEmployeeChecklistSeed(scope, type) {
+    const submittedTemplate = await Model.findOne({
+      vendor_user_id: scope.vendor_user_id,
+      food_truck_id: scope.food_truck_id,
+      employee_internal_id: null,
+      employee_session_id: null,
+      form_type: type,
+      status: 'SUBMITTED',
+      $or: [
+        { truck_unit_id: scope.truck_unit_id },
+        { truck_unit: scope.truck_unit_label },
+        { truck_unit_id: null, truck_unit: '' },
+      ],
+    }).sort({ submitted_at: -1, updatedAt: -1 }).lean();
+    return submittedTemplate?.checklist_items?.length
+      ? submittedTemplate.checklist_items
+      : buildChecklistItems(type);
+  }
+
   async syncEmployeeInventoryDraft(form, scope) {
     const seededItems = await this.getEmployeeInventorySeed(scope);
     const existingItems = form.inventory_items || [];
@@ -318,6 +337,8 @@ class OperationalComplianceFormService {
         existing.location_label = scope.location_label;
         if (type === 'INVENTORY') {
           await this.syncEmployeeInventoryDraft(existing, scope);
+        } else if (!existing.last_edited_at) {
+          existing.checklist_items = await this.getEmployeeChecklistSeed(scope, type);
         }
       } else if (type !== 'INVENTORY') {
         existing.employee_internal_id = null;
@@ -359,13 +380,16 @@ class OperationalComplianceFormService {
     const employeeInventorySeed = actorType(user) === 'EMPLOYEE' && type === 'INVENTORY'
       ? await this.getEmployeeInventorySeed(scope)
       : [];
+    const employeeChecklistSeed = actorType(user) === 'EMPLOYEE' && type !== 'INVENTORY'
+      ? await this.getEmployeeChecklistSeed(scope, type)
+      : [];
     const draftPayload = actorType(user) === 'EMPLOYEE' && type !== 'INVENTORY'
       ? buildFreshChecklistDraft({
         scope,
         type,
         employeeName: preparedByName(user),
         employeeInitials: buildActorAuditIdentity(user).initials,
-        checklistItems: buildChecklistItems(type),
+        checklistItems: employeeChecklistSeed,
       })
       : {
           vendor_user_id: scope.vendor_user_id,
@@ -472,10 +496,9 @@ class OperationalComplianceFormService {
     });
     if (
       actorType(user) === 'VENDOR' &&
-      form.form_type === 'INVENTORY' &&
       form.employee_internal_id
     ) {
-      throw errorWithCode('Employee inventory submissions are immutable. Use Employee Inventory Review.', 409);
+      throw errorWithCode('Employee submissions are permanent read-only records.', 409);
     }
     if (form.status !== 'DRAFT') {
       throw errorWithCode('Click the pencil to edit this submitted form.', 409);
@@ -566,8 +589,8 @@ class OperationalComplianceFormService {
       throw errorWithCode('Only the vendor can unlock a submitted form.', 403);
     }
     const form = await this.getScopedForm({ user, id });
-    if (form.form_type === 'INVENTORY' && form.employee_internal_id) {
-      throw errorWithCode('Employee inventory submissions are immutable. Use Employee Inventory Review.', 409);
+    if (form.employee_internal_id) {
+      throw errorWithCode('Employee submissions are permanent read-only records.', 409);
     }
     if (form.status === 'ARCHIVED') {
       throw errorWithCode('Archived forms are permanent read-only records.', 409);
@@ -594,8 +617,9 @@ class OperationalComplianceFormService {
       throw errorWithCode('Submit the form before archiving it.', 409);
     }
 
-    let next = await Model.findOne({ source_archive_id: form._id });
-    if (!next) {
+    const employeeChecklist = form.form_type !== 'INVENTORY' && !!form.employee_internal_id;
+    let next = employeeChecklist ? null : await Model.findOne({ source_archive_id: form._id });
+    if (!employeeChecklist && !next) {
       next = await Model.create({
         vendor_user_id: form.vendor_user_id,
         food_truck_id: form.food_truck_id,

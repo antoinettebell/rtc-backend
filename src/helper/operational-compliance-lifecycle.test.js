@@ -102,6 +102,9 @@ assert.match(serviceSource, /Only the vendor can unlock a submitted form/);
 assert.match(serviceSource, /form\.status !== 'DRAFT'/);
 assert.match(serviceSource, /buildNextInventoryItems/);
 assert.match(serviceSource, /buildVendorChecklistIdentity/);
+assert.match(serviceSource, /getEmployeeChecklistSeed/);
+assert.match(serviceSource, /status: 'SUBMITTED'/);
+assert.match(serviceSource, /else if \(!existing\.last_edited_at\)/);
 assert.doesNotMatch(
   serviceSource.match(/const editableFields = \[[\s\S]*?\];/)?.[0] || '',
   /prepared_by_name|initials/,

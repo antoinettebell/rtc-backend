@@ -38,7 +38,7 @@ const service = fs.readFileSync(
   'utf8'
 );
 assert.match(service, /Only the vendor can manage final inventory/);
-assert.match(service, /Employee inventory submissions are immutable/);
+assert.match(service, /Employee submissions are permanent read-only records/);
 assert.match(service, /expiration_notification_key/);
 assert.match(service, /inventory-expired:/);
 assert.match(service, /getEmployeeInventorySeed/);
@@ -48,6 +48,7 @@ assert.match(service, /filter\(\(item\) => item\.employee_modified_at\)/);
 assert.match(service, /type === 'INVENTORY' \? \{ inventory_review_action: null \} : \{\}/);
 assert.match(service, /inventory_review_action: \{ \$ne: null \}/);
 assert.match(service, /source\.status = 'ARCHIVED'/);
+assert.match(service, /const employeeChecklist = form\.form_type !== 'INVENTORY'/);
 assert.match(service, /Model\.find\(query\)\.cursor\(\)/);
 assert.match(service, /Inventory Item: \$\{item\.item_name\} has expired\./);
 assert.match(service, /Please update the expiration date or close the inventory count with a fresher item\./);
