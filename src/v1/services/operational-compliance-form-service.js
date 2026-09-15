@@ -67,6 +67,33 @@ const inventoryPayload = (payload = {}) => inventoryEditableFields.reduce(
   {}
 );
 
+const inventoryReorderQuantity = (item = {}) => item.reorder_resolved_at
+  ? 0
+  : Math.max(0, Number(item.max_quantity || 0) - Number(item.current_quantity || 0));
+
+const assertInventoryQuantityBounds = (item = {}) => {
+  if (Number(item.beginning_quantity || 0) > Number(item.max_quantity || 0)) {
+    throw errorWithCode('Beginning quantity cannot exceed max quantity.', 422);
+  }
+};
+
+const assertReceivedInventoryLot = (item = {}) => {
+  const purchased = item.date_purchased ? new Date(item.date_purchased) : null;
+  const useBy = item.use_by_date ? new Date(item.use_by_date) : null;
+  if (!purchased || Number.isNaN(purchased.getTime()) || !useBy || Number.isNaN(useBy.getTime())) {
+    throw errorWithCode('Enter the new item purchase and use-by dates.', 422);
+  }
+  if (
+    Number(item.beginning_quantity) <= 0 ||
+    Number(item.current_quantity) <= 0 ||
+    Number(item.max_quantity) <= 0 ||
+    Number(item.beginning_quantity) !== Number(item.current_quantity) ||
+    Number(item.current_quantity) !== Number(item.max_quantity)
+  ) {
+    throw errorWithCode('Beginning, current, and max quantities must match the received quantity.', 422);
+  }
+};
+
 const inventorySystemFields = [
   '_id',
   'lifecycle_status',
@@ -79,6 +106,7 @@ const inventorySystemFields = [
   'archived_by_id',
   'archive_reason',
   'expiration_notification_key',
+  'reorder_resolved_at',
   'pending_close_draft',
   'pending_close_saved_at',
   'pending_close_saved_by_id',
@@ -178,6 +206,7 @@ class OperationalComplianceFormService {
         seeded.push({
           ...inventoryPayload(item),
           reorder_quantity: item.reorder_quantity,
+          reorder_resolved_at: item.reorder_resolved_at,
           lifecycle_status: 'ACTIVE',
           record_status: 'DRAFT',
           lineage_id: lineage,
@@ -440,6 +469,7 @@ class OperationalComplianceFormService {
       form.inventory_items = editablePayload.inventory_items === undefined
         ? normalizeInventoryItems(form.inventory_items)
         : sanitizeEditableInventoryItems(form.inventory_items, editablePayload.inventory_items);
+      form.inventory_items.forEach(assertInventoryQuantityBounds);
     }
     form.last_edited_at = new Date();
     form.last_edited_by_id = user._id;
@@ -645,6 +675,7 @@ class OperationalComplianceFormService {
     if (!String(normalized.item_name || '').trim()) {
       throw errorWithCode('Inventory item name is required.', 422);
     }
+    assertInventoryQuantityBounds(normalized);
     const item = form.inventory_items.create({
       ...normalized,
       lifecycle_status: 'ACTIVE',
@@ -671,7 +702,7 @@ class OperationalComplianceFormService {
       throw errorWithCode('Inventory item name is required.', 422);
     }
     if (payload.close_count_draft) {
-      item.pending_close_draft = inventoryPayload(normalized);
+      item.pending_close_draft = inventoryPayload(payload.item || payload);
       item.pending_close_saved_at = now;
       item.pending_close_saved_by_id = user._id;
       item.actions.push(this.inventoryAction(user, 'SAVED_DRAFT', now));
@@ -681,6 +712,7 @@ class OperationalComplianceFormService {
       await form.save();
       return { form, item };
     }
+    assertInventoryQuantityBounds(normalized);
     inventoryEditableFields.forEach((field) => { item[field] = normalized[field]; });
     item.reorder_quantity = normalized.reorder_quantity;
     item.record_status = submit ? 'SUBMITTED' : 'DRAFT';
@@ -698,42 +730,37 @@ class OperationalComplianceFormService {
     if ((item.lifecycle_status || 'ACTIVE') !== 'ACTIVE') {
       throw errorWithCode('This inventory count is already closed.', 409);
     }
-    const now = new Date();
-    const edited = normalizeInventoryItems([{ ...item.toObject(), ...inventoryPayload(payload.item || payload) }])[0];
-    const previousUseBy = item.use_by_date
-      ? new Date(item.use_by_date).toISOString().slice(0, 10)
-      : null;
-    const nextUseBy = edited.use_by_date
-      ? new Date(edited.use_by_date).toISOString().slice(0, 10)
-      : null;
-    if (!nextUseBy || nextUseBy === previousUseBy) {
-      throw errorWithCode('Enter the fresh item use-by date before closing this inventory count.', 422);
+    const reorderNeeded = inventoryReorderQuantity(item);
+    if (reorderNeeded === 0) {
+      throw errorWithCode('No reorder is currently needed for this inventory item.', 409);
     }
+    const now = new Date();
+    const replacementPayload = inventoryPayload(payload.item || payload);
+    const edited = normalizeInventoryItems([{ ...item.toObject(), ...replacementPayload }])[0];
+    assertInventoryQuantityBounds(edited);
+    assertReceivedInventoryLot(edited);
     const replacement = form.inventory_items.create({
       ...inventoryPayload(edited),
-      beginning_quantity: edited.current_quantity,
-      current_quantity: edited.current_quantity,
-      reorder_quantity: Math.max(0, edited.max_quantity - edited.current_quantity),
-      use_by_date: edited.use_by_date,
+      reorder_quantity: 0,
+      reorder_resolved_at: null,
       lifecycle_status: 'ACTIVE',
       record_status: 'SUBMITTED',
-      lineage_id: item.lineage_id || String(item._id),
-      actions: [this.inventoryAction(user, 'COUNT_CLOSED', now)],
+      actions: [this.inventoryAction(user, 'REORDER_RECEIVED', now)],
     });
-    item.lifecycle_status = 'ARCHIVED';
-    item.archived_at = now;
-    item.archived_by_id = user._id;
-    item.archive_reason = 'COUNT_CLOSED';
+    replacement.lineage_id = String(replacement._id);
+    item.reorder_quantity = 0;
+    item.reorder_resolved_at = now;
+    item.record_status = 'SUBMITTED';
     item.pending_close_draft = null;
     item.pending_close_saved_at = null;
     item.pending_close_saved_by_id = null;
-    item.actions.push(this.inventoryAction(user, 'COUNT_CLOSED', now));
+    item.actions.push(this.inventoryAction(user, 'REORDER_RECEIVED', now));
     form.inventory_items.push(replacement);
     form.last_edited_at = now;
     form.last_edited_by_id = user._id;
     form.last_edited_by_type = 'VENDOR';
     await form.save();
-    return { form, archived: item, next: form.inventory_items.id(replacement._id) };
+    return { form, current: item, next: form.inventory_items.id(replacement._id) };
   }
 
   async archiveInventoryItem({ user, id, itemId }) {
@@ -830,6 +857,10 @@ class OperationalComplianceFormService {
         source_item_id: submitted.source_item_id || item.source_item_id,
       };
     });
+    const replacementItems = normalizeInventoryItems(payload.reorder_items || []);
+    const replacementBySubmittedId = new Map(
+      replacementItems.map((item) => [String(item._id), item])
+    );
     const activeMatch = (sourceItem) => {
       const exact = form.inventory_items.find((candidate) => {
         if ((candidate.lifecycle_status || 'ACTIVE') !== 'ACTIVE') return false;
@@ -848,28 +879,62 @@ class OperationalComplianceFormService {
       return nameMatches.length === 1 ? nameMatches[0] : null;
     };
     if (action === 'CLOSED_INTO_INVENTORY') {
-      reviewedItems.forEach((sourceItem) => {
-        const existing = activeMatch(sourceItem);
-        const previousUseBy = existing?.use_by_date
-          ? new Date(existing.use_by_date).toISOString().slice(0, 10)
-          : null;
-        const nextUseBy = sourceItem.use_by_date
-          ? new Date(sourceItem.use_by_date).toISOString().slice(0, 10)
-          : null;
-        if (!nextUseBy || (previousUseBy && nextUseBy === previousUseBy)) {
-          throw errorWithCode(
-            `Enter a fresh use-by date for ${sourceItem.item_name || 'each inventory item'} before closing this inventory count.`,
-            422
-          );
+      const reorderItems = submittedItems.filter((item) => inventoryReorderQuantity(item) > 0);
+      if (!reorderItems.length) {
+        throw errorWithCode('No reorder is currently needed for this inventory submission.', 409);
+      }
+      reorderItems.forEach((sourceItem) => {
+        const replacement = replacementBySubmittedId.get(String(sourceItem._id));
+        if (!replacement) {
+          throw errorWithCode(`Enter the new product details for ${sourceItem.item_name || 'each reordered item'}.`, 422);
         }
+        assertInventoryQuantityBounds(replacement);
+        assertReceivedInventoryLot(replacement);
       });
     }
-    reviewedItems.forEach((sourceItem) => {
+    const itemsToReview = action === 'CLOSED_INTO_INVENTORY' ? submittedItems : reviewedItems;
+    itemsToReview.forEach((sourceItem) => {
       const reviewKey = `${source._id}:${sourceItem._id}:${action}`;
       if (form.inventory_items.some((candidate) => (
         candidate.applied_review_keys || []
       ).includes(reviewKey))) return;
       const existing = activeMatch(sourceItem);
+      if (action === 'CLOSED_INTO_INVENTORY') {
+        const reorderNeeded = inventoryReorderQuantity(sourceItem) > 0;
+        if (existing) {
+          existing.current_quantity = sourceItem.current_quantity;
+          existing.reorder_quantity = reorderNeeded
+            ? 0
+            : inventoryReorderQuantity(existing);
+          existing.record_status = 'SUBMITTED';
+          existing.applied_review_keys ||= [];
+          existing.applied_review_keys.push(reviewKey);
+          existing.actions.push(this.inventoryAction(
+            user,
+            reorderNeeded ? 'REORDER_RECEIVED' : 'ITEM_UPDATED',
+            now
+          ));
+          if (reorderNeeded) existing.reorder_resolved_at = now;
+        }
+        if (!reorderNeeded) return;
+        const replacement = replacementBySubmittedId.get(String(sourceItem._id));
+        const copied = form.inventory_items.create({
+          ...inventoryPayload(sourceItem),
+          ...inventoryPayload(replacement),
+          reorder_quantity: 0,
+          lifecycle_status: 'ACTIVE',
+          record_status: 'SUBMITTED',
+          reorder_resolved_at: null,
+          actions: [this.inventoryAction(user, 'REORDER_RECEIVED', now)],
+          source_form_id: source._id,
+          source_item_id: String(sourceItem._id || ''),
+          source_employee_internal_id: source.employee_internal_id,
+          applied_review_keys: [reviewKey],
+        });
+        copied.lineage_id = String(copied._id);
+        form.inventory_items.push(copied);
+        return;
+      }
       if (existing && action === 'UPDATED') {
         const normalized = inventoryPayload(sourceItem);
         inventoryEditableFields.forEach((field) => { existing[field] = normalized[field]; });
@@ -916,11 +981,6 @@ class OperationalComplianceFormService {
         source_employee_internal_id: source.employee_internal_id,
         applied_review_keys: [reviewKey],
       });
-      if (action === 'CLOSED_INTO_INVENTORY') {
-        copied.beginning_quantity = sourceItem.current_quantity;
-        copied.current_quantity = sourceItem.current_quantity;
-        copied.reorder_quantity = Math.max(0, copied.max_quantity - copied.current_quantity);
-      }
       copied.lineage_id = sourceItem.lineage_id || String(copied._id);
       form.inventory_items.push(copied);
     });

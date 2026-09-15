@@ -30,7 +30,7 @@ const normalizeInventoryItems = (items = []) =>
       beginning_quantity: clampInputQuantity(item.beginning_quantity),
       current_quantity: current,
       max_quantity: maximum,
-      reorder_quantity: Math.max(0, maximum - current),
+      reorder_quantity: item.reorder_resolved_at ? 0 : Math.max(0, maximum - current),
       lifecycle_status: item.lifecycle_status || 'ACTIVE',
       record_status: item.record_status || 'DRAFT',
     };

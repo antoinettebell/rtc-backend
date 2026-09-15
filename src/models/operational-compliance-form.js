@@ -4,7 +4,7 @@ const inventoryActionSchema = new mongoose.Schema(
   {
     action: {
       type: String,
-      enum: ['CREATED', 'SAVED_DRAFT', 'SUBMITTED', 'ITEM_UPDATED', 'COUNT_CLOSED', 'ITEM_ARCHIVED'],
+      enum: ['CREATED', 'SAVED_DRAFT', 'SUBMITTED', 'ITEM_UPDATED', 'COUNT_CLOSED', 'REORDER_RECEIVED', 'ITEM_ARCHIVED'],
       required: true,
     },
     actor_id: { type: mongoose.Schema.Types.ObjectId, default: null },
@@ -23,10 +23,20 @@ const inventoryItemSchema = new mongoose.Schema(
     purchased_from: { type: String, trim: true, maxlength: 80, default: '' },
     date_purchased: { type: Date, default: null },
     use_by_date: { type: Date, default: null },
-    beginning_quantity: { type: Number, min: 0, max: 100, default: 0 },
+    beginning_quantity: {
+      type: Number,
+      min: 0,
+      max: 100,
+      default: 0,
+      validate: {
+        validator(value) { return value <= this.max_quantity; },
+        message: 'Beginning quantity cannot exceed max quantity.',
+      },
+    },
     current_quantity: { type: Number, min: 0, max: 100, default: 0 },
     max_quantity: { type: Number, min: 1, max: 100, default: 1 },
     reorder_quantity: { type: Number, min: 0, max: 100, default: 0 },
+    reorder_resolved_at: { type: Date, default: null },
     notes: { type: String, trim: true, maxlength: 250, default: '' },
     lifecycle_status: {
       type: String,

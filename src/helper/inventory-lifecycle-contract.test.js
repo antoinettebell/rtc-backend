@@ -10,7 +10,9 @@ assert.deepEqual(itemSchema.path('lifecycle_status').options.enum, ['ACTIVE', 'A
 assert.ok(itemSchema.path('actions'));
 assert.ok(itemSchema.path('source_form_id'));
 assert.ok(itemSchema.path('applied_review_keys'));
+assert.ok(itemSchema.path('reorder_resolved_at'));
 assert.ok(itemSchema.path('actions').schema.path('action').options.enum.includes('ITEM_UPDATED'));
+assert.ok(itemSchema.path('actions').schema.path('action').options.enum.includes('REORDER_RECEIVED'));
 assert.ok(OperationalComplianceFormModel.schema.path('inventory_review_action').options.enum.includes('UPDATED'));
 assert.ok(OperationalComplianceFormModel.schema.path('inventory_review_claimed_at'));
 assert.ok(OperationalComplianceFormModel.schema.path('inventory_review_claim_action'));

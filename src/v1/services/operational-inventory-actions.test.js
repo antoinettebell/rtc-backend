@@ -42,7 +42,7 @@ const originalUpdateOne = OperationalComplianceFormModel.updateOne;
     user,
     id: 'form-1',
     itemId: active._id,
-    payload: { current_quantity: 2, use_by_date: '2026-10-01T12:00:00.000Z', close_count_draft: true },
+    payload: { current_quantity: 2, use_by_date: '2026-09-14T12:00:00.000Z', close_count_draft: true },
   });
   assert.equal(active.current_quantity, 3, 'saving a close draft must not change active inventory');
   assert.equal(draft.item.pending_close_draft.current_quantity, 2);
@@ -51,15 +51,41 @@ const originalUpdateOne = OperationalComplianceFormModel.updateOne;
     user,
     id: 'form-1',
     itemId: active._id,
-    payload: draft.item.pending_close_draft,
+    payload: {
+      ...draft.item.pending_close_draft,
+      date_purchased: '2026-09-14T12:00:00.000Z',
+      use_by_date: '2026-10-14T12:00:00.000Z',
+      beginning_quantity: 6,
+      current_quantity: 6,
+      max_quantity: 6,
+    },
   });
-  assert.equal(result.archived.lifecycle_status, 'ARCHIVED');
-  assert.equal(result.archived.archive_reason, 'COUNT_CLOSED');
+  assert.equal(result.current.lifecycle_status, 'ACTIVE', 'receiving reordered products must preserve the existing lot');
+  assert.equal(result.current.beginning_quantity, 8, 'existing lot history must not be rewritten');
+  assert.equal(result.current.max_quantity, 10, 'resolving a reorder must not lower the historical maximum');
+  assert.equal(result.current.reorder_quantity, 0);
+  assert.ok(result.current.reorder_resolved_at);
   assert.equal(result.next.lifecycle_status, 'ACTIVE');
-  assert.equal(result.next.beginning_quantity, 2);
-  assert.equal(result.next.current_quantity, 2);
-  assert.equal(new Date(result.next.use_by_date).toISOString().slice(0, 10), '2026-10-01');
+  assert.equal(result.next.beginning_quantity, 6);
+  assert.equal(result.next.current_quantity, 6);
+  assert.equal(result.next.max_quantity, 6);
+  assert.equal(result.next.reorder_quantity, 0);
+  assert.equal(new Date(result.next.use_by_date).toISOString().slice(0, 10), '2026-10-14');
   assert.equal(form.saved, true);
+
+  const noReorderItem = {
+    ...active,
+    _id: 'no-reorder',
+    current_quantity: 10,
+    max_quantity: 10,
+    reorder_quantity: 0,
+    reorder_resolved_at: null,
+  };
+  service.getVendorInventoryItem = async () => ({ form, item: noReorderItem });
+  await assert.rejects(
+    () => service.closeInventoryCount({ user, id: 'form-1', itemId: noReorderItem._id, payload: {} }),
+    (error) => error.code === 409 && /No reorder/.test(error.message)
+  );
 
   const current = {
     _id: 'current-1',
@@ -112,6 +138,34 @@ const originalUpdateOne = OperationalComplianceFormModel.updateOne;
   assert.equal(current.lifecycle_status, 'ACTIVE');
   assert.equal(current.actions.at(-1).action, 'ITEM_UPDATED');
   assert.equal(source.inventory_review_action, 'UPDATED');
+
+  source.inventory_review_action = null;
+  await service.reviewEmployeeInventory({
+    user,
+    id: source._id,
+    payload: {
+      action: 'CLOSED_INTO_INVENTORY',
+      reorder_items: [{
+        ...source.inventory_items[0],
+        date_purchased: '2026-10-02T12:00:00.000Z',
+        use_by_date: '2026-11-02T12:00:00.000Z',
+        beginning_quantity: 5,
+        current_quantity: 5,
+        max_quantity: 5,
+      }],
+    },
+  });
+  const replacement = vendorForm.inventory_items.find((item) => item !== current && item.lifecycle_status === 'ACTIVE');
+  assert.equal(current.lifecycle_status, 'ACTIVE', 'receiving reordered products must preserve the prior active item');
+  assert.equal(current.current_quantity, 3, 'the employee count updates the current quantity');
+  assert.equal(current.max_quantity, 10, 'the original maximum remains historical truth');
+  assert.equal(current.reorder_quantity, 0);
+  assert.ok(current.reorder_resolved_at);
+  assert.equal(replacement.beginning_quantity, 5);
+  assert.equal(replacement.current_quantity, 5);
+  assert.equal(replacement.max_quantity, 5);
+  assert.equal(new Date(replacement.use_by_date).toISOString().slice(0, 10), '2026-11-02');
+  assert.equal(source.inventory_review_action, 'CLOSED_INTO_INVENTORY');
 
   const protectedItem = {
     _id: 'protected-1',
