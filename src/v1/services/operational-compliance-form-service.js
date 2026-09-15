@@ -277,17 +277,18 @@ class OperationalComplianceFormService {
       food_truck_id: scope.food_truck_id,
     };
     if (actorType(user) === 'EMPLOYEE') {
-      query.status = { $nin: ['ARCHIVED', 'CANCELLED'] };
       if (type === 'INVENTORY') {
         query.employee_internal_id = scope.employee_internal_id;
         query.truck_unit_id = scope.truck_unit_id;
         query.location_id = scope.location_id;
+        query.status = { $nin: ['ARCHIVED', 'CANCELLED'] };
       } else if (type) {
         query.employee_internal_id = scope.employee_internal_id;
+        query.status = { $ne: 'CANCELLED' };
       } else {
         query.$or = [
-          { form_type: 'INVENTORY', employee_internal_id: scope.employee_internal_id, truck_unit_id: scope.truck_unit_id, location_id: scope.location_id },
-          { form_type: { $ne: 'INVENTORY' }, employee_internal_id: scope.employee_internal_id },
+          { form_type: 'INVENTORY', employee_internal_id: scope.employee_internal_id, truck_unit_id: scope.truck_unit_id, location_id: scope.location_id, status: { $nin: ['ARCHIVED', 'CANCELLED'] } },
+          { form_type: { $ne: 'INVENTORY' }, employee_internal_id: scope.employee_internal_id, status: { $ne: 'CANCELLED' } },
         ];
       }
     }
@@ -296,8 +297,8 @@ class OperationalComplianceFormService {
       query.form_type = type;
     }
     if (status) {
-      if (actorType(user) === 'EMPLOYEE' && status === 'ARCHIVED') {
-        throw errorWithCode('Employees cannot view archived operations forms.', 403);
+      if (actorType(user) === 'EMPLOYEE' && status === 'ARCHIVED' && type === 'INVENTORY') {
+        throw errorWithCode('Employees cannot view archived inventory forms.', 403);
       }
       query.status = status;
     }

@@ -97,7 +97,8 @@ const serviceSource = fs.readFileSync(
   path.join(__dirname, '../v1/services/operational-compliance-form-service.js'),
   'utf8'
 );
-assert.match(serviceSource, /Employees cannot view archived operations forms/);
+assert.match(serviceSource, /Employees cannot view archived inventory forms/);
+assert.match(serviceSource, /form_type: \{ \$ne: 'INVENTORY' \}.*status: \{ \$ne: 'CANCELLED' \}/);
 assert.match(serviceSource, /Only the vendor can unlock a submitted form/);
 assert.match(serviceSource, /form\.status !== 'DRAFT'/);
 assert.match(serviceSource, /buildNextInventoryItems/);
