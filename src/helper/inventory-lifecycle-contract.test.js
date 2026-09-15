@@ -17,16 +17,18 @@ assert.ok(OperationalComplianceFormModel.schema.path('inventory_review_action').
 assert.ok(OperationalComplianceFormModel.schema.path('inventory_review_claimed_at'));
 assert.ok(OperationalComplianceFormModel.schema.path('inventory_review_claim_action'));
 assert.ok(OperationalComplianceFormModel.schema.path('inventory_review_claimed_by_id'));
+assert.ok(OperationalComplianceFormModel.schema.path('status').options.enum.includes('CANCELLED'));
 
 const routes = fs.readFileSync(
   path.join(__dirname, '../v1/routes/operational-compliance.js'),
   'utf8'
 );
-for (const action of ['close-count', 'items/:itemId/archive', 'inventory/:id/review']) {
+for (const action of ['close-count', 'items/:itemId/archive', 'inventory/:id/discard-draft', 'inventory/:id/review']) {
   assert.ok(routes.includes(action), `missing inventory route ${action}`);
 }
 assert.match(routes, /close-count', allowedTo\(\['VENDOR'\]\)/);
 assert.match(routes, /items\/:itemId\/archive', allowedTo\(\['VENDOR'\]\)/);
+assert.match(routes, /inventory\/:id\/discard-draft', allowedTo\(\['VENDOR'\]\)/);
 assert.match(routes, /inventory\/:id\/review', allowedTo\(\['VENDOR'\]\)/);
 
 const service = fs.readFileSync(

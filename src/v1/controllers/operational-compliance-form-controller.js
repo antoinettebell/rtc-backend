@@ -160,6 +160,18 @@ exports.archiveInventoryItem = async (req, res, next) => {
   }
 };
 
+exports.discardEmployeeInventoryDraft = async (req, res, next) => {
+  try {
+    const result = await Service.discardEmployeeInventoryDraft({
+      user: req.user,
+      id: req.params.id,
+    });
+    return res.data(result, 'Employee inventory draft discarded');
+  } catch (error) {
+    return handleOperationalError(req, error, next);
+  }
+};
+
 exports.reviewEmployeeInventory = async (req, res, next) => {
   try {
     const result = await Service.reviewEmployeeInventory({

@@ -263,6 +263,23 @@ const originalUpdateOne = OperationalComplianceFormModel.updateOne;
   assert.equal(employeeInventoryDraft.inventory_items[1].item_name, 'Cheese');
   service.getEmployeeInventorySeed = originalSeedGetter;
 
+  const discardableDraft = {
+    _id: 'employee-draft-2',
+    form_type: 'INVENTORY',
+    status: 'DRAFT',
+    employee_internal_id: 'employee-1',
+    async save() { this.saved = true; },
+  };
+  service.getScopedForm = async () => discardableDraft;
+  const discarded = await service.discardEmployeeInventoryDraft({
+    user,
+    id: discardableDraft._id,
+  });
+  assert.equal(discarded.form.status, 'CANCELLED');
+  assert.equal(discarded.form.saved, true);
+  assert.equal(String(discarded.form.archived_by_id), user._id);
+  assert.ok(discarded.form.archived_at);
+
   service.getVendorInventoryItem = originalGetter;
   service.getScopedForm = originalScopedGetter;
   service.getVendorInventoryForm = originalVendorFormGetter;

@@ -97,7 +97,7 @@ const schema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['DRAFT', 'SUBMITTED', 'ARCHIVED'],
+      enum: ['DRAFT', 'SUBMITTED', 'ARCHIVED', 'CANCELLED'],
       default: 'DRAFT',
       index: true,
     },

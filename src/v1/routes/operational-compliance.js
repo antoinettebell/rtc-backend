@@ -16,6 +16,7 @@ router.put('/inventory/:id/items/:itemId', allowedTo(['VENDOR']), Controller.upd
 router.post('/inventory/:id/items/:itemId/submit', allowedTo(['VENDOR']), Controller.submitInventoryItem);
 router.post('/inventory/:id/items/:itemId/close-count', allowedTo(['VENDOR']), Controller.closeInventoryCount);
 router.post('/inventory/:id/items/:itemId/archive', allowedTo(['VENDOR']), Controller.archiveInventoryItem);
+router.post('/inventory/:id/discard-draft', allowedTo(['VENDOR']), Controller.discardEmployeeInventoryDraft);
 router.post('/inventory/:id/review', allowedTo(['VENDOR']), Controller.reviewEmployeeInventory);
 
 module.exports = router;

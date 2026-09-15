@@ -249,7 +249,7 @@ class OperationalComplianceFormService {
       food_truck_id: scope.food_truck_id,
     };
     if (actorType(user) === 'EMPLOYEE') {
-      query.status = { $ne: 'ARCHIVED' };
+      query.status = { $nin: ['ARCHIVED', 'CANCELLED'] };
       if (type === 'INVENTORY') {
         query.employee_internal_id = scope.employee_internal_id;
         query.truck_unit_id = scope.truck_unit_id;
@@ -385,7 +385,7 @@ class OperationalComplianceFormService {
       food_truck_id: scope.food_truck_id,
     };
     if (actorType(user) === 'EMPLOYEE') {
-      query.status = { $ne: 'ARCHIVED' };
+      query.status = { $nin: ['ARCHIVED', 'CANCELLED'] };
     }
     const form = await Model.findOne(query);
     if (!form) throw errorWithCode('Operational compliance form not found.', 404);
@@ -781,6 +781,27 @@ class OperationalComplianceFormService {
     form.last_edited_by_type = 'VENDOR';
     await form.save();
     return { form, item };
+  }
+
+  async discardEmployeeInventoryDraft({ user, id }) {
+    this.assertVendor(user);
+    const form = await this.getScopedForm({ user, id });
+    if (
+      form.form_type !== 'INVENTORY' ||
+      form.status !== 'DRAFT' ||
+      !form.employee_internal_id
+    ) {
+      throw errorWithCode('Employee inventory draft not found.', 404);
+    }
+    const now = new Date();
+    form.status = 'CANCELLED';
+    form.archived_at = now;
+    form.archived_by_id = user._id;
+    form.last_edited_at = now;
+    form.last_edited_by_id = user._id;
+    form.last_edited_by_type = 'VENDOR';
+    await form.save();
+    return { form };
   }
 
   async reviewEmployeeInventory({ user, id, payload = {} }) {
