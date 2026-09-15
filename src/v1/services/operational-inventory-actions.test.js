@@ -14,6 +14,7 @@ const originalGetter = service.getVendorInventoryItem;
 const originalScopedGetter = service.getScopedForm;
 const originalVendorFormGetter = service.getVendorInventoryForm;
 const originalScopeGetter = service.getScope;
+const originalSeedGetter = service.getEmployeeInventorySeed;
 const originalFindOneAndUpdate = OperationalComplianceFormModel.findOneAndUpdate;
 const originalUpdateOne = OperationalComplianceFormModel.updateOne;
 
@@ -170,10 +171,47 @@ const originalUpdateOne = OperationalComplianceFormModel.updateOne;
   assert.equal(String(sanitized.source_form_id), '507f1f77bcf86cd799439013');
   assert.equal(sanitized.actions.length, 1, 'clients cannot forge inventory audit actions');
 
+  const existingSeededItem = {
+    _id: 'employee-item-1',
+    source_item_id: 'vendor-item-1',
+    item_name: 'Milk',
+    current_quantity: 3,
+    reorder_quantity: 7,
+    notes: 'Employee count',
+  };
+  const employeeInventoryDraft = {
+    inventory_items: makeItems([existingSeededItem]),
+    async save() { this.saved = true; },
+  };
+  service.getEmployeeInventorySeed = async () => [
+    {
+      source_item_id: 'vendor-item-1',
+      item_name: 'Whole Milk',
+      current_quantity: 5,
+      reorder_quantity: 5,
+      notes: 'Vendor note',
+    },
+    {
+      source_item_id: 'vendor-item-2',
+      item_name: 'Cheese',
+      current_quantity: 4,
+      reorder_quantity: 1,
+      notes: '',
+    },
+  ];
+  await service.syncEmployeeInventoryDraft(employeeInventoryDraft, {});
+  assert.equal(employeeInventoryDraft.inventory_items.length, 2, 'new active vendor inventory must sync into an open employee draft');
+  assert.equal(employeeInventoryDraft.inventory_items[0].item_name, 'Whole Milk', 'vendor inventory details must refresh in an open employee draft');
+  assert.equal(employeeInventoryDraft.inventory_items[0].current_quantity, 3, 'an in-progress employee count must be preserved');
+  assert.equal(employeeInventoryDraft.inventory_items[0].notes, 'Employee count');
+  assert.equal(employeeInventoryDraft.inventory_items[1].item_name, 'Cheese');
+  service.getEmployeeInventorySeed = originalSeedGetter;
+
   service.getVendorInventoryItem = originalGetter;
   service.getScopedForm = originalScopedGetter;
   service.getVendorInventoryForm = originalVendorFormGetter;
   service.getScope = originalScopeGetter;
+  service.getEmployeeInventorySeed = originalSeedGetter;
   OperationalComplianceFormModel.findOneAndUpdate = originalFindOneAndUpdate;
   OperationalComplianceFormModel.updateOne = originalUpdateOne;
   console.log('operational inventory action tests passed');
@@ -182,6 +220,7 @@ const originalUpdateOne = OperationalComplianceFormModel.updateOne;
   service.getScopedForm = originalScopedGetter;
   service.getVendorInventoryForm = originalVendorFormGetter;
   service.getScope = originalScopeGetter;
+  service.getEmployeeInventorySeed = originalSeedGetter;
   OperationalComplianceFormModel.findOneAndUpdate = originalFindOneAndUpdate;
   OperationalComplianceFormModel.updateOne = originalUpdateOne;
   console.error(error);

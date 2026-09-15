@@ -189,6 +189,29 @@ class OperationalComplianceFormService {
     return seeded;
   }
 
+  async syncEmployeeInventoryDraft(form, scope) {
+    const seededItems = await this.getEmployeeInventorySeed(scope);
+    const existingItems = form.inventory_items || [];
+    const existingBySource = new Map(
+      existingItems
+        .filter((item) => item.source_item_id)
+        .map((item) => [String(item.source_item_id), item])
+    );
+    const customItems = existingItems.filter((item) => !item.source_item_id);
+    const mergedItems = seededItems.map((seed) => {
+      const existing = existingBySource.get(String(seed.source_item_id));
+      if (!existing) return seed;
+      return {
+        ...seed,
+        current_quantity: existing.current_quantity,
+        reorder_quantity: existing.reorder_quantity,
+        notes: existing.notes,
+      };
+    });
+    form.inventory_items = [...mergedItems, ...customItems];
+    return form;
+  }
+
   async list({ user, type, status }) {
     const scope = await this.getScope(user);
     const query = {
@@ -254,6 +277,9 @@ class OperationalComplianceFormService {
         existing.location_id = scope.location_id;
         existing.truck_unit = scope.truck_unit_label;
         existing.location_label = scope.location_label;
+        if (type === 'INVENTORY') {
+          await this.syncEmployeeInventoryDraft(existing, scope);
+        }
       } else if (type !== 'INVENTORY') {
         existing.employee_internal_id = null;
         existing.employee_session_id = null;
