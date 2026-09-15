@@ -44,6 +44,8 @@ const inventoryItemSchema = new mongoose.Schema(
     source_form_id: { type: mongoose.Schema.Types.ObjectId, default: null },
     source_item_id: { type: String, default: null },
     source_employee_internal_id: { type: String, default: null },
+    employee_modified_at: { type: Date, default: null },
+    employee_modified_by_id: { type: mongoose.Schema.Types.ObjectId, default: null },
     applied_review_keys: { type: [String], default: [] },
     archived_at: { type: Date, default: null },
     archived_by_id: { type: mongoose.Schema.Types.ObjectId, default: null },

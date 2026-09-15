@@ -121,6 +121,7 @@ const originalUpdateOne = OperationalComplianceFormModel.updateOne;
       lifecycle_status: 'ACTIVE',
       lineage_id: 'line-review',
       source_item_id: 'current-1',
+      employee_modified_at: new Date('2026-09-14T12:00:00.000Z'),
     }],
     async save() { this.saved = true; },
   };
@@ -215,6 +216,7 @@ const originalUpdateOne = OperationalComplianceFormModel.updateOne;
         max_quantity: 10,
         lifecycle_status: 'ARCHIVED',
         source_form_id: '507f1f77bcf86cd799439099',
+        employee_modified: true,
         actions: [{ action: 'ITEM_ARCHIVED', actor_type: 'EMPLOYEE' }],
       }],
     },
@@ -226,14 +228,17 @@ const originalUpdateOne = OperationalComplianceFormModel.updateOne;
   assert.equal(sanitized.lifecycle_status, 'ACTIVE', 'clients cannot forge lifecycle state');
   assert.equal(String(sanitized.source_form_id), '507f1f77bcf86cd799439013');
   assert.equal(sanitized.actions.length, 1, 'clients cannot forge inventory audit actions');
+  assert.ok(sanitized.employee_modified_at, 'performing an employee count must mark the item as touched');
 
   const existingSeededItem = {
     _id: 'employee-item-1',
-    source_item_id: 'vendor-item-1',
-    item_name: 'Milk',
-    current_quantity: 3,
-    reorder_quantity: 7,
-    notes: 'Employee count',
+      source_item_id: 'vendor-item-1',
+      item_name: 'Milk',
+      current_quantity: 3,
+      reorder_quantity: 7,
+      notes: 'Employee count',
+      employee_modified_at: new Date('2026-09-14T12:00:00.000Z'),
+      employee_modified_by_id: '507f1f77bcf86cd799439015',
   };
   const employeeInventoryDraft = {
     inventory_items: makeItems([existingSeededItem]),
@@ -262,6 +267,7 @@ const originalUpdateOne = OperationalComplianceFormModel.updateOne;
   assert.equal(employeeInventoryDraft.inventory_items[0].item_name, 'Whole Milk', 'vendor inventory details must refresh in an open employee draft');
   assert.equal(employeeInventoryDraft.inventory_items[0].current_quantity, 3, 'an in-progress employee count must be preserved');
   assert.equal(employeeInventoryDraft.inventory_items[0].notes, 'Employee count');
+  assert.ok(employeeInventoryDraft.inventory_items[0].employee_modified_at, 'employee touch audit must survive draft synchronization');
   assert.equal(employeeInventoryDraft.inventory_items[1].item_name, 'Cheese');
   service.getEmployeeInventorySeed = originalSeedGetter;
 

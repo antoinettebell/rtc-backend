@@ -102,6 +102,8 @@ const inventorySystemFields = [
   'source_form_id',
   'source_item_id',
   'source_employee_internal_id',
+  'employee_modified_at',
+  'employee_modified_by_id',
   'archived_at',
   'archived_by_id',
   'archive_reason',
@@ -114,7 +116,7 @@ const inventorySystemFields = [
   'applied_review_keys',
 ];
 
-const sanitizeEditableInventoryItems = (existingItems = [], incomingItems = []) => {
+const sanitizeEditableInventoryItems = (existingItems = [], incomingItems = [], employeeUser = null) => {
   const existingById = new Map((existingItems || []).map((item) => [String(item._id), item]));
   return normalizeInventoryItems((incomingItems || []).map((incoming) => {
     const existing = incoming?._id ? existingById.get(String(incoming._id)) : null;
@@ -123,7 +125,12 @@ const sanitizeEditableInventoryItems = (existingItems = [], incomingItems = []) 
           existing[field] === undefined ? result : { ...result, [field]: existing[field] }
         ), {})
       : {};
-    return { ...preserved, ...inventoryPayload(incoming) };
+    const sanitized = { ...preserved, ...inventoryPayload(incoming) };
+    if (employeeUser && incoming.employee_modified === true) {
+      sanitized.employee_modified_at = new Date();
+      sanitized.employee_modified_by_id = employeeUser._id;
+    }
+    return sanitized;
   }));
 };
 
@@ -236,6 +243,8 @@ class OperationalComplianceFormService {
         current_quantity: existing.current_quantity,
         reorder_quantity: existing.reorder_quantity,
         notes: existing.notes,
+        employee_modified_at: existing.employee_modified_at,
+        employee_modified_by_id: existing.employee_modified_by_id,
       };
     });
     form.inventory_items = [...mergedItems, ...customItems];
@@ -483,7 +492,7 @@ class OperationalComplianceFormService {
     if (form.form_type === 'INVENTORY') {
       form.inventory_items = editablePayload.inventory_items === undefined
         ? normalizeInventoryItems(form.inventory_items)
-        : sanitizeEditableInventoryItems(form.inventory_items, editablePayload.inventory_items);
+        : sanitizeEditableInventoryItems(form.inventory_items, editablePayload.inventory_items, employeeScope ? user : null);
       form.inventory_items.forEach(assertInventoryQuantityBounds);
     }
     form.last_edited_at = new Date();
@@ -527,6 +536,13 @@ class OperationalComplianceFormService {
     }
     if (form.form_type === 'INVENTORY' && !form.inventory_items.length) {
       throw errorWithCode('Add at least one inventory item before submitting.');
+    }
+    if (
+      form.form_type === 'INVENTORY' &&
+      actorType(user) === 'EMPLOYEE' &&
+      !form.inventory_items.some((item) => item.employee_modified_at)
+    ) {
+      throw errorWithCode('Perform a count or add an inventory item before submitting.', 422);
     }
     if (
       form.form_type !== 'INVENTORY' &&
@@ -881,7 +897,10 @@ class OperationalComplianceFormService {
       });
     }
     const now = new Date();
-    const submittedItems = source.inventory_items || [];
+    const submittedItems = (source.inventory_items || []).filter((item) => item.employee_modified_at);
+    if (!submittedItems.length) {
+      throw errorWithCode('No employee inventory changes were submitted.', 409);
+    }
     const submittedById = new Map(submittedItems.map((item) => [String(item._id), item]));
     const reviewedItems = normalizeInventoryItems(payload.inventory_items || submittedItems).map((item) => {
       const submitted = submittedById.get(String(item._id));
