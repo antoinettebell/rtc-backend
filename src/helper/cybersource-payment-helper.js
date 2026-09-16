@@ -37,7 +37,10 @@ const getConfig = () => ({
     isSandboxEnvironment()
       ? 'apitest.cybersource.com'
       : 'api.cybersource.com',
-  enableLog: false,
+  logConfiguration: {
+    enableLog: false,
+    enableMasking: true,
+  },
 });
 
 const assertConfigured = (config) => {

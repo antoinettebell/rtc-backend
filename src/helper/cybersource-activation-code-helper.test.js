@@ -64,6 +64,10 @@ const run = async () => {
 
     const result = await Helper.createActivationCode({ apiClient });
     assert.strictEqual(configured.runEnvironment, 'api.cybersource.com');
+    assert.deepStrictEqual(configured.logConfiguration, {
+      enableLog: false,
+      enableMasking: true,
+    });
     assert.strictEqual(result.token, 'one-time-code');
     assert.strictEqual(result.ttl, 86399805);
 
