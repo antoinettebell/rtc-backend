@@ -4,6 +4,7 @@ const services = require('../services');
 const originalFoodTruckGetByData = services.FoodTruckService.getByData;
 const originalEmployeeGetByData = services.VendorEmployeeService.getByData;
 const originalPlanGetById = services.PlanService.getById;
+const originalTerminalRegister = services.TapToPayTerminalService.register;
 const VendorComplianceService = require('../services/vendor-compliance-service');
 const originalCalculateComplianceSummary = VendorComplianceService.calculateComplianceSummary;
 const ActivationCodeHelper = require('../../helper/cybersource-activation-code-helper');
@@ -14,13 +15,21 @@ const run = async () => {
   const terminalId = 'acceptance-device-serial-123456789';
 
   try {
+    services.TapToPayTerminalService.register = async ({ body }) => ({
+      _id: 'terminal-record-1',
+      reactivation_required: false,
+      device_id: body.device_id,
+    });
     const vendorTruck = {
+      _id: 'truck-1',
+      userId: 'vendor-1',
       tap_to_pay_serial_number: null,
       async save() {
         this.saved = true;
       },
     };
     services.FoodTruckService.getByData = async (query) => {
+      if (query._id) return vendorTruck;
       assert.strictEqual(String(query.userId), 'vendor-1');
       return vendorTruck;
     };
@@ -49,11 +58,16 @@ const run = async () => {
     assert.strictEqual(vendorTruck.saved, true);
     assert.deepStrictEqual(responsePayload, {
       registered: true,
+      terminal_id: 'terminal-record-1',
       terminal_serial_suffix: '6789',
+      reactivation_required: false,
     });
     assert.strictEqual(JSON.stringify(responsePayload).includes(terminalId), false);
 
     const employee = {
+      _id: 'employee-1',
+      food_truck_id: 'truck-1',
+      employee_internal_id: 'EMP-1',
       tap_to_pay_serial_number: null,
       async save() {
         this.saved = true;
@@ -148,6 +162,7 @@ const run = async () => {
     services.FoodTruckService.getByData = originalFoodTruckGetByData;
     services.VendorEmployeeService.getByData = originalEmployeeGetByData;
     services.PlanService.getById = originalPlanGetById;
+    services.TapToPayTerminalService.register = originalTerminalRegister;
     VendorComplianceService.calculateComplianceSummary = originalCalculateComplianceSummary;
     ActivationCodeHelper.createActivationCode = originalCreateActivationCode;
   }

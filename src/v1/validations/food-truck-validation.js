@@ -259,6 +259,31 @@ module.exports = {
   registerTapToPayTerminal: {
     body: Joi.object({
       device_id: Joi.string().trim().min(1).max(100).required(),
+      device_label: Joi.string().trim().max(120).allow('', null),
+      environment: Joi.string().valid('production', 'live', 'test', 'sandbox').default('production'),
+      activation_status: Joi.string().valid('SUCCEEDED', 'UNKNOWN').default('UNKNOWN'),
+    }),
+  },
+  tapToPayTerminalStatus: {
+    query: Joi.object({
+      device_id: Joi.string().trim().min(1).max(100).required(),
+    }),
+  },
+  tapToPayTerminalEvent: {
+    body: Joi.object({
+      device_id: Joi.string().trim().max(100).allow('', null),
+      device_label: Joi.string().trim().max(120).allow('', null),
+      environment: Joi.string().valid('production', 'live', 'test', 'sandbox').default('production'),
+      event_type: Joi.string().valid('STATUS_CHECK', 'ACTIVATION_STARTED', 'ACTIVATION_SUCCEEDED', 'ACTIVATION_FAILED').required(),
+      error_code: Joi.string().trim().max(120).allow('', null),
+      error_message: Joi.string().trim().max(500).allow('', null),
+    }),
+  },
+  adminUpdateTapToPayTerminal: {
+    body: Joi.object({
+      action: Joi.string().valid('REQUIRE_REACTIVATION', 'CLEAR_REACTIVATION', 'MARK_HISTORICAL', 'RESTORE_ACTIVE', 'UPDATE_LABEL').required(),
+      reason: Joi.string().trim().max(500).allow('', null),
+      device_label: Joi.string().trim().max(120).allow('', null),
     }),
   },
 };

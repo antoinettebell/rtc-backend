@@ -146,6 +146,10 @@ exports.VendorComplianceAuditModel = require('./vendor-compliance-audit');
 exports.OperationalComplianceFormModel = require('./operational-compliance-form');
 exports.OperationalNotificationModel = require('./operational-notification');
 
+/** Define Tap to Pay terminal registry and safe diagnostic event models */
+exports.TapToPayTerminalModel = require('./tap-to-pay-terminal');
+exports.TapToPayTerminalEventModel = require('./tap-to-pay-terminal-event');
+
 /** Define admin-notification model */
 exports.AdminNotificationModel = require('./admin-notification');
 

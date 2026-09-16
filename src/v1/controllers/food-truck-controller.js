@@ -10,6 +10,7 @@ const {
   EmployeeSessionService,
   MarketplaceEventService,
   MarketplaceEventImageService,
+  TapToPayTerminalService,
 } = require('../services');
 const { Joi } = require('express-validation');
 const MailHelper = require('../../helper/mail-helper');
@@ -1041,51 +1042,116 @@ exports.getMenu = async (req, res, next) => {
   }
 };
 
-/** Store the terminal identifier returned by the authenticated Tap to Pay SDK. */
+const resolveTapToPayContext = async (user) => {
+  if (user.userType === 'EMPLOYEE') {
+    const employee = await VendorEmployeeService.getByData(
+      {
+        _id: user._id,
+        employee_internal_id: user.employee_internal_id,
+        food_truck_id: user.food_truck_id,
+        is_active: true,
+        is_archived: false,
+      },
+      { singleResult: true }
+    );
+    if (!employee) return {};
+    const foodTruck = await Service.getByData(
+      { _id: employee.food_truck_id },
+      { singleResult: true }
+    );
+    return { employee, foodTruck };
+  }
+  const foodTruck = await Service.getByData(
+    { userId: user._id },
+    { singleResult: true }
+  );
+  return { foodTruck };
+};
+
+/** Store the full terminal identifier returned by the authenticated SDK. */
 exports.registerTapToPayTerminal = async (req, res, next) => {
   try {
     const deviceId = String(req.body.device_id || '').trim();
     const { user } = req;
+    const { employee, foodTruck } = await resolveTapToPayContext(user);
+    if (!foodTruck) return res.error(new Error('Food truck not found'), 404);
 
-    if (user.userType === 'EMPLOYEE') {
-      const employee = await VendorEmployeeService.getByData(
-        {
-          _id: user._id,
-          employee_internal_id: user.employee_internal_id,
-          food_truck_id: user.food_truck_id,
-          is_active: true,
-          is_archived: false,
-        },
-        { singleResult: true }
-      );
-
-      if (!employee) {
-        return res.error(new Error('Employee not found'), 404);
-      }
-
+    if (employee) {
       employee.tap_to_pay_serial_number = deviceId;
       await employee.save();
     } else {
-      const foodTruck = await Service.getByData(
-        { userId: user._id },
-        { singleResult: true }
-      );
-
-      if (!foodTruck) {
-        return res.error(new Error('Food truck not found'), 404);
-      }
-
       foodTruck.tap_to_pay_serial_number = deviceId;
       await foodTruck.save();
     }
+    const terminal = await TapToPayTerminalService.register({
+      user,
+      employee,
+      foodTruck,
+      body: req.body,
+    });
 
     return res.data(
       {
         registered: true,
+        terminal_id: terminal._id,
         terminal_serial_suffix: deviceId.slice(-4),
+        reactivation_required: terminal.reactivation_required,
       },
       'Tap to Pay terminal registered'
     );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.getTapToPayTerminalStatus = async (req, res, next) => {
+  try {
+    const { foodTruck } = await resolveTapToPayContext(req.user);
+    if (!foodTruck) return res.error(new Error('Food truck not found'), 404);
+    const data = await TapToPayTerminalService.status({
+      foodTruck,
+      deviceId: String(req.query.device_id || '').trim(),
+    });
+    return res.data(data, 'Tap to Pay terminal status');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.recordTapToPayTerminalEvent = async (req, res, next) => {
+  try {
+    const { foodTruck } = await resolveTapToPayContext(req.user);
+    if (!foodTruck) return res.error(new Error('Food truck not found'), 404);
+    await TapToPayTerminalService.recordEvent({ user: req.user, foodTruck, body: req.body });
+    return res.data({ recorded: true }, 'Tap to Pay diagnostic recorded');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.listTapToPayTerminalsForAdmin = async (req, res, next) => {
+  try {
+    const foodTruck = await Service.getByData({ _id: req.params.id }, { singleResult: true });
+    if (!foodTruck) return res.error(new Error('Food truck not found'), 404);
+    const data = await TapToPayTerminalService.listForAdmin(foodTruck);
+    return res.data(data, 'Tap to Pay terminals');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.updateTapToPayTerminalForAdmin = async (req, res, next) => {
+  try {
+    const foodTruck = await Service.getByData({ _id: req.params.id }, { singleResult: true });
+    if (!foodTruck) return res.error(new Error('Food truck not found'), 404);
+    const terminal = await TapToPayTerminalService.adminUpdate({
+      foodTruck,
+      terminalId: req.params.terminalId,
+      user: req.user,
+      body: req.body,
+    });
+    if (!terminal) return res.error(new Error('Tap to Pay terminal not found'), 404);
+    return res.data({ terminal }, 'Tap to Pay terminal updated');
   } catch (e) {
     return next(e);
   }

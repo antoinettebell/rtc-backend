@@ -106,6 +106,7 @@ exports.MarketplaceAgreementAuditService = require('./marketplace-agreement-audi
 exports.MarketplaceVendorAgreementService = require('./marketplace-vendor-agreement-service');
 exports.VendorComplianceDocumentService = require('./vendor-compliance-document-service');
 exports.VendorComplianceAuditService = require('./vendor-compliance-audit-service');
+exports.TapToPayTerminalService = require('./tap-to-pay-terminal-service');
 
 /** Define admin-notification service */
 exports.AdminNotificationService = require('./admin-notification-service');

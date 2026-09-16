@@ -11,6 +11,13 @@ const Upload = require('../../middleware/marketplace-upload');
 /** [GET] /api/v1/food-truck */
 router.get('/', validate(Validation.list), Controller.list);
 
+router.get(
+  '/tap-to-pay-terminal-status',
+  allowedTo(['VENDOR', 'EMPLOYEE']),
+  validate(Validation.tapToPayTerminalStatus),
+  Controller.getTapToPayTerminalStatus
+);
+
 /** [GET] /api/v1/food-truck/:id */
 router.get('/:id', Controller.list);
 
@@ -48,6 +55,26 @@ router.post(
   '/tap-to-pay-activation-code',
   allowedTo(['VENDOR']),
   Controller.createTapToPayActivationCode
+);
+
+router.post(
+  '/tap-to-pay-terminal-event',
+  allowedTo(['VENDOR', 'EMPLOYEE']),
+  validate(Validation.tapToPayTerminalEvent),
+  Controller.recordTapToPayTerminalEvent
+);
+
+router.get(
+  '/:id/tap-to-pay-terminals',
+  allowedTo(['SUPER_ADMIN']),
+  Controller.listTapToPayTerminalsForAdmin
+);
+
+router.patch(
+  '/:id/tap-to-pay-terminals/:terminalId',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.adminUpdateTapToPayTerminal),
+  Controller.updateTapToPayTerminalForAdmin
 );
 
 /** [PUT] /api/v1/food-truck/:id */
