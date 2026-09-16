@@ -212,6 +212,8 @@ const isVerifiedActiveDocument = (document, now = new Date()) => {
     return false;
   }
 
+  if (document.document_type === 'HEALTH_PERMIT') return true;
+
   const expirationDate = asDate(document.expiration_date);
   return !expirationDate || expirationDate >= now;
 };
@@ -314,7 +316,7 @@ const getLatestSanitationGradeDocument = (documents = [], now = new Date()) =>
       getSanitationGradeFromDocument(document)
   ) || null;
 
-const getLatestProvidedSanitationGradeDocument = (documents = [], now = new Date()) =>
+const getLatestProvidedSanitationGradeDocument = (documents = []) =>
   documents.find((document) => {
     if (
       document.document_type !== 'HEALTH_PERMIT' ||
@@ -324,11 +326,7 @@ const getLatestProvidedSanitationGradeDocument = (documents = [], now = new Date
       return false;
     }
 
-    const expirationDate = asDate(document.expiration_date);
-    return (
-      (!expirationDate || expirationDate >= now) &&
-      getSanitationGradeFromDocument(document)
-    );
+    return getSanitationGradeFromDocument(document);
   }) || null;
 
 const getSanitationGradeMap = async (foodTruckIds = []) => {
@@ -341,7 +339,6 @@ const getSanitationGradeMap = async (foodTruckIds = []) => {
       document_type: 'HEALTH_PERMIT',
       review_status: 'verified',
       archived_at: null,
-      $or: [{ expiration_date: null }, { expiration_date: { $gte: new Date() } }],
     },
     { lean: true, sort: { created_at: -1 } }
   );
@@ -402,7 +399,10 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
 
   const requirements = getComplianceRequirements().map((requirement) => {
     const document = latestByType[requirement.type] || null;
-    const days_until_expiration = getDaysUntil(document?.expiration_date, now);
+    const tracksExpiration = requirement.type !== 'HEALTH_PERMIT';
+    const days_until_expiration = tracksExpiration
+      ? getDaysUntil(document?.expiration_date, now)
+      : null;
     const verified = isVerifiedActiveDocument(document, now);
     const expired = days_until_expiration !== null && days_until_expiration < 0;
     const isOptionalDocument = !requirement.required && requirement.scoreWeight === 0;
@@ -757,7 +757,11 @@ const uploadComplianceDocument = async ({
     document_type: documentType,
   });
 
-  const vendorEnteredExpirationDate = asDate(body.expiration_date);
+  const isSanitationGrade = documentType === 'HEALTH_PERMIT';
+  const vendorEnteredIssueDate = asDate(body.issue_date);
+  const vendorEnteredExpirationDate = isSanitationGrade
+    ? null
+    : asDate(body.expiration_date);
   const document = await VendorComplianceDocumentService.create({
     food_truck_id: foodTruck._id,
     vendor_user_id: foodTruck.userId,
@@ -769,7 +773,8 @@ const uploadComplianceDocument = async ({
     original_name: file.originalname,
     mime_type: file.mimetype,
     size_bytes: file.size,
-    issue_date: asDate(body.issue_date),
+    issue_date: vendorEnteredIssueDate,
+    vendor_entered_issue_date: isSanitationGrade ? vendorEnteredIssueDate : null,
     expiration_date: vendorEnteredExpirationDate,
     vendor_entered_expiration_date: vendorEnteredExpirationDate,
     extracted_fields: {},
@@ -1039,6 +1044,8 @@ const reviewComplianceDocument = async ({
     };
   }
   if (document.document_type === 'HEALTH_PERMIT') {
+    document.expiration_date = null;
+    document.vendor_entered_expiration_date = null;
     const sanitationGrade = getSanitationGradeFromDocument(document);
     if (sanitationGrade) {
       document.extracted_fields = {
@@ -1106,6 +1113,17 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   }
   const extractedExpirationDate = getOcrExpirationDate(extractedFields);
   const extractedIssueDate = getOcrIssueDate(extractedFields);
+  const isSanitationGrade = document.document_type === 'HEALTH_PERMIT';
+  if (isSanitationGrade && !document.vendor_entered_issue_date && document.issue_date) {
+    document.vendor_entered_issue_date = document.issue_date;
+  }
+  const vendorIssueKey = getDateKey(
+    document.vendor_entered_issue_date || document.issue_date
+  );
+  const ocrIssueKey = getDateKey(extractedIssueDate);
+  const issueDateMismatch =
+    isSanitationGrade && vendorIssueKey && ocrIssueKey && vendorIssueKey !== ocrIssueKey;
+  const missingOcrIssueDate = isSanitationGrade && vendorIssueKey && !ocrIssueKey;
   if (!document.vendor_entered_expiration_date && document.expiration_date) {
     document.vendor_entered_expiration_date = document.expiration_date;
   }
@@ -1117,15 +1135,23 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     document.document_type
   )?.ocrFields?.includes('expiration_date');
   const expirationMismatch =
-    vendorExpirationKey && ocrExpirationKey && vendorExpirationKey !== ocrExpirationKey;
+    !isSanitationGrade &&
+    vendorExpirationKey &&
+    ocrExpirationKey &&
+    vendorExpirationKey !== ocrExpirationKey;
   const missingOcrExpiration =
     requiresExpirationDate && vendorExpirationKey && !ocrExpirationKey;
 
-  if (extractedExpirationDate) {
+  if (extractedExpirationDate && !isSanitationGrade) {
     document.expiration_date = asDate(extractedExpirationDate);
   }
-  if (extractedIssueDate && !document.issue_date) {
+  if (extractedIssueDate && (isSanitationGrade || !document.issue_date)) {
     document.issue_date = asDate(extractedIssueDate);
+  }
+
+  if (isSanitationGrade) {
+    document.expiration_date = null;
+    document.vendor_entered_expiration_date = null;
   }
 
   if (expirationMismatch || missingOcrExpiration) {
@@ -1134,6 +1160,13 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     document.ocr_error_message = expirationMismatch
       ? 'OCR expiration date does not match the vendor-entered expiration date.'
       : 'OCR could not confirm the vendor-entered expiration date.';
+  }
+  if (issueDateMismatch || missingOcrIssueDate) {
+    document.review_status = 'pending_review';
+    document.ocr_status = 'manual_review';
+    document.ocr_error_message = issueDateMismatch
+      ? 'OCR inspection date does not match the vendor-entered inspection date.'
+      : 'OCR could not confirm the vendor-entered inspection date.';
   }
   if (
     document.document_type === 'HEALTH_PERMIT' &&
@@ -1153,6 +1186,7 @@ const archiveExpiredDocuments = async ({ foodTruckId = null, now = new Date() } 
   const expiredDocuments = await VendorComplianceDocumentService.getByData(
     {
       ...(foodTruckId ? { food_truck_id: foodTruckId } : {}),
+      document_type: { $ne: 'HEALTH_PERMIT' },
       expiration_date: { $lt: now },
       review_status: 'verified',
       archived_at: null,
@@ -1197,6 +1231,7 @@ const sendExpirationReminders = async () => {
     {
       review_status: 'verified',
       archived_at: null,
+      document_type: { $ne: 'HEALTH_PERMIT' },
       expiration_date: { $ne: null },
     },
     {}

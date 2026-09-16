@@ -355,6 +355,7 @@ exports.adminDashboard = async (req, res, next) => {
       return acc;
     }, {});
     const expiringSoonCount = documents.filter((document) => {
+      if (document.document_type === 'HEALTH_PERMIT') return false;
       if (!document.expiration_date) return false;
       const days =
         (new Date(document.expiration_date).getTime() - Date.now()) /

@@ -66,6 +66,10 @@ const mSchema = mongoose.Schema(
       type: Date,
       default: null,
     },
+    vendor_entered_issue_date: {
+      type: Date,
+      default: null,
+    },
     expiration_date: {
       type: Date,
       default: null,

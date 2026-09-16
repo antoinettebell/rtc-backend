@@ -1352,9 +1352,10 @@ const hasVerifiedProfileRequirementDocument = async (foodTruckId, label) => {
     { lean: true, sort: { created_at: -1 } }
   );
 
-  const now = new Date();
   return (documents || []).some((document) => {
+    if (documentType === 'HEALTH_PERMIT') return true;
     if (!document?.expiration_date) return true;
+    const now = new Date();
     const expirationDate = new Date(document.expiration_date);
     return (
       !Number.isNaN(expirationDate.getTime()) &&
@@ -2241,7 +2242,11 @@ const attachVerifiedComplianceDocumentsToSubmission = async ({
       document_type: { $in: Object.keys(COMPLIANCE_DOCUMENT_LABELS) },
       review_status: 'verified',
       archived_at: null,
-      $or: [{ expiration_date: null }, { expiration_date: { $gte: new Date() } }],
+      $or: [
+        { document_type: 'HEALTH_PERMIT' },
+        { expiration_date: null },
+        { expiration_date: { $gte: new Date() } },
+      ],
     },
     { lean: true, sort: { created_at: -1 } }
   );

@@ -10,7 +10,6 @@ const DOCUMENT_TYPES = {
       'permit_number',
       'issuing_authority',
       'issue_date',
-      'expiration_date',
       'sanitation_grade',
     ],
   },
