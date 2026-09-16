@@ -255,4 +255,10 @@ module.exports = {
       ),
     }),
   },
+
+  registerTapToPayTerminal: {
+    body: Joi.object({
+      device_id: Joi.string().trim().min(1).max(100).required(),
+    }),
+  },
 };

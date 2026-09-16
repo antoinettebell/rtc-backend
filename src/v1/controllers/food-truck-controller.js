@@ -1,5 +1,6 @@
 const {
   FoodTruckService: Service,
+  VendorEmployeeService,
   MenuItemService,
   FavoriteFoodTruckService,
   UserService,
@@ -18,7 +19,9 @@ const {
   assertSocialMediaLinksAllowed,
   canUseMultipleTruckUnits,
   normalizeVendorPlan,
+  assertVendorPlanCapability,
 } = require('../../helper/vendor-plan-helper');
+const CyberSourceActivationCodeHelper = require('../../helper/cybersource-activation-code-helper');
 const {
   DEFAULT_VENDOR_SCHEDULE_TIME_ZONE,
   applyVendorScheduleTimeZoneCache,
@@ -1032,6 +1035,98 @@ exports.getMenu = async (req, res, next) => {
         menuList: data,
       },
       `menu items`
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+/** Store the terminal identifier returned by the authenticated Tap to Pay SDK. */
+exports.registerTapToPayTerminal = async (req, res, next) => {
+  try {
+    const deviceId = String(req.body.device_id || '').trim();
+    const { user } = req;
+
+    if (user.userType === 'EMPLOYEE') {
+      const employee = await VendorEmployeeService.getByData(
+        {
+          _id: user._id,
+          employee_internal_id: user.employee_internal_id,
+          food_truck_id: user.food_truck_id,
+          is_active: true,
+          is_archived: false,
+        },
+        { singleResult: true }
+      );
+
+      if (!employee) {
+        return res.error(new Error('Employee not found'), 404);
+      }
+
+      employee.tap_to_pay_serial_number = deviceId;
+      await employee.save();
+    } else {
+      const foodTruck = await Service.getByData(
+        { userId: user._id },
+        { singleResult: true }
+      );
+
+      if (!foodTruck) {
+        return res.error(new Error('Food truck not found'), 404);
+      }
+
+      foodTruck.tap_to_pay_serial_number = deviceId;
+      await foodTruck.save();
+    }
+
+    return res.data(
+      {
+        registered: true,
+        terminal_serial_suffix: deviceId.slice(-4),
+      },
+      'Tap to Pay terminal registered'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+/** Generate a single-use Tap to Pay activation code for an eligible vendor. */
+exports.createTapToPayActivationCode = async (req, res, next) => {
+  try {
+    const foodTruck = await Service.getByData(
+      { userId: req.user._id },
+      { singleResult: true }
+    );
+
+    if (!foodTruck) {
+      return res.error(new Error('Food truck not found'), 404);
+    }
+
+    const plan = await getPlanForFoodTruck(foodTruck);
+    assertVendorPlanCapability(
+      plan,
+      'tapToPay',
+      'Tap to Pay is not available for your current vendor plan.'
+    );
+
+    const compliance = await VendorComplianceService.calculateComplianceSummary(foodTruck);
+    if (!compliance.eligible || Number(compliance.score) !== 100) {
+      return res.error(
+        new Error('Tap to Pay requires a 100% compliant vendor profile.'),
+        403
+      );
+    }
+
+    const activation = await CyberSourceActivationCodeHelper.createActivationCode();
+    res.set('Cache-Control', 'no-store');
+    res.set('Pragma', 'no-cache');
+    return res.data(
+      {
+        activation_code: activation.token,
+        expires_in_ms: activation.ttl,
+      },
+      'Tap to Pay activation code generated'
     );
   } catch (e) {
     return next(e);

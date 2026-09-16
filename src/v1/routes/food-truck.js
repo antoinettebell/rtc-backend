@@ -35,6 +35,21 @@ router.put(
 /** [PATCH] /api/v1/food-truck/complete */
 router.patch('/complete', allowedTo(['VENDOR']), Controller.callComplete);
 
+/** [PUT] /api/v1/food-truck/tap-to-pay-terminal */
+router.put(
+  '/tap-to-pay-terminal',
+  allowedTo(['VENDOR', 'EMPLOYEE']),
+  validate(Validation.registerTapToPayTerminal),
+  Controller.registerTapToPayTerminal
+);
+
+/** [POST] /api/v1/food-truck/tap-to-pay-activation-code */
+router.post(
+  '/tap-to-pay-activation-code',
+  allowedTo(['VENDOR']),
+  Controller.createTapToPayActivationCode
+);
+
 /** [PUT] /api/v1/food-truck/:id */
 router.put(
   '/:id',
