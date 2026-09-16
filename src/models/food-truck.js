@@ -27,6 +27,19 @@ const mSchema = mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+    tap_to_pay_upgrade_previous_plan_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'plans',
+      default: null,
+    },
+    tap_to_pay_upgrade_pending: {
+      type: Boolean,
+      default: false,
+    },
+    tap_to_pay_upgrade_started_at: {
+      type: Date,
+      default: null,
+    },
     addOnPlanUpdateDate: {
       type: Date,
       default: Date.now,

@@ -757,6 +757,7 @@ const uploadComplianceDocument = async ({
     document_type: documentType,
   });
 
+  const vendorEnteredExpirationDate = asDate(body.expiration_date);
   const document = await VendorComplianceDocumentService.create({
     food_truck_id: foodTruck._id,
     vendor_user_id: foodTruck.userId,
@@ -769,7 +770,8 @@ const uploadComplianceDocument = async ({
     mime_type: file.mimetype,
     size_bytes: file.size,
     issue_date: asDate(body.issue_date),
-    expiration_date: asDate(body.expiration_date),
+    expiration_date: vendorEnteredExpirationDate,
+    vendor_entered_expiration_date: vendorEnteredExpirationDate,
     extracted_fields: {},
     uploaded_by_user_id: user._id,
     review_status: user.userType === 'SUPER_ADMIN' ? 'verified' : 'pending_review',
@@ -1104,7 +1106,12 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   }
   const extractedExpirationDate = getOcrExpirationDate(extractedFields);
   const extractedIssueDate = getOcrIssueDate(extractedFields);
-  const vendorExpirationKey = getDateKey(document.expiration_date);
+  if (!document.vendor_entered_expiration_date && document.expiration_date) {
+    document.vendor_entered_expiration_date = document.expiration_date;
+  }
+  const vendorExpirationKey = getDateKey(
+    document.vendor_entered_expiration_date || document.expiration_date
+  );
   const ocrExpirationKey = getDateKey(extractedExpirationDate);
   const requiresExpirationDate = !!getComplianceRequirement(
     document.document_type
@@ -1114,7 +1121,7 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   const missingOcrExpiration =
     requiresExpirationDate && vendorExpirationKey && !ocrExpirationKey;
 
-  if (extractedExpirationDate && !document.expiration_date) {
+  if (extractedExpirationDate) {
     document.expiration_date = asDate(extractedExpirationDate);
   }
   if (extractedIssueDate && !document.issue_date) {

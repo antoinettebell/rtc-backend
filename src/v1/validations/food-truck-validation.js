@@ -69,6 +69,9 @@ module.exports = {
   changePlan: {
     body: Joi.object({
       planId: Joi.string().required(),
+      onboarding_change: Joi.boolean().default(false),
+      tap_to_pay_upgrade_rollback: Joi.boolean().default(false),
+      complete_tap_to_pay_upgrade: Joi.boolean().default(false),
     }),
   },
   changeaddonPlan: {

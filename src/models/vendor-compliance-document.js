@@ -71,6 +71,10 @@ const mSchema = mongoose.Schema(
       default: null,
       index: true,
     },
+    vendor_entered_expiration_date: {
+      type: Date,
+      default: null,
+    },
     extracted_fields: {
       type: mongoose.Schema.Types.Mixed,
       default: {},

@@ -20,6 +20,7 @@ const {
   assertSocialMediaLinksAllowed,
   canUseMultipleTruckUnits,
   normalizeVendorPlan,
+  getVendorPlanCapabilities,
   assertVendorPlanCapability,
 } = require('../../helper/vendor-plan-helper');
 const CyberSourceActivationCodeHelper = require('../../helper/cybersource-activation-code-helper');
@@ -2198,7 +2199,12 @@ exports.nearMe = async (req, res, next) => {
 exports.changePlan = async (req, res, next) => {
   try {
     const {
-      body: { planId },
+      body: {
+        planId,
+        onboarding_change: onboardingChange,
+        tap_to_pay_upgrade_rollback: tapToPayUpgradeRollback,
+        complete_tap_to_pay_upgrade: completeTapToPayUpgrade,
+      },
       user,
     } = req;
 
@@ -2215,7 +2221,20 @@ exports.changePlan = async (req, res, next) => {
     }
 
     if (planId.toString() !== item.planId.toString()) {
-      if (item.planUpdateDate) {
+      const rollbackMatchesPendingUpgrade =
+        tapToPayUpgradeRollback === true
+        && item.tap_to_pay_upgrade_pending === true
+        && item.tap_to_pay_upgrade_previous_plan_id
+        && String(item.tap_to_pay_upgrade_previous_plan_id) === String(planId);
+      const mayChangeDuringOnboarding =
+        onboardingChange === true && item.completed !== true;
+      if (tapToPayUpgradeRollback === true && !rollbackMatchesPendingUpgrade) {
+        return res.error(
+          new Error('No pending Tap to Pay plan upgrade can be restored.'),
+          409
+        );
+      }
+      if (item.planUpdateDate && !mayChangeDuringOnboarding && !rollbackMatchesPendingUpgrade) {
         const planDate = new Date(item.planUpdateDate);
         planDate.setMonth(planDate.getMonth() + 3);
         const now = new Date();
@@ -2230,8 +2249,31 @@ exports.changePlan = async (req, res, next) => {
       }
 
       await assertPlanChangeAllowedForCurrentData(item, planId);
+      const [currentPlan, nextPlan] = await Promise.all([
+        getPlanForFoodTruck(item),
+        getPlanForFoodTruck(item, planId),
+      ]);
+      const currentHasTapToPay =
+        getVendorPlanCapabilities(currentPlan).tapToPay === true;
+      const nextHasTapToPay =
+        getVendorPlanCapabilities(nextPlan).tapToPay === true;
+      if (!currentHasTapToPay && nextHasTapToPay) {
+        item.tap_to_pay_upgrade_previous_plan_id = item.planId;
+        item.tap_to_pay_upgrade_pending = true;
+        item.tap_to_pay_upgrade_started_at = new Date();
+      } else if (currentHasTapToPay && !nextHasTapToPay) {
+        item.tap_to_pay_upgrade_previous_plan_id = null;
+        item.tap_to_pay_upgrade_pending = false;
+        item.tap_to_pay_upgrade_started_at = null;
+      }
       item.planId = planId;
       item.planUpdateDate = new Date().toISOString();
+    }
+
+    if (completeTapToPayUpgrade === true) {
+      item.tap_to_pay_upgrade_previous_plan_id = null;
+      item.tap_to_pay_upgrade_pending = false;
+      item.tap_to_pay_upgrade_started_at = null;
     }
 
     await item.save();
