@@ -193,6 +193,43 @@ const listForAdmin = async (foodTruck) => {
   return { terminals, events };
 };
 
+const adminAdd = async ({ foodTruck, user, body }) => {
+  const deviceId = String(body.device_id || '').trim();
+  const existing = await TapToPayTerminalModel.findOne({
+    food_truck_id: foodTruck._id,
+    device_id: deviceId,
+  });
+  if (existing) return { duplicate: true, terminal: existing };
+
+  const now = new Date();
+  const terminal = await TapToPayTerminalModel.create({
+    food_truck_id: foodTruck._id,
+    vendor_user_id: foodTruck.userId,
+    assigned_user_type: 'VENDOR',
+    assigned_user_id: foodTruck.userId,
+    device_id: deviceId,
+    device_id_suffix: deviceId.slice(-4),
+    device_label: safeText(body.device_label, 120) || 'Manually added iPhone',
+    environment: normalizeEnvironment(body.environment),
+    status: body.status === 'HISTORICAL' ? 'HISTORICAL' : 'ACTIVE',
+    registered_at: now,
+    last_seen_at: null,
+    history: [{
+      action: 'MANUALLY_ADDED',
+      actor_type: user.userType,
+      actor_id: user._id,
+      reason: safeText(body.reason, 500) || 'Backfilled from CyberSource Acceptance Devices',
+      occurred_at: now,
+    }],
+  });
+
+  if (terminal.status === 'ACTIVE') {
+    foodTruck.tap_to_pay_serial_number = deviceId;
+    await foodTruck.save();
+  }
+  return { duplicate: false, terminal };
+};
+
 const adminUpdate = async ({ foodTruck, terminalId, user, body }) => {
   const terminal = await TapToPayTerminalModel.findOne({ _id: terminalId, food_truck_id: foodTruck._id });
   if (!terminal) return null;
@@ -217,4 +254,4 @@ const adminUpdate = async ({ foodTruck, terminalId, user, body }) => {
   return terminal;
 };
 
-module.exports = { register, status, recordEvent, listForAdmin, adminUpdate, safeText, normalizeEnvironment };
+module.exports = { register, status, recordEvent, listForAdmin, adminAdd, adminUpdate, safeText, normalizeEnvironment };

@@ -70,6 +70,13 @@ router.get(
   Controller.listTapToPayTerminalsForAdmin
 );
 
+router.post(
+  '/:id/tap-to-pay-terminals',
+  allowedTo(['SUPER_ADMIN']),
+  validate(Validation.adminAddTapToPayTerminal),
+  Controller.addTapToPayTerminalForAdmin
+);
+
 router.patch(
   '/:id/tap-to-pay-terminals/:terminalId',
   allowedTo(['SUPER_ADMIN']),

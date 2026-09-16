@@ -1140,6 +1140,24 @@ exports.listTapToPayTerminalsForAdmin = async (req, res, next) => {
   }
 };
 
+exports.addTapToPayTerminalForAdmin = async (req, res, next) => {
+  try {
+    const foodTruck = await Service.getByData({ _id: req.params.id }, { singleResult: true });
+    if (!foodTruck) return res.error(new Error('Food truck not found'), 404);
+    const result = await TapToPayTerminalService.adminAdd({
+      foodTruck,
+      user: req.user,
+      body: req.body,
+    });
+    if (result.duplicate) {
+      return res.error(new Error('This Tap to Pay device is already registered for the vendor.'), 409);
+    }
+    return res.data({ terminal: result.terminal }, 'Tap to Pay terminal added');
+  } catch (e) {
+    return next(e);
+  }
+};
+
 exports.updateTapToPayTerminalForAdmin = async (req, res, next) => {
   try {
     const foodTruck = await Service.getByData({ _id: req.params.id }, { singleResult: true });

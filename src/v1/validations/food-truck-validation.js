@@ -286,4 +286,13 @@ module.exports = {
       device_label: Joi.string().trim().max(120).allow('', null),
     }),
   },
+  adminAddTapToPayTerminal: {
+    body: Joi.object({
+      device_id: Joi.string().trim().min(1).max(100).required(),
+      device_label: Joi.string().trim().max(120).allow('', null),
+      environment: Joi.string().valid('production', 'test').default('production'),
+      status: Joi.string().valid('ACTIVE', 'HISTORICAL').default('ACTIVE'),
+      reason: Joi.string().trim().max(500).allow('', null),
+    }),
+  },
 };
