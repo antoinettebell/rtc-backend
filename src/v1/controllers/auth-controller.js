@@ -397,6 +397,7 @@ exports.addVendor = async (req, res, next) => {
 	      fc.name = foodTruck.name;
 	      Object.assign(fc, vendorTaxFields);
 	      fc.infoType = foodTruck.infoType;
+	      fc.planId = selectedPlan?._id || null;
 	      fc.socialMedia = foodTruck.socialMedia || [];
 
       await fc.save();
@@ -404,6 +405,7 @@ exports.addVendor = async (req, res, next) => {
 	      fc = await FoodTruckService.create({
 	        userId: user._id,
 	        name: foodTruck.name,
+	        planId: selectedPlan?._id || null,
 	        ...vendorTaxFields,
 	        infoType: foodTruck.infoType,
         socialMedia: foodTruck.socialMedia || [],
