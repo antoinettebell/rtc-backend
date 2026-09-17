@@ -57,6 +57,12 @@ router.patch(
   Controller.adminReview
 );
 
+router.patch(
+  '/admin/documents/:documentId/archive',
+  allowedTo(['SUPER_ADMIN']),
+  Controller.adminArchiveDocument
+);
+
 router.post(
   '/admin/expiration-sweep',
   allowedTo(['SUPER_ADMIN']),

@@ -556,7 +556,6 @@ const removeLinkedFoodTruckDocuments = async (complianceDocument) => {
       (legacyDocument.file_key &&
         complianceDocument.file_key &&
         legacyDocument.file_key === complianceDocument.file_key);
-
     return !matches;
   });
 
@@ -575,8 +574,17 @@ const deleteUnverifiedDocument = async ({
   replacedByDocumentId,
 }) => {
   const attachedToMarketplace = await isDocumentAttachedToMarketplace(document);
-  await removeLinkedFoodTruckDocuments(document);
+  if (attachedToMarketplace) {
+    return archiveComplianceDocumentRecord({
+      document,
+      user: { _id: actorUserId, userType: 'SYSTEM' },
+      reason,
+      replacedByDocumentId,
+      action: 'ARCHIVE_ATTACHED_REPLACED',
+    });
+  }
 
+  await removeLinkedFoodTruckDocuments(document);
   await VendorComplianceAuditService.create({
     document_id: document.document_id,
     food_truck_id: document.food_truck_id,
@@ -590,31 +598,61 @@ const deleteUnverifiedDocument = async ({
       replaced_by_document_id: replacedByDocumentId || null,
     },
   });
+  await VendorComplianceDocumentService.destroy({ document_id: document.document_id });
+  if (document.file_key) await removeObject(document.file_key);
+  return document;
+};
 
-  await VendorComplianceDocumentService.destroy({
+const archiveComplianceDocumentRecord = async ({
+  document,
+  user = null,
+  reason,
+  replacedByDocumentId = null,
+  action = 'ADMIN_ARCHIVE',
+}) => {
+  if (document.archived_at || document.review_status === 'archived') {
+    return document;
+  }
+
+  document.review_status = 'archived';
+  document.archived_at = new Date();
+  document.archived_reason = reason || 'Archived by administrator';
+  document.archived_by_user_id = user?._id || null;
+  document.replaced_by_document_id = replacedByDocumentId || null;
+  await document.save();
+  await updateLinkedFoodTruckDocumentComplianceStatus(document);
+
+  await VendorComplianceAuditService.create({
     document_id: document.document_id,
+    food_truck_id: document.food_truck_id,
+    vendor_user_id: document.vendor_user_id,
+    action,
+    actor_user_id: user?._id || null,
+    actor_user_type: user?.userType || 'SYSTEM',
+    notes: document.archived_reason,
+    metadata: {
+      document_type: document.document_type,
+      replaced_by_document_id: replacedByDocumentId || null,
+    },
   });
 
-  if (document.file_key && !attachedToMarketplace) {
-    await removeObject(document.file_key);
-  }
+  return document;
 };
 
 const deleteRejectedDocument = async ({ document, user, reason }) => {
   const attachedToMarketplace = await isDocumentAttachedToMarketplace(document);
-
-  if (attachedToMarketplace) {
-    document.review_status = 'archived';
-    document.archived_at = new Date();
-    document.archived_reason = reason;
-    document.archived_by_user_id = user?._id || null;
-    await document.save();
-    await updateLinkedFoodTruckDocumentComplianceStatus(document);
-    return document;
+  if (document.review_status === 'verified' || attachedToMarketplace) {
+    return archiveComplianceDocumentRecord({
+      document,
+      user,
+      reason,
+      action: document.review_status === 'verified'
+        ? 'REVIEW_VERIFIED_ARCHIVED'
+        : 'REVIEW_ATTACHED_ARCHIVED',
+    });
   }
 
   await removeLinkedFoodTruckDocuments(document);
-
   await VendorComplianceAuditService.create({
     document_id: document.document_id,
     food_truck_id: document.food_truck_id,
@@ -625,15 +663,8 @@ const deleteRejectedDocument = async ({ document, user, reason }) => {
     notes: reason,
     metadata: { document_type: document.document_type },
   });
-
-  await VendorComplianceDocumentService.destroy({
-    document_id: document.document_id,
-  });
-
-  if (document.file_key) {
-    await removeObject(document.file_key);
-  }
-
+  await VendorComplianceDocumentService.destroy({ document_id: document.document_id });
+  if (document.file_key) await removeObject(document.file_key);
   return document;
 };
 
@@ -681,9 +712,7 @@ const retainOrDeleteExistingDocument = async ({
 
   await Promise.all(
     existingDocuments.map(async (document) => {
-      const shouldRetain = document.review_status === 'verified';
-
-      if (!shouldRetain) {
+      if (document.review_status !== 'verified') {
         await deleteUnverifiedDocument({
           document,
           actorUserId,
@@ -692,13 +721,13 @@ const retainOrDeleteExistingDocument = async ({
         });
         return;
       }
-
-      document.review_status = 'archived';
-      document.archived_at = new Date();
-      document.archived_reason = reason;
-      document.archived_by_user_id = actorUserId;
-      document.replaced_by_document_id = replacedByDocumentId || null;
-      await document.save();
+      await archiveComplianceDocumentRecord({
+        document,
+        user: { _id: actorUserId, userType: 'SYSTEM' },
+        reason,
+        replacedByDocumentId,
+        action: 'ARCHIVE_REPLACED',
+      });
     })
   );
 };
@@ -720,20 +749,22 @@ const reconcileActiveComplianceDocuments = async ({ foodTruckId = null } = {}) =
       continue;
     }
     const newest = newestByKey.get(key);
-    if (document.review_status === 'verified') {
-      document.review_status = 'archived';
-      document.archived_at = new Date();
-      document.archived_reason = 'Replaced by newer compliance document';
-      document.replaced_by_document_id = newest.document_id;
-      await document.save();
-    } else {
+    if (document.review_status !== 'verified') {
       await deleteUnverifiedDocument({
         document,
         actorUserId: newest.uploaded_by_user_id,
         reason: 'Unverified duplicate replaced by newer compliance document',
         replacedByDocumentId: newest.document_id,
       });
+      continue;
     }
+    await archiveComplianceDocumentRecord({
+      document,
+      user: { _id: newest.uploaded_by_user_id, userType: 'SYSTEM' },
+      reason: 'Replaced by newer compliance document',
+      replacedByDocumentId: newest.document_id,
+      action: 'ARCHIVE_RECONCILED_DUPLICATE',
+    });
   }
 };
 
@@ -1030,6 +1061,10 @@ const reviewComplianceDocument = async ({
     throw buildComplianceError('Compliance document not found', 404);
   }
 
+  if (document.archived_at || document.review_status === 'archived') {
+    throw buildComplianceError('Archived compliance documents are read-only', 409);
+  }
+
   if (reviewStatus === 'rejected') {
     return deleteRejectedDocument({
       document,
@@ -1101,6 +1136,10 @@ const updateComplianceDocumentDates = async ({
     throw buildComplianceError('Compliance document not found', 404);
   }
 
+  if (document.archived_at || document.review_status === 'archived') {
+    throw buildComplianceError('Archived compliance documents are read-only', 409);
+  }
+
   if (issueDate !== undefined) {
     document.issue_date = asDate(issueDate);
   }
@@ -1127,6 +1166,28 @@ const updateComplianceDocumentDates = async ({
   });
 
   return document;
+};
+
+const archiveComplianceDocument = async ({ documentId, reason, user }) => {
+  const document = await VendorComplianceDocumentService.getByData(
+    { document_id: documentId },
+    { singleResult: true }
+  );
+
+  if (!document) {
+    throw buildComplianceError('Compliance document not found', 404);
+  }
+
+  if (document.archived_at || document.review_status === 'archived') {
+    return document;
+  }
+
+  return archiveComplianceDocumentRecord({
+    document,
+    user,
+    reason: reason || 'Archived by RTC administrator',
+    action: 'ADMIN_ARCHIVE',
+  });
 };
 
 const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMessage }) => {
@@ -1356,6 +1417,7 @@ module.exports = {
   submitComplianceDocumentsForOcr,
   reviewComplianceDocument,
   updateComplianceDocumentDates,
+  archiveComplianceDocument,
   purgeRejectedDocuments,
   applyOcrResult,
   sendExpirationReminders,

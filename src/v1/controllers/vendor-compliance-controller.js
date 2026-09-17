@@ -295,6 +295,7 @@ exports.adminList = async (req, res, next) => {
       review_status,
       document_type,
       food_truck_id,
+      archived,
     } = req.query;
     await VendorComplianceService.purgeRejectedDocuments({ user: req.user });
     await VendorComplianceService.syncLegacyFoodTruckDocuments({
@@ -304,10 +305,16 @@ exports.adminList = async (req, res, next) => {
       foodTruckId: food_truck_id || null,
     });
 
+    const archiveFilter = archived === 'true'
+      ? { archived_at: { $ne: null } }
+      : archived === 'false' || !review_status
+        ? {
+            archived_at: null,
+            review_status: review_status || { $nin: ['archived', 'rejected'] },
+          }
+        : { review_status };
     const query = {
-      review_status: review_status
-        ? review_status
-        : { $nin: ['archived', 'rejected'] },
+      ...archiveFilter,
       ...(document_type
         ? { document_type: normalizeComplianceDocumentType(document_type) }
         : {}),
@@ -483,6 +490,26 @@ exports.adminUpdateDocument = async (req, res, next) => {
     return res.data(
       { complianceDocument: document, compliance: summary },
       'Compliance document dates updated'
+    );
+  } catch (e) {
+    return handleError(e, next);
+  }
+};
+
+exports.adminArchiveDocument = async (req, res, next) => {
+  try {
+    const document = await VendorComplianceService.archiveComplianceDocument({
+      documentId: req.params.documentId,
+      reason: req.body.reason,
+      user: req.user,
+    });
+    const summary = await VendorComplianceService.calculateComplianceSummary(
+      document.food_truck_id
+    );
+
+    return res.data(
+      { complianceDocument: document, compliance: summary },
+      'Compliance document archived'
     );
   } catch (e) {
     return handleError(e, next);

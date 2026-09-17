@@ -38,6 +38,31 @@ assert.match(
   /action: 'ADMIN_UPDATE_DATES'/,
   'Admin date corrections must be audited'
 );
+assert.match(
+  serviceSource,
+  /action: 'ADMIN_ARCHIVE'/,
+  'Manual document archiving must be audited'
+);
+assert.match(
+  serviceSource,
+  /action: 'ARCHIVE_REPLACED'/,
+  'Replaced document versions must be archived for audit'
+);
+assert.match(
+  serviceSource,
+  /if \(document\.review_status !== 'verified'\)[\s\S]*deleteUnverifiedDocument/,
+  'Only unverified replacement versions may be deleted'
+);
+assert.match(
+  serviceSource,
+  /document\.review_status === 'verified' \|\| attachedToMarketplace[\s\S]*archiveComplianceDocumentRecord/,
+  'A verified document must be archived rather than deleted'
+);
+assert.match(
+  serviceSource,
+  /Archived compliance documents are read-only/,
+  'Archived records must be immutable'
+);
 
 const routesSource = fs.readFileSync(
   path.join(__dirname, '../v1/routes/vendor-compliance.js'),
@@ -47,6 +72,11 @@ assert.match(
   routesSource,
   /admin\/documents\/\:documentId'[\s\S]*Controller\.adminUpdateDocument/,
   'Admins must have a dedicated compliance date-correction endpoint'
+);
+assert.match(
+  routesSource,
+  /admin\/documents\/\:documentId\/archive'[\s\S]*Controller\.adminArchiveDocument/,
+  'Admins must have a dedicated compliance archive endpoint'
 );
 
 console.log('vendor compliance inspection date tests passed');
