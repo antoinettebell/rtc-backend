@@ -192,7 +192,7 @@ const getScoreBand = ({ score, eligible, hasPendingReview }) => {
     };
   }
 
-  if (score < 75 || hasPendingReview || !eligible) {
+  if (score < 100 || hasPendingReview || !eligible) {
     return {
       color: 'yellow',
       label: hasPendingReview ? 'Pending review' : 'In progress',
@@ -391,13 +391,18 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
       : 'EIN';
   const taxIdRequirementType = selectedTaxIdentifierType;
   const grandfathered = isGrandfatheredVendor(foodTruck);
+  const complianceRequirements = getComplianceRequirements();
+  const totalScoreWeight = complianceRequirements.reduce(
+    (total, requirement) => total + Number(requirement.scoreWeight || 0),
+    0
+  );
   let score = 0;
   const missingRequirements = [];
   const expiringRequirements = [];
   const pendingRequirements = [];
   const rejectedRequirements = [];
 
-  const requirements = getComplianceRequirements().map((requirement) => {
+  const requirements = complianceRequirements.map((requirement) => {
     const document = latestByType[requirement.type] || null;
     const tracksExpiration = requirement.type !== 'HEALTH_PERMIT';
     const days_until_expiration = tracksExpiration
@@ -405,7 +410,7 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
       : null;
     const verified = isVerifiedActiveDocument(document, now);
     const expired = days_until_expiration !== null && days_until_expiration < 0;
-    const isOptionalDocument = !requirement.required && requirement.scoreWeight === 0;
+    const isOptionalDocument = !requirement.required;
     const isEinDocument = requirement.type === 'EIN';
     let status = 'missing';
 
@@ -459,7 +464,7 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
 
   if (taxIdRequirementType === 'SSN') {
     if (hasSsnOnProfile) {
-      score += 50;
+      score += Number(getComplianceRequirement('EIN')?.scoreWeight || 0);
     } else {
       missingRequirements.push('SSN_PROFILE');
     }
@@ -467,7 +472,9 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     missingRequirements.push('EIN_PROFILE');
   }
 
-  score = Math.min(100, score);
+  score = totalScoreWeight
+    ? Math.min(100, Math.round((score / totalScoreWeight) * 100))
+    : 0;
   const baseEligible =
     grandfathered ||
     (missingRequirements.length === 0 && rejectedRequirements.length === 0);
@@ -807,7 +814,7 @@ const uploadComplianceDocument = async ({
     mime_type: file.mimetype,
     size_bytes: file.size,
     issue_date: vendorEnteredIssueDate,
-    vendor_entered_issue_date: isSanitationGrade ? vendorEnteredIssueDate : null,
+    vendor_entered_issue_date: vendorEnteredIssueDate,
     expiration_date: vendorEnteredExpirationDate,
     vendor_entered_expiration_date: vendorEnteredExpirationDate,
     extracted_fields: {},
@@ -1229,7 +1236,10 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   const extractedExpirationDate = getOcrExpirationDate(extractedFields);
   const extractedIssueDate = getOcrIssueDate(extractedFields);
   const isSanitationGrade = document.document_type === 'HEALTH_PERMIT';
-  if (isSanitationGrade && !document.vendor_entered_issue_date && document.issue_date) {
+  const requiresIssueDate = !!getComplianceRequirement(
+    document.document_type
+  )?.ocrFields?.includes('issue_date');
+  if (requiresIssueDate && !document.vendor_entered_issue_date && document.issue_date) {
     document.vendor_entered_issue_date = document.issue_date;
   }
   const vendorIssueKey = getDateKey(
@@ -1237,8 +1247,8 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   );
   const ocrIssueKey = getDateKey(extractedIssueDate);
   const issueDateMismatch =
-    isSanitationGrade && vendorIssueKey && ocrIssueKey && vendorIssueKey !== ocrIssueKey;
-  const missingOcrIssueDate = isSanitationGrade && vendorIssueKey && !ocrIssueKey;
+    requiresIssueDate && vendorIssueKey && ocrIssueKey && vendorIssueKey !== ocrIssueKey;
+  const missingOcrIssueDate = requiresIssueDate && vendorIssueKey && !ocrIssueKey;
   if (!document.vendor_entered_expiration_date && document.expiration_date) {
     document.vendor_entered_expiration_date = document.expiration_date;
   }
@@ -1260,7 +1270,7 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   if (extractedExpirationDate && !isSanitationGrade) {
     document.expiration_date = asDate(extractedExpirationDate);
   }
-  if (extractedIssueDate && (isSanitationGrade || !document.issue_date)) {
+  if (extractedIssueDate && requiresIssueDate) {
     document.issue_date = asDate(extractedIssueDate);
   }
 
@@ -1280,8 +1290,12 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     document.review_status = 'pending_review';
     document.ocr_status = 'manual_review';
     document.ocr_error_message = issueDateMismatch
-      ? 'OCR inspection date does not match the vendor-entered inspection date.'
-      : 'OCR could not confirm the vendor-entered inspection date.';
+      ? isSanitationGrade
+        ? 'OCR inspection date does not match the vendor-entered inspection date.'
+        : 'OCR issue date does not match the vendor-entered issue date.'
+      : isSanitationGrade
+        ? 'OCR could not confirm the vendor-entered inspection date.'
+        : 'OCR could not confirm the vendor-entered issue date.';
   }
   if (
     document.document_type === 'HEALTH_PERMIT' &&

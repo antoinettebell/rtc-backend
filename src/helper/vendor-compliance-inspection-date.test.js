@@ -8,6 +8,29 @@ const {
 const sanitationRequirement = getComplianceRequirement('HEALTH_PERMIT');
 assert.ok(sanitationRequirement.ocrFields.includes('issue_date'));
 assert.equal(sanitationRequirement.ocrFields.includes('expiration_date'), false);
+assert.ok(getComplianceRequirement('BUSINESS_LICENSE').ocrFields.includes('issue_date'));
+assert.ok(getComplianceRequirement('COI').ocrFields.includes('issue_date'));
+assert.ok(getComplianceRequirement('LIQUOR_LICENSE').ocrFields.includes('issue_date'));
+
+const equallyWeightedRequirements = [
+  'BUSINESS_LICENSE',
+  'COI',
+  'LIQUOR_LICENSE',
+  'EIN',
+  'W9',
+].map((type) => getComplianceRequirement(type));
+assert.equal(equallyWeightedRequirements.length, 5);
+assert.ok(
+  equallyWeightedRequirements.every(
+    (requirement) => requirement.scoreWeight === equallyWeightedRequirements[0].scoreWeight
+  ),
+  'The five scored compliance documents must contribute equally to the score'
+);
+assert.equal(
+  sanitationRequirement.scoreWeight,
+  0,
+  'Sanitation Grade must not contribute to the compliance percentage'
+);
 
 const serviceSource = fs.readFileSync(
   path.join(__dirname, '../v1/services/vendor-compliance-service.js'),
@@ -25,8 +48,8 @@ assert.match(
 );
 assert.match(
   serviceSource,
-  /vendor_entered_issue_date: isSanitationGrade \? vendorEnteredIssueDate : null/,
-  'The vendor-entered inspection date must be preserved for OCR comparison'
+  /vendor_entered_issue_date: vendorEnteredIssueDate/,
+  'Vendor-entered issue and inspection dates must be preserved for OCR comparison'
 );
 assert.match(
   serviceSource,
@@ -62,6 +85,16 @@ assert.match(
   serviceSource,
   /Archived compliance documents are read-only/,
   'Archived records must be immutable'
+);
+assert.match(
+  serviceSource,
+  /Math\.round\(\(score \/ totalScoreWeight\) \* 100\)/,
+  'Compliance score must normalize the five equal document weights to 100 percent'
+);
+assert.match(
+  serviceSource,
+  /score < 100 \|\| hasPendingReview \|\| !eligible/,
+  'Compliance must remain yellow until the full score is complete and eligible'
 );
 
 const routesSource = fs.readFileSync(
