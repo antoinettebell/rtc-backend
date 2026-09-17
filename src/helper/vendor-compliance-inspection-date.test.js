@@ -96,6 +96,21 @@ assert.match(
   /score < 100 \|\| hasPendingReview \|\| !eligible/,
   'Compliance must remain yellow until the full score is complete and eligible'
 );
+assert.match(
+  serviceSource,
+  /const isPendingReview = document\.review_status === 'pending_review';[\s\S]*const hasFinishedOcr = \['completed', 'manual_review'\][\s\S]*if \(!isPendingReview \|\| hasFinishedOcr\) \{[\s\S]*continue;/,
+  'Submitting OCR must not requeue verified, completed, or manual-review documents'
+);
+assert.match(
+  serviceSource,
+  /extractedExpirationDate && !isSanitationGrade && !expirationMismatch[\s\S]*expirationMismatch && document\.vendor_entered_expiration_date[\s\S]*document\.expiration_date = asDate\(document\.vendor_entered_expiration_date\)/,
+  'A mismatched OCR expiration date must not replace the vendor-entered operative date'
+);
+assert.match(
+  serviceSource,
+  /extractedIssueDate && requiresIssueDate && !issueDateMismatch[\s\S]*issueDateMismatch && document\.vendor_entered_issue_date[\s\S]*document\.issue_date = asDate\(document\.vendor_entered_issue_date\)/,
+  'A mismatched OCR issue date must not replace the vendor-entered operative date'
+);
 
 const routesSource = fs.readFileSync(
   path.join(__dirname, '../v1/routes/vendor-compliance.js'),

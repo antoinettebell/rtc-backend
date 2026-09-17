@@ -1024,6 +1024,14 @@ const submitComplianceDocumentsForOcr = async ({ foodTruck, user }) => {
       continue;
     }
 
+    const isPendingReview = document.review_status === 'pending_review';
+    const hasFinishedOcr = ['completed', 'manual_review'].includes(
+      document.ocr_status
+    );
+    if (!isPendingReview || hasFinishedOcr) {
+      continue;
+    }
+
     const ocrResult = await enqueueComplianceOcr({ document, requirement });
     Object.assign(document, {
       ...ocrResult,
@@ -1267,11 +1275,15 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   const missingOcrExpiration =
     requiresExpirationDate && vendorExpirationKey && !ocrExpirationKey;
 
-  if (extractedExpirationDate && !isSanitationGrade) {
+  if (extractedExpirationDate && !isSanitationGrade && !expirationMismatch) {
     document.expiration_date = asDate(extractedExpirationDate);
+  } else if (expirationMismatch && document.vendor_entered_expiration_date) {
+    document.expiration_date = asDate(document.vendor_entered_expiration_date);
   }
-  if (extractedIssueDate && requiresIssueDate) {
+  if (extractedIssueDate && requiresIssueDate && !issueDateMismatch) {
     document.issue_date = asDate(extractedIssueDate);
+  } else if (issueDateMismatch && document.vendor_entered_issue_date) {
+    document.issue_date = asDate(document.vendor_entered_issue_date);
   }
 
   if (isSanitationGrade) {
