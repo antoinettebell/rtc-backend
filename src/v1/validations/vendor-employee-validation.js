@@ -140,6 +140,22 @@ module.exports = {
     }),
   },
 
+  acknowledgeTapToPayTraining: {
+    body: Joi.object({
+      typed_name: Joi.string().trim().min(2).max(160).required(),
+      signed_date: Joi.string().trim().pattern(/^\d{4}-\d{2}-\d{2}$/).required(),
+      checked_items: Joi.array().items(
+        Joi.string().valid(
+          'PREBUILT_MENU_ONLY',
+          'FOLLOW_ACTIVATION_INSTRUCTIONS',
+          'AUTHORIZED_TO_ACCEPT_TERMS',
+          'RTC_USE_ONLY',
+          'ACCESS_ENDS_WITH_EMPLOYMENT'
+        )
+      ).length(5).unique().required(),
+    }),
+  },
+
   adminResetPin: {
     body: Joi.object({
       resetUrl: Joi.string().trim().allow(null, ''),

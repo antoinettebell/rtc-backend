@@ -20,6 +20,10 @@ const {
 const {
   reconcileFoodTruckWeeklySchedule,
 } = require('./webhook-controller');
+const {
+  buildTrainingStatus,
+  acknowledgeTraining,
+} = require('../../helper/employee-tap-to-pay-training');
 
 const entityName = 'VendorEmployee';
 
@@ -1129,10 +1133,62 @@ exports.dashboard = async (req, res, next) => {
       assignedTruckUnit,
     });
     dashboard.employee_schedule = employee.schedule_assignments || [];
+    dashboard.tap_to_pay_training = buildTrainingStatus(employee);
     dashboard.schedule_time_zone =
       foodTruck.schedule_time_zone || 'America/New_York';
 
     return res.data({ dashboard }, 'Employee dashboard');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.tapToPayTraining = async (req, res, next) => {
+  try {
+    const employee = await Service.getByData(
+      {
+        _id: req.user._id,
+        employee_internal_id: req.user.employee_internal_id,
+        is_active: true,
+        is_archived: false,
+      },
+      { singleResult: true }
+    );
+    if (!employee) return res.error(new Error('Active employee profile not found.'), 404);
+    return res.data(
+      { training: buildTrainingStatus(employee) },
+      'Tap to Pay training status'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.acknowledgeTapToPayTraining = async (req, res, next) => {
+  try {
+    const employee = await Service.getByData(
+      {
+        _id: req.user._id,
+        employee_internal_id: req.user.employee_internal_id,
+        is_active: true,
+        is_archived: false,
+      },
+      { singleResult: true }
+    );
+    if (!employee) return res.error(new Error('Active employee profile not found.'), 404);
+
+    acknowledgeTraining({
+      employee,
+      typedName: req.body.typed_name,
+      signedDate: req.body.signed_date,
+      checkedItems: req.body.checked_items,
+    });
+    await employee.save();
+
+    return res.data(
+      { training: buildTrainingStatus(employee) },
+      'Tap to Pay training acknowledged'
+    );
   } catch (e) {
     return next(e);
   }

@@ -53,7 +53,7 @@ router.put(
 /** [POST] /api/v1/food-truck/tap-to-pay-activation-code */
 router.post(
   '/tap-to-pay-activation-code',
-  allowedTo(['VENDOR']),
+  allowedTo(['VENDOR', 'EMPLOYEE']),
   Controller.createTapToPayActivationCode
 );
 

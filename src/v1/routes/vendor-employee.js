@@ -27,6 +27,19 @@ router.post(
 router.get('/dashboard', allowedTo(['EMPLOYEE']), Controller.dashboard);
 
 router.get(
+  '/tap-to-pay-training',
+  allowedTo(['EMPLOYEE']),
+  Controller.tapToPayTraining
+);
+
+router.post(
+  '/tap-to-pay-training/acknowledge',
+  allowedTo(['EMPLOYEE']),
+  validate(Validation.acknowledgeTapToPayTraining),
+  Controller.acknowledgeTapToPayTraining
+);
+
+router.get(
   '/manager/employees',
   allowedTo(['EMPLOYEE']),
   Controller.managerList

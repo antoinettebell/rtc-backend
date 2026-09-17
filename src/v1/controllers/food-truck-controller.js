@@ -31,6 +31,9 @@ const {
 } = require('../../helper/vendor-schedule-timezone');
 const VendorComplianceService = require('../services/vendor-compliance-service');
 const {
+  buildTrainingStatus,
+} = require('../../helper/employee-tap-to-pay-training');
+const {
   reconcileFoodTruckWeeklySchedule,
 } = require('./webhook-controller');
 const EncryptionService = require('../../helper/encryption');
@@ -1077,6 +1080,13 @@ exports.registerTapToPayTerminal = async (req, res, next) => {
     const { employee, foodTruck } = await resolveTapToPayContext(user);
     if (!foodTruck) return res.error(new Error('Food truck not found'), 404);
 
+    if (employee && !buildTrainingStatus(employee).compliant) {
+      return res.error(
+        new Error('Complete the annual Tap to Pay on iPhone training before using Tap to Pay.'),
+        403
+      );
+    }
+
     if (employee) {
       employee.tap_to_pay_serial_number = deviceId;
       await employee.save();
@@ -1179,13 +1189,17 @@ exports.updateTapToPayTerminalForAdmin = async (req, res, next) => {
 /** Generate a single-use Tap to Pay activation code for an eligible vendor. */
 exports.createTapToPayActivationCode = async (req, res, next) => {
   try {
-    const foodTruck = await Service.getByData(
-      { userId: req.user._id },
-      { singleResult: true }
-    );
+    const { employee, foodTruck } = await resolveTapToPayContext(req.user);
 
     if (!foodTruck) {
       return res.error(new Error('Food truck not found'), 404);
+    }
+
+    if (employee && !buildTrainingStatus(employee).compliant) {
+      return res.error(
+        new Error('Complete the annual Tap to Pay on iPhone training before setting up this iPhone.'),
+        403
+      );
     }
 
     const plan = await getPlanForFoodTruck(foodTruck);

@@ -185,6 +185,18 @@ const mSchema = mongoose.Schema(
       default: null,
       trim: true,
     },
+    tap_to_pay_training_acknowledgments: {
+      type: [{
+        version: { type: String, required: true },
+        checked_items: { type: [String], default: [] },
+        signed_name: { type: String, required: true, trim: true },
+        signed_date: { type: String, required: true, trim: true },
+        acknowledged_at: { type: Date, required: true },
+        expires_at: { type: Date, required: true },
+        archived_at: { type: Date, default: null },
+      }],
+      default: [],
+    },
     fcmTokens: [
       {
         token: { type: String, default: null },
