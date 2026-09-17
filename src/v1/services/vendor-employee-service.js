@@ -21,6 +21,9 @@ const {
   assertVendorPlanCapability,
   getVendorPlanCapabilities,
 } = require('../../helper/vendor-plan-helper');
+const {
+  buildTrainingStatus,
+} = require('../../helper/employee-tap-to-pay-training');
 
 const buildError = (message, code = 409) => {
   const error = new Error(message);
@@ -277,6 +280,7 @@ class VendorEmployeeService extends BaseService {
     return Promise.all(
       employees.map(async (employee) => {
         const safeEmployee = toSafeEmployee(employee);
+        const trainingStatus = buildTrainingStatus(safeEmployee);
         let activeSession = await EmployeeSessionService.getActiveSession(
           null,
           safeEmployee.employee_internal_id
@@ -335,6 +339,10 @@ class VendorEmployeeService extends BaseService {
 
         return {
           ...safeEmployee,
+          tap_to_pay_training: {
+            compliant: trainingStatus.compliant,
+            score: trainingStatus.score,
+          },
           shift_summary: {
             today: todayShiftSummary,
             week: weekShiftSummary,

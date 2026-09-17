@@ -159,11 +159,14 @@ const getEmployeeScheduledEndAt = ({
   return new Date(Math.max(scheduledEnd.getTime(), startedAt.getTime()));
 };
 
-// Vendor-started shifts may be genuinely unscheduled and must remain under
-// manual control. When an override started within a saved schedule, however,
-// it still belongs to that scheduled window and should close at its end.
-const shouldAutoCloseEmployeeSession = ({ session = {}, scheduledEndAt = null }) =>
-  !session.is_vendor_override || !!scheduledEndAt;
+// Never infer a clock-out time for an active shift. A session may no longer
+// match the employee's current schedule after an assignment or schedule edit,
+// and signing back in must not close it merely because the match is missing.
+// Automatic closure is safe only when the session resolves to an exact saved
+// clock-out time. All other sessions remain open until an explicit employee or
+// manager clock-out action.
+const shouldAutoCloseEmployeeSession = ({ scheduledEndAt = null }) =>
+  !!scheduledEndAt;
 
 const isEmployeeScheduledToday = (
   employee = {},

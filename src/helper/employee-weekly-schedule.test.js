@@ -80,6 +80,14 @@ assert.equal(
   false,
   'a genuinely unscheduled vendor override stays open for manual control'
 );
+assert.equal(
+  shouldAutoCloseEmployeeSession({
+    session: { is_vendor_override: false },
+    scheduledEndAt: null,
+  }),
+  false,
+  'a regular active shift stays open when no exact scheduled end can be resolved'
+);
 
 const assignments = [
   { truck_unit_id: 'truck-a', location_id: 'location-a', days: monday },
