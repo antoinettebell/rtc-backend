@@ -468,6 +468,27 @@ exports.adminReview = async (req, res, next) => {
   }
 };
 
+exports.adminUpdateDocument = async (req, res, next) => {
+  try {
+    const document = await VendorComplianceService.updateComplianceDocumentDates({
+      documentId: req.params.documentId,
+      expirationDate: req.body.expiration_date,
+      issueDate: req.body.issue_date,
+      user: req.user,
+    });
+    const summary = await VendorComplianceService.calculateComplianceSummary(
+      document.food_truck_id
+    );
+
+    return res.data(
+      { complianceDocument: document, compliance: summary },
+      'Compliance document dates updated'
+    );
+  } catch (e) {
+    return handleError(e, next);
+  }
+};
+
 exports.ocrResult = async (req, res, next) => {
   try {
     const document = await VendorComplianceService.applyOcrResult({

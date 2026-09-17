@@ -758,6 +758,8 @@ const uploadComplianceDocument = async ({
   });
 
   const isSanitationGrade = documentType === 'HEALTH_PERMIT';
+  const adminRequestedPendingReview =
+    user.userType === 'SUPER_ADMIN' && body.review_status === 'pending_review';
   const vendorEnteredIssueDate = asDate(body.issue_date);
   const vendorEnteredExpirationDate = isSanitationGrade
     ? null
@@ -779,9 +781,18 @@ const uploadComplianceDocument = async ({
     vendor_entered_expiration_date: vendorEnteredExpirationDate,
     extracted_fields: {},
     uploaded_by_user_id: user._id,
-    review_status: user.userType === 'SUPER_ADMIN' ? 'verified' : 'pending_review',
-    reviewed_by_user_id: user.userType === 'SUPER_ADMIN' ? user._id : null,
-    reviewed_at: user.userType === 'SUPER_ADMIN' ? new Date() : null,
+    review_status:
+      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview
+        ? 'verified'
+        : 'pending_review',
+    reviewed_by_user_id:
+      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview
+        ? user._id
+        : null,
+    reviewed_at:
+      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview
+        ? new Date()
+        : null,
     ocr_status: user.userType === 'SUPER_ADMIN' ? 'not_configured' : undefined,
   });
 
@@ -1075,6 +1086,49 @@ const reviewComplianceDocument = async ({
   return document;
 };
 
+const updateComplianceDocumentDates = async ({
+  documentId,
+  expirationDate,
+  issueDate,
+  user,
+}) => {
+  const document = await VendorComplianceDocumentService.getByData(
+    { document_id: documentId },
+    { singleResult: true }
+  );
+
+  if (!document) {
+    throw buildComplianceError('Compliance document not found', 404);
+  }
+
+  if (issueDate !== undefined) {
+    document.issue_date = asDate(issueDate);
+  }
+  if (document.document_type === 'HEALTH_PERMIT') {
+    document.expiration_date = null;
+    document.vendor_entered_expiration_date = null;
+  } else if (expirationDate !== undefined) {
+    document.expiration_date = asDate(expirationDate);
+  }
+
+  await document.save();
+  await updateLinkedFoodTruckDocumentComplianceStatus(document);
+  await VendorComplianceAuditService.create({
+    document_id: document.document_id,
+    food_truck_id: document.food_truck_id,
+    vendor_user_id: document.vendor_user_id,
+    action: 'ADMIN_UPDATE_DATES',
+    actor_user_id: user._id,
+    actor_user_type: user.userType,
+    metadata: {
+      issue_date: getDateKey(document.issue_date),
+      expiration_date: getDateKey(document.expiration_date),
+    },
+  });
+
+  return document;
+};
+
 const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMessage }) => {
   const document = await VendorComplianceDocumentService.getByData(
     { document_id: documentId },
@@ -1301,6 +1355,7 @@ module.exports = {
   syncLegacyFoodTruckDocuments,
   submitComplianceDocumentsForOcr,
   reviewComplianceDocument,
+  updateComplianceDocumentDates,
   purgeRejectedDocuments,
   applyOcrResult,
   sendExpirationReminders,

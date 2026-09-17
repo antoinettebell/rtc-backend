@@ -46,6 +46,12 @@ router.get(
 router.get('/admin/documents', allowedTo(['SUPER_ADMIN']), Controller.adminList);
 
 router.patch(
+  '/admin/documents/:documentId',
+  allowedTo(['SUPER_ADMIN']),
+  Controller.adminUpdateDocument
+);
+
+router.patch(
   '/admin/documents/:documentId/review',
   allowedTo(['SUPER_ADMIN']),
   Controller.adminReview

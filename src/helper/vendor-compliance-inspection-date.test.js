@@ -33,5 +33,20 @@ assert.match(
   /OCR inspection date does not match the vendor-entered inspection date/,
   'OCR must flag a mismatched inspection date for manual review'
 );
+assert.match(
+  serviceSource,
+  /action: 'ADMIN_UPDATE_DATES'/,
+  'Admin date corrections must be audited'
+);
+
+const routesSource = fs.readFileSync(
+  path.join(__dirname, '../v1/routes/vendor-compliance.js'),
+  'utf8'
+);
+assert.match(
+  routesSource,
+  /admin\/documents\/\:documentId'[\s\S]*Controller\.adminUpdateDocument/,
+  'Admins must have a dedicated compliance date-correction endpoint'
+);
 
 console.log('vendor compliance inspection date tests passed');
