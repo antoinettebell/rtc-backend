@@ -1082,7 +1082,7 @@ exports.registerTapToPayTerminal = async (req, res, next) => {
 
     if (employee && !buildTrainingStatus(employee).compliant) {
       return res.error(
-        new Error('Complete the annual Tap to Pay on iPhone training before using Tap to Pay.'),
+        new Error('Complete the annual Tap to Pay training before using Tap to Pay.'),
         403
       );
     }
@@ -1197,7 +1197,7 @@ exports.createTapToPayActivationCode = async (req, res, next) => {
 
     if (employee && !buildTrainingStatus(employee).compliant) {
       return res.error(
-        new Error('Complete the annual Tap to Pay on iPhone training before setting up this iPhone.'),
+        new Error('Complete the annual Tap to Pay training before setting up Tap to Pay.'),
         403
       );
     }
