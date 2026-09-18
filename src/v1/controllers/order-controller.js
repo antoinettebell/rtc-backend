@@ -22,6 +22,9 @@ const {
   getRefundAmountExcludingTip,
   sendWalkUpRefundSms,
 } = require('../../helper/walk-up-refund-sms-helper');
+const {
+  sendWalkUpTapToPayReceiptSms,
+} = require('../../helper/walk-up-receipt-sms-helper');
 const { buildPublicReviewUrl } = require('../../helper/review-url-helper');
 const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
 const CyberSourceApplePayHelper = require('../../helper/cybersource-apple-pay-helper');
@@ -46,7 +49,7 @@ const {
   roundCurrency,
 } = require('../../helper/order-bogo-pricing-helper');
 const VendorComplianceService = require('../services/vendor-compliance-service');
-const { OrderModel } = require('../../models');
+const { OrderModel, TapToPayPaymentAttemptModel } = require('../../models');
 
 const { env } = require('../../config');
 
@@ -59,6 +62,7 @@ const toCents = (value) => Math.round(toMoney(value) * 100);
 const centsToMoney = (value) => Number((Math.max(0, value) / 100).toFixed(2));
 
 const DEFAULT_PLATFORM_SERVICE_FEE_RATE = 3.5;
+const TAP_TO_PAY_RECONCILIATION_DELAY_MS = 15 * 1000;
 const CUSTOMER_FEE_TIERS = [
   { min: 200, serviceFeeRate: 3.5, deliveryFee: 0.99 },
   { min: 80, serviceFeeRate: 3.5, deliveryFee: 3.99 },
@@ -920,6 +924,151 @@ const assertVendorTapToPayAccess = async (user) => {
     error.code = 403;
     error.compliance = compliance;
     throw error;
+  }
+};
+
+const getTapToPayAttemptActorFilter = (user) =>
+  user?.userType === 'EMPLOYEE'
+    ? {
+        actor_type: 'EMPLOYEE',
+        employee_internal_id: user.employee_internal_id,
+        vendor_user_id: user.vendor_user_id,
+      }
+    : {
+        actor_type: 'VENDOR',
+        vendor_user_id: user?._id,
+      };
+
+exports.prepareTapToPayAttempt = async (req, res, next) => {
+  try {
+    const { foodTruckId, amount, currency = 'USD', checkoutKey } = req.body;
+    const { user } = req;
+    await assertVendorTapToPayAccess(user);
+    await assertActiveEmployeeSession(user);
+
+    const foodTruck = await FoodTruckService.getById(foodTruckId);
+    if (!foodTruck || !assertPosActorFoodTruckAccess(user, foodTruck)) {
+      return res.error(new Error('Food truck not found or access denied'), 404);
+    }
+
+    const actorFilter = getTapToPayAttemptActorFilter(user);
+    let attempt = await TapToPayPaymentAttemptModel.findOneAndUpdate(
+      {
+        food_truck_id: foodTruck._id,
+        checkout_key: checkoutKey,
+        ...actorFilter,
+        status: 'PREPARED',
+      },
+      {
+        $set: {
+          amount: roundCurrency(amount),
+          currency,
+        },
+      },
+      { new: true }
+    );
+
+    if (!attempt) {
+      const counter = await OrderCounterService.updateTheCounter(foodTruck._id);
+      try {
+        attempt = await TapToPayPaymentAttemptModel.create({
+          food_truck_id: foodTruck._id,
+          vendor_user_id:
+            user.userType === 'EMPLOYEE' ? user.vendor_user_id : user._id,
+          employee_internal_id:
+            user.userType === 'EMPLOYEE' ? user.employee_internal_id : null,
+          actor_type: user.userType,
+          checkout_key: checkoutKey,
+          order_number: counter.sequenceValue,
+          amount: roundCurrency(amount),
+          currency,
+        });
+      } catch (error) {
+        if (error?.code !== 11000) throw error;
+        attempt = await TapToPayPaymentAttemptModel.findOneAndUpdate(
+          {
+            food_truck_id: foodTruck._id,
+            checkout_key: checkoutKey,
+            ...actorFilter,
+            status: 'PREPARED',
+          },
+          { $set: { amount: roundCurrency(amount), currency } },
+          { new: true }
+        );
+        if (!attempt) throw error;
+      }
+    }
+
+    return res.data(
+      {
+        attempt: {
+          id: attempt._id,
+          orderNumber: attempt.order_number,
+          reference: attempt.reference,
+          amount: attempt.amount,
+          status: attempt.status,
+        },
+      },
+      'Tap to Pay attempt prepared'
+    );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.startTapToPayAttempt = async (req, res, next) => {
+  try {
+    const now = new Date();
+    const attempt = await TapToPayPaymentAttemptModel.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        ...getTapToPayAttemptActorFilter(req.user),
+        status: 'PREPARED',
+      },
+      {
+        $set: {
+          status: 'PROCESSING',
+          started_at: now,
+          next_reconciliation_at: new Date(
+            now.getTime() + TAP_TO_PAY_RECONCILIATION_DELAY_MS
+          ),
+        },
+      },
+      { new: true }
+    );
+    if (!attempt) {
+      return res.error(new Error('Tap to Pay attempt is unavailable'), 409);
+    }
+    return res.data({ started: true }, 'Tap to Pay attempt started');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.cancelTapToPayAttempt = async (req, res, next) => {
+  try {
+    const now = new Date();
+    const attempt = await TapToPayPaymentAttemptModel.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        ...getTapToPayAttemptActorFilter(req.user),
+        status: { $in: ['PREPARED', 'PROCESSING'] },
+      },
+      {
+        $set: {
+          status: 'CANCELED',
+          canceled_at: now,
+          next_reconciliation_at: null,
+        },
+      },
+      { new: true }
+    );
+    if (!attempt) {
+      return res.error(new Error('Tap to Pay attempt is unavailable'), 409);
+    }
+    return res.data({ canceled: true }, 'Tap to Pay attempt canceled');
+  } catch (error) {
+    return next(error);
   }
 };
 
@@ -3536,6 +3685,7 @@ exports.add = async (req, res, next) => {
         invoiceNumber = null,
         accountNumber = null,
         accountType = null,
+        tapToPayAttemptId = null,
         locationId,
         couponId,
         taxAmount = 0,
@@ -4036,7 +4186,53 @@ exports.add = async (req, res, next) => {
     const loc = avalaraEstimate.loc;
     total = roundCurrency(total + normalizedFoodTruckTip);
 
-    const counter = await OrderCounterService.updateTheCounter(foodTruck?._id);
+    let tapToPayAttempt = null;
+    if (vendorPosOrder && normalizedPaymentMethod === 'TAP_TO_PAY') {
+      tapToPayAttempt = await TapToPayPaymentAttemptModel.findOne({
+        _id: tapToPayAttemptId,
+        food_truck_id: foodTruck._id,
+        ...getTapToPayAttemptActorFilter(user),
+        status: { $in: ['PREPARED', 'PROCESSING', 'REVIEW_REQUIRED'] },
+      });
+      if (!tapToPayAttempt) {
+        return res.error(new Error('A valid Tap to Pay attempt is required.'), 409);
+      }
+      if (
+        toCents(tapToPayAttempt.amount) !== toCents(total) ||
+        tapToPayAttempt.currency !== 'USD'
+      ) {
+        return res.error(
+          new Error('Tap to Pay attempt amount does not match this order.'),
+          409
+        );
+      }
+      const claimedAttempt = await TapToPayPaymentAttemptModel.findOneAndUpdate(
+        {
+          _id: tapToPayAttempt._id,
+          status: tapToPayAttempt.status,
+        },
+        {
+          $set: {
+            status: 'FINALIZING',
+            next_reconciliation_at: new Date(
+              Date.now() + TAP_TO_PAY_RECONCILIATION_DELAY_MS
+            ),
+          },
+        },
+        { new: true }
+      );
+      if (!claimedAttempt) {
+        return res.error(
+          new Error('Tap to Pay attempt is already being resolved.'),
+          409
+        );
+      }
+      tapToPayAttempt = claimedAttempt;
+    }
+
+    const counter = tapToPayAttempt
+      ? { sequenceValue: tapToPayAttempt.order_number }
+      : await OrderCounterService.updateTheCounter(foodTruck?._id);
 
     // Check for free dessert eligibility (one-time per user)
     let freeDessertAmount = 0;
@@ -4113,8 +4309,20 @@ exports.add = async (req, res, next) => {
           transactionId: nativeTransactionId,
           expectedAmount: total,
           expectedCurrency: 'USD',
+          expectedReference: tapToPayAttempt.reference,
         });
       } catch (verificationError) {
+        await TapToPayPaymentAttemptModel.updateOne(
+          { _id: tapToPayAttempt._id, status: 'FINALIZING' },
+          {
+            $set: {
+              status: 'PROCESSING',
+              next_reconciliation_at: new Date(
+                Date.now() + TAP_TO_PAY_RECONCILIATION_DELAY_MS
+              ),
+            },
+          }
+        );
         console.error('Walk-up Tap to Pay verification failed', {
           code: verificationError.code,
         });
@@ -4223,6 +4431,31 @@ exports.add = async (req, res, next) => {
       statusTime: buildInitialStatusTime(initialOrderStatus),
     });
 
+    if (tapToPayAttempt) {
+      try {
+        await TapToPayPaymentAttemptModel.updateOne(
+          {
+            _id: tapToPayAttempt._id,
+            status: { $in: ['FINALIZING', 'REVIEW_REQUIRED'] },
+          },
+          {
+            $set: {
+              status: 'COMPLETED',
+              completed_at: new Date(),
+              next_reconciliation_at: null,
+              transaction_id: transactionId,
+            },
+          }
+        );
+      } catch (attemptCompletionError) {
+        console.error('Tap to Pay attempt completion update failed', {
+          attemptId: String(tapToPayAttempt._id),
+          orderNumber: tapToPayAttempt.order_number,
+          message: attemptCompletionError.message,
+        });
+      }
+    }
+
     if (!vendorPosOrder && normalizedPaymentStatus === 'PAID') {
       try {
         const avalaraInvoice = await calculateAvalaraOrderTax({
@@ -4308,6 +4541,29 @@ exports.add = async (req, res, next) => {
         );
       }
     } catch (e) {}
+
+    if (vendorPosOrder && normalizedPaymentMethod === 'TAP_TO_PAY') {
+      try {
+        const receiptSmsResult = await sendWalkUpTapToPayReceiptSms({
+          order: data,
+          foodTruck,
+        });
+        if (receiptSmsResult?.skipped) {
+          console.log('Walk-up Tap to Pay receipt SMS skipped', {
+            orderId: data._id?.toString(),
+            orderNumber: data.orderNumber,
+            reason: receiptSmsResult.reason,
+            hasGuestPhone: !!data.guestCustomer?.phone,
+          });
+        }
+      } catch (receiptSmsError) {
+        console.error('Walk-up Tap to Pay receipt SMS failed', {
+          orderId: data._id?.toString(),
+          orderNumber: data.orderNumber,
+          message: receiptSmsError.message,
+        });
+      }
+    }
 
     return res.data(
       { [`${entityName.toLocaleLowerCase()}`]: data },

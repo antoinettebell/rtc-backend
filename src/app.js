@@ -11,6 +11,9 @@ const app = express();
 const { validatePublicReviewUrl } = require('./helper/review-url-helper');
 const { startEventVendorPhotoCleanup } = require('./helper/event-vendor-photo-cleanup');
 const { startInventoryExpirationMonitor } = require('./helper/inventory-expiration-monitor');
+const {
+  startTapToPayInterruptionMonitor,
+} = require('./helper/tap-to-pay-interruption-monitor');
 
 app.set('trust proxy', 'loopback');
 
@@ -27,6 +30,7 @@ const reshelper = require('reshelper');
 require('./db/connection');
 startEventVendorPhotoCleanup();
 startInventoryExpirationMonitor();
+startTapToPayInterruptionMonitor();
 
 app.use(reshelper);
 

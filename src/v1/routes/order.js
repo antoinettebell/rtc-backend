@@ -39,6 +39,27 @@ router.get(
   Controller.getFreeDessertEligibility
 );
 
+router.post(
+  '/tap-to-pay-attempts/prepare',
+  allowedTo(['VENDOR', 'EMPLOYEE']),
+  validate(Validation.prepareTapToPayAttempt),
+  Controller.prepareTapToPayAttempt
+);
+
+router.patch(
+  '/tap-to-pay-attempts/:id/start',
+  allowedTo(['VENDOR', 'EMPLOYEE']),
+  validate(Validation.tapToPayAttemptAction),
+  Controller.startTapToPayAttempt
+);
+
+router.patch(
+  '/tap-to-pay-attempts/:id/cancel',
+  allowedTo(['VENDOR', 'EMPLOYEE']),
+  validate(Validation.tapToPayAttemptAction),
+  Controller.cancelTapToPayAttempt
+);
+
 /** [POST] /api/v1/order */
 router.post(
   '/',

@@ -25,6 +25,17 @@ const sdkWithTransaction = (transaction) => ({
   },
 });
 
+const sdkWithSearchResults = (transactions, capture) => ({
+  SearchTransactionsApi: class SearchTransactionsApi {
+    createSearch(request, callback) {
+      capture.request = request;
+      callback(null, {
+        _embedded: { transactionSummaries: transactions },
+      });
+    }
+  },
+});
+
 const restoreEnvironment = () => {
   Object.entries(originalEnvironment).forEach(([key, value]) => {
     if (value === undefined) delete process.env[key];
@@ -67,6 +78,45 @@ const restoreEnvironment = () => {
           }
         ),
       { code: 'CYBERSOURCE_VERIFICATION_FAILED' }
+    );
+
+    const capture = {};
+    const searchResults = await CyberSourcePaymentHelper.searchTransactionsByReference(
+      'R1234567',
+      {
+        sdk: sdkWithSearchResults(
+          [
+            {
+              id: 'txn-search-1',
+              status: 'AUTHORIZED',
+              clientReferenceInformation: { code: 'R1234567' },
+              orderInformation: {
+                amountDetails: { totalAmount: '25.00', currency: 'USD' },
+              },
+            },
+            {
+              id: 'txn-other',
+              status: 'AUTHORIZED',
+              clientReferenceInformation: { code: 'OTHER' },
+            },
+          ],
+          capture
+        ),
+      }
+    );
+    assert.strictEqual(
+      capture.request.query,
+      'clientReferenceInformation.code:R1234567'
+    );
+    assert.strictEqual(searchResults.length, 1);
+    assert.strictEqual(searchResults[0].id, 'txn-search-1');
+
+    await assert.rejects(
+      () =>
+        CyberSourcePaymentHelper.searchTransactionsByReference('bad reference', {
+          sdk: sdkWithSearchResults([], {}),
+        }),
+      { code: 'CYBERSOURCE_REFERENCE_INVALID' }
     );
 
     await assert.rejects(

@@ -150,6 +150,9 @@ exports.OperationalNotificationModel = require('./operational-notification');
 exports.TapToPayTerminalModel = require('./tap-to-pay-terminal');
 exports.TapToPayTerminalEventModel = require('./tap-to-pay-terminal-event');
 
+/** Define pending Tap to Pay payment attempts used for interruption recovery */
+exports.TapToPayPaymentAttemptModel = require('./tap-to-pay-payment-attempt');
+
 /** Define admin-notification model */
 exports.AdminNotificationModel = require('./admin-notification');
 

@@ -76,6 +76,45 @@ const retrieveTransaction = async (transactionId, { sdk = CyberSource } = {}) =>
   });
 };
 
+const searchTransactionsByReference = async (
+  reference,
+  { sdk = CyberSource } = {}
+) => {
+  const normalizedReference = String(reference || '').trim();
+  if (!/^[A-Za-z0-9_-]{1,50}$/.test(normalizedReference)) {
+    const error = new Error('A valid CyberSource transaction reference is required.');
+    error.code = 'CYBERSOURCE_REFERENCE_INVALID';
+    throw error;
+  }
+
+  const config = getConfig();
+  assertConfigured(config);
+  const api = new sdk.SearchTransactionsApi(config);
+  const request = {
+    save: false,
+    timezone: 'UTC',
+    query: `clientReferenceInformation.code:${normalizedReference}`,
+    offset: 0,
+    limit: 10,
+    sort: 'submitTimeUtc:desc',
+  };
+
+  return new Promise((resolve, reject) => {
+    api.createSearch(request, (error, data) => {
+      if (error) return reject(error);
+      const embedded = data?._embedded || data?.embedded || {};
+      const results = Array.isArray(embedded.transactionSummaries)
+        ? embedded.transactionSummaries
+        : [];
+      return resolve(
+        results
+          .map(normalizeTransaction)
+          .filter((transaction) => transaction.reference === normalizedReference)
+      );
+    });
+  });
+};
+
 const normalizeTransaction = (transaction = {}) => {
   const amountDetails = transaction.orderInformation?.amountDetails || {};
   return {
@@ -118,6 +157,7 @@ module.exports = {
   getConfig,
   normalizeTransaction,
   retrieveTransaction,
+  searchTransactionsByReference,
   tapToPayEnabled,
   verifyTransaction,
 };

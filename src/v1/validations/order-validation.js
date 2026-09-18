@@ -79,6 +79,11 @@ module.exports = {
       invoiceNumber: Joi.string().optional(),
       accountNumber: Joi.string().optional(),
       accountType: Joi.string().optional(),
+      tapToPayAttemptId: Joi.string().when('paymentMethod', {
+        is: 'TAP_TO_PAY',
+        then: Joi.string().required(),
+        otherwise: Joi.string().optional().allow(null, ''),
+      }),
 
       couponId: Joi.string(),
       taxAmount: Joi.number(),
@@ -108,6 +113,21 @@ module.exports = {
           }).required()
         )
         .required(),
+    }),
+  },
+
+  prepareTapToPayAttempt: {
+    body: Joi.object({
+      foodTruckId: Joi.string().required(),
+      checkoutKey: Joi.string().trim().max(100).required(),
+      amount: Joi.number().positive().precision(2).required(),
+      currency: Joi.string().uppercase().valid('USD').default('USD'),
+    }),
+  },
+
+  tapToPayAttemptAction: {
+    params: Joi.object({
+      id: Joi.string().required(),
     }),
   },
 
