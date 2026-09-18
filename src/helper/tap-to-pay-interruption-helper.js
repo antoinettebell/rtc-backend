@@ -85,7 +85,14 @@ const scheduleReconciliationRetry = async (attempt, now) => {
   );
 };
 
-const reconcileTapToPayAttempt = async (attempt, { now = new Date() } = {}) => {
+const reconcileTapToPayAttempt = async (
+  attempt,
+  {
+    now = new Date(),
+    searchTransactionsByReference =
+      CyberSourcePaymentHelper.searchTransactionsByReference,
+  } = {}
+) => {
   const completedOrder = await OrderModel.findOne({
     foodTruckId: attempt.food_truck_id,
     orderNumber: attempt.order_number,
@@ -115,9 +122,7 @@ const reconcileTapToPayAttempt = async (attempt, { now = new Date() } = {}) => {
 
   let transactions;
   try {
-    transactions = await CyberSourcePaymentHelper.searchTransactionsByReference(
-      attempt.reference
-    );
+    transactions = await searchTransactionsByReference(attempt.reference);
   } catch (error) {
     await scheduleReconciliationRetry(attempt, now);
     await TapToPayPaymentAttemptModel.updateOne(
