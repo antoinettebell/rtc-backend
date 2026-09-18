@@ -50,31 +50,54 @@ exports.sendNotificationToUsers = async (notificationData) => {
             note.data || {},
             itm.token,
             item.userType
-          ).catch(async (error) => {
-            if (FCM.isStaleTokenError(error)) {
-              await UserModel.updateOne(
-                { _id: item._id },
-                { $pull: { fcmTokens: { token: itm.token } } }
-              );
-              console.info('Removed stale FCM token after provider rejection.', {
-                userId: item._id.toString(),
-                code: error.code,
-              });
-              return;
-            }
+          )
+            .then(() => ({ status: 'sent' }))
+            .catch(async (error) => {
+              if (FCM.isStaleTokenError(error)) {
+                await UserModel.updateOne(
+                  { _id: item._id },
+                  { $pull: { fcmTokens: { token: itm.token } } }
+                );
+                console.info(
+                  'Removed stale FCM token after provider rejection.',
+                  {
+                    userId: item._id.toString(),
+                    code: error.code,
+                  }
+                );
+                return { status: 'stale', code: error.code };
+              }
 
-            console.error('Push notification delivery failed.', {
-              userId: item._id.toString(),
-              userType: item.userType,
-              code: error?.code,
-              message: error?.message,
-            });
-          })
+              console.error('Push notification delivery failed.', {
+                userId: item._id.toString(),
+                userType: item.userType,
+                code: error?.code,
+              });
+              return {
+                status: 'failed',
+                code: error?.code || 'messaging/unknown-error',
+              };
+            })
         );
       });
     }
   });
-  await Promise.all(deliveries);
+  const results = await Promise.all(deliveries);
+  return results.reduce(
+    (summary, result) => {
+      summary.attempted += 1;
+      if (result.status === 'sent') summary.sent += 1;
+      if (result.status === 'stale') summary.stale += 1;
+      if (result.status === 'failed') {
+        summary.failed += 1;
+        if (!summary.failureCodes.includes(result.code)) {
+          summary.failureCodes.push(result.code);
+        }
+      }
+      return summary;
+    },
+    { attempted: 0, sent: 0, failed: 0, stale: 0, failureCodes: [] }
+  );
 };
 
 exports.sendNotificationToEmployees = async (employees, note) => {

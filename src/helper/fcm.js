@@ -6,10 +6,12 @@ const FIREBASE_PROJECTS = {
   CUSTOMER: {
     appName: 'rtc-customer-push',
     credentialPathEnv: 'FIREBASE_CUSTOMER_SERVICE_ACCOUNT_PATH',
+    expectedProjectId: 'rtc-app-59500',
   },
   VENDOR: {
     appName: 'rtc-vendor-push',
     credentialPathEnv: 'FIREBASE_VENDOR_SERVICE_ACCOUNT_PATH',
+    expectedProjectId: 'rtcvendormobile',
   },
 };
 
@@ -64,6 +66,14 @@ const getFirebaseApp = (projectKey) => {
     const error = new Error('Configured Firebase service-account file is invalid.');
     error.code = 'messaging/credentials-invalid';
     error.cause = cause;
+    throw error;
+  }
+
+  if (serviceAccount.project_id !== project.expectedProjectId) {
+    const error = new Error(
+      `Configured Firebase credentials do not match ${project.expectedProjectId}.`
+    );
+    error.code = 'messaging/credentials-project-mismatch';
     throw error;
   }
 

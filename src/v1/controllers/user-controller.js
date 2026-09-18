@@ -1428,7 +1428,36 @@ exports.adminSendNotification = async (req, res, next) => {
       }
     });
 
-    await CustomNotification.sendNotificationToUsers(noteData);
+    if (!Object.keys(noteData).length) {
+      return res.message(
+        'No registered devices were found for the selected recipients.',
+        422
+      );
+    }
+
+    const delivery = await CustomNotification.sendNotificationToUsers(noteData);
+
+    if (!delivery.sent) {
+      const configurationFailure = delivery.failureCodes.some((code) =>
+        [
+          'messaging/credentials-not-configured',
+          'messaging/credentials-not-found',
+          'messaging/credentials-invalid',
+          'messaging/credentials-project-mismatch',
+          'messaging/mismatched-credential',
+          'messaging/authentication-error',
+        ].includes(code)
+      );
+
+      return res.message(
+        configurationFailure
+          ? `${
+              recipientType === 'ALL_VENDORS' ? 'Vendor' : 'Selected'
+            } push notifications are not configured correctly on the backend.`
+          : 'The notification could not be delivered to any registered device.',
+        502
+      );
+    }
 
     await AdminNotificationService.create({
       title,
@@ -1438,7 +1467,17 @@ exports.adminSendNotification = async (req, res, next) => {
       sentTo: recipientIds,
     });
 
-    return res.message('Notification sent successfully');
+    return res.data(
+      {
+        attempted: delivery.attempted,
+        delivered: delivery.sent,
+        failed: delivery.failed,
+        stale: delivery.stale,
+      },
+      delivery.failed || delivery.stale
+        ? 'Notification sent to available registered devices.'
+        : 'Notification sent successfully'
+    );
   } catch (e) {
     return next(e);
   }
