@@ -24,6 +24,7 @@ const marketplaceRoutes = require('./marketplace');
 const webhookRoutes = require('./webhooks');
 const vendorComplianceRoutes = require('./vendor-compliance');
 const operationalComplianceRoutes = require('./operational-compliance');
+const marketingCampaignRoutes = require('./marketing-campaign');
 const authenticate = require('../../middleware/authenticate');
 const router = express.Router();
 
@@ -104,6 +105,9 @@ router.use('/vendor-compliance', vendorComplianceRoutes);
 
 /** operational inventory and opening/closing forms */
 router.use('/operational-compliance', operationalComplianceRoutes);
+
+/** Admin-only marketing campaign approval routes */
+router.use('/marketing', marketingCampaignRoutes);
 
 /** Exports default route */
 module.exports = router;

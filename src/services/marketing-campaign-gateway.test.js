@@ -1,0 +1,86 @@
+const assert = require('node:assert/strict');
+const test = require('node:test');
+
+const {
+  MarketingCampaignGateway,
+} = require('./marketing-campaign-gateway');
+
+function response(data, { ok = true, status = 200 } = {}) {
+  return { ok, status, async json() { return { data }; } };
+}
+
+test('uses the internal control API and forwards no admin JWT or provider data', async () => {
+  const calls = [];
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://marketing.internal', serviceKey: 'service-secret',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response({ campaigns: [{
+        campaignId: 'campaign-1', businessName: 'Vendor', providerPayload: { secret: true },
+      }] });
+    },
+  });
+  const campaigns = await gateway.listPendingCampaigns();
+  assert.equal(campaigns.length, 1);
+  assert.equal('providerPayload' in campaigns[0], false);
+  assert.equal(calls[0].url, 'https://marketing.internal/admin/campaigns/pending');
+  assert.equal(calls[0].options.headers['x-rtc-service-key'], 'service-secret');
+  assert.equal('authorization' in calls[0].options.headers, false);
+});
+
+test('projects only safe campaign details', async () => {
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://marketing.internal', serviceKey: 'secret',
+    fetchImpl: async () => response({ campaign: {
+      campaignId: 'campaign-1', businessName: 'Vendor', videoUrl: 'https://video.example/current.mp4',
+      selectedFoodImages: [{ name: 'Taco', category: 'Individual', url: 'https://img.example/taco.jpg', prompt: 'secret' }],
+      scheduleText: 'THIS WEEK', supportedServices: ['PICKUP'], rawProviderResponse: { secret: true },
+    } }),
+  });
+  const detail = await gateway.getCampaignDetails('campaign-1');
+  assert.equal(detail.selectedFoodImages[0].name, 'Taco');
+  assert.equal('prompt' in detail.selectedFoodImages[0], false);
+  assert.equal('rawProviderResponse' in detail, false);
+});
+
+test('sanitizes upstream failures without retaining bodies or credentials', async () => {
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://marketing.internal', serviceKey: 'secret',
+    fetchImpl: async () => {
+      throw Object.assign(new Error('provider payload https://private.example'), { body: { token: 'secret' } });
+    },
+  });
+  await assert.rejects(
+    () => gateway.listApprovedCampaigns(),
+    (error) => error.code === 'MARKETING_CONTROL_REQUEST_FAILED' &&
+      !JSON.stringify(error).includes('private.example')
+  );
+});
+
+test('regeneration keeps the same campaign identity', async () => {
+  const calls = [];
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://marketing.internal', serviceKey: 'secret',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response({ result: { action: 'PROCESSING', campaign: { campaignId: 'campaign-1' } } });
+    },
+  });
+  const result = await gateway.regenerateCampaign('campaign-1', 'Try a new collage');
+  assert.equal(result.campaign.campaignId, 'campaign-1');
+  assert.equal(calls.length, 1);
+  assert.equal(JSON.parse(calls[0].options.body).reason, 'Try a new collage');
+});
+
+test('approval forwards only the authenticated admin identifier', async () => {
+  const calls = [];
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://marketing.internal', serviceKey: 'secret',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response({ campaign: { campaignId: 'campaign-1', approvalStatus: 'APPROVED' } });
+    },
+  });
+  await gateway.approveCampaign('campaign-1', 'admin-1');
+  assert.deepEqual(JSON.parse(calls[0].options.body), { approvedBy: 'admin-1' });
+});
