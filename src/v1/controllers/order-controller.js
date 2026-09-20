@@ -26,6 +26,10 @@ const {
   sendWalkUpTapToPayReceiptSms,
 } = require('../../helper/walk-up-receipt-sms-helper');
 const { buildPublicReviewUrl } = require('../../helper/review-url-helper');
+const {
+  getComboChildId,
+  resolveRequestedComboSelections,
+} = require('../../helper/combo-order-selection-helper');
 const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
 const CyberSourceApplePayHelper = require('../../helper/cybersource-apple-pay-helper');
 const CyberSourceGooglePayHelper = require('../../helper/cybersource-google-pay-helper');
@@ -1650,61 +1654,14 @@ const getComboChildMenuItem = (subItem) => {
   return subItem;
 };
 
-const normalizeComboItemId = (value) => {
-  if (value === null || value === undefined || value === '') {
-    return null;
-  }
-
-  if (typeof value === 'object') {
-    if (value._id && value._id !== value) {
-      return normalizeComboItemId(value._id);
-    }
-    if (value.$oid) {
-      return String(value.$oid);
-    }
-  }
-
-  const normalized = value?.toString?.() || value;
-  return normalized ? String(normalized) : null;
-};
-
-const getComboCandidateIds = (subItem) =>
-  [
-    subItem?.comboMenuItemId,
-    subItem?.menuItemId,
-    subItem?.menuItem?._id,
-    typeof subItem?.menuItem === 'object' ? null : subItem?.menuItem,
-    subItem?.itemId?._id,
-    typeof subItem?.itemId === 'object' ? null : subItem?.itemId,
-    subItem?._id,
-  ]
-    .map(normalizeComboItemId)
-    .filter(Boolean);
-
-const getComboChildId = (subItem) => getComboCandidateIds(subItem)[0] || null;
-
-const findComboSubItem = (subItems = [], comboMenuItemId) => {
-  const requestedIds = new Set(
-    getComboCandidateIds(
-      typeof comboMenuItemId === 'object'
-        ? comboMenuItemId
-        : { comboMenuItemId }
-    )
-  );
-
-  return subItems.find((subItem) =>
-    getComboCandidateIds(subItem).some((candidateId) =>
-      requestedIds.has(candidateId)
-    )
-  );
-};
-
 const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName }) => {
   const subItems = Array.isArray(parentMenuItem?.subItem) ? parentMenuItem.subItem : [];
   const includedSubItems = subItems.filter((subItem) => !subItem?.isAddOn);
-  const addOnSubItems = subItems.filter((subItem) => subItem?.isAddOn);
   const requestedItems = Array.isArray(comboItems) ? comboItems : [];
-  const requestedIncludedItems = requestedItems.filter((comboItem) => !comboItem?.isAddOn);
+  const resolvedItems = resolveRequestedComboSelections(subItems, requestedItems);
+  const requestedIncludedItems = resolvedItems.filter(
+    (selection) => selection.configuredItem && !selection.isAddOn
+  );
   const requiredCount = Math.min(
     Math.max(Number(parentMenuItem?.comboSidesPerOrder) || 1, 1),
     includedSubItems.length,
@@ -1716,12 +1673,8 @@ const buildValidatedComboItems = ({ parentMenuItem, comboItems = [], itemName })
     );
   }
 
-  return requestedItems
-    .map((comboItem) => {
-      const subItemMatch = findComboSubItem(
-        comboItem?.isAddOn ? addOnSubItems : includedSubItems,
-        comboItem.comboMenuItemId
-      );
+  return resolvedItems
+    .map(({ requestedItem: comboItem, configuredItem: subItemMatch }) => {
       if (!subItemMatch) {
         throw new Error(`That item is not available with the "${itemName}" combo`);
       }
@@ -2241,6 +2194,7 @@ exports.validateOrder = async (req, res, next) => {
                 ? item.comboItems.map((comboItem) => ({
                     comboMenuItemId: comboItem.comboMenuItemId,
                     qty: comboItem.qty,
+                    isAddOn: comboItem.isAddOn,
                     selectedFlavors: comboItem.selectedFlavors,
                     selectedToppings: comboItem.selectedToppings,
                     selectedComboSides: comboItem.selectedComboSides,
