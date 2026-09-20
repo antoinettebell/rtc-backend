@@ -3,6 +3,7 @@ const { Joi } = require('express-validation');
 const comboItemSelection = Joi.object({
   comboMenuItemId: Joi.string().required(),
   qty: Joi.number().min(1),
+  isAddOn: Joi.boolean(),
   customization: Joi.string().allow(null, ''),
   selectedFlavors: Joi.array().items(Joi.string().trim()),
   selectedToppings: Joi.array().items(Joi.string().trim()),
