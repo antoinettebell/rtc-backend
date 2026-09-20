@@ -168,6 +168,13 @@ class MenuItemService extends BaseService {
                       {
                         _id: '$$sub.menuItem',
                         qty: '$$sub.qty',
+                        isAddOn: { $ifNull: ['$$sub.isAddOn', false] },
+                        hasAdditionalCost: {
+                          $ifNull: ['$$sub.hasAdditionalCost', false],
+                        },
+                        additionalCost: {
+                          $ifNull: ['$$sub.additionalCost', 0],
+                        },
                       }
                     ]
                   },
@@ -210,6 +217,13 @@ class MenuItemService extends BaseService {
                             {
                               _id: '$$sub.menuItem',
                               qty: '$$sub.qty',
+                              isAddOn: { $ifNull: ['$$sub.isAddOn', false] },
+                              hasAdditionalCost: {
+                                $ifNull: ['$$sub.hasAdditionalCost', false],
+                              },
+                              additionalCost: {
+                                $ifNull: ['$$sub.additionalCost', 0],
+                              },
                             },
                           ],
                         },

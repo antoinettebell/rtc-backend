@@ -34,6 +34,13 @@ const findComboSubItem = (configuredItems = [], requestedItem) => {
   );
 };
 
+const findComboSubItems = (configuredItems = [], requestedItem) => {
+  const requestedIds = new Set(getComboCandidateIds(requestedItem));
+  return configuredItems.filter((configuredItem) =>
+    getComboCandidateIds(configuredItem).some((id) => requestedIds.has(id))
+  );
+};
+
 /**
  * Classifies submitted combo selections from the server-owned menu config.
  * Older clients did not submit isAddOn, so a unique configured match remains
@@ -43,17 +50,16 @@ const findComboSubItem = (configuredItems = [], requestedItem) => {
 const resolveRequestedComboSelections = (configuredItems, requestedItems) => {
   const configured = Array.isArray(configuredItems) ? configuredItems : [];
   const requested = Array.isArray(requestedItems) ? requestedItems : [];
-  const included = configured.filter((item) => !item?.isAddOn);
-  const addOns = configured.filter((item) => item?.isAddOn);
 
   return requested.map((requestedItem) => {
     const hasExplicitType = typeof requestedItem?.isAddOn === 'boolean';
-    const candidates = hasExplicitType
-      ? requestedItem.isAddOn
-        ? addOns
-        : included
-      : configured;
-    const configuredItem = findComboSubItem(candidates, requestedItem);
+    const matches = findComboSubItems(configured, requestedItem);
+    const configuredItem =
+      matches.length === 1
+        ? matches[0]
+        : hasExplicitType
+          ? matches.find((item) => !!item?.isAddOn === requestedItem.isAddOn)
+          : matches.find((item) => !item?.isAddOn) || matches[0];
 
     return {
       requestedItem,
@@ -65,6 +71,7 @@ const resolveRequestedComboSelections = (configuredItems, requestedItems) => {
 
 module.exports = {
   findComboSubItem,
+  findComboSubItems,
   getComboCandidateIds,
   getComboChildId,
   resolveRequestedComboSelections,
