@@ -42,6 +42,9 @@ const { addObjectWithKey, removeObject } = require('../../helper/aws');
 const fs = require('fs');
 const entityName = 'FoodTruck';
 const { filterActivePublicMarketplaceEvents } = require('../../helper/public-marketplace-event-helper');
+const {
+  saveFoodTruckUpdateWithScheduleEvent,
+} = require('../../helper/vendor-schedule-marketing-event');
 
 // Customer ordering must receive the requirements of items nested inside
 // combos and BOGO/BOGOHO rewards, not only their display fields.
@@ -1243,6 +1246,7 @@ exports.createTapToPayActivationCode = async (req, res, next) => {
  */
 exports.update = async (req, res, next) => {
   try {
+    let scheduleChanged = false;
     const {
       body: {
         name,
@@ -1344,6 +1348,7 @@ exports.update = async (req, res, next) => {
       const availabilityChanged =
         normalizeAvailabilityForCompare(previousAvailability) !==
         normalizeAvailabilityForCompare(nextAvailability);
+      scheduleChanged = availabilityChanged;
 
       if (availabilityChanged) {
         item.availabilityHistory = [
@@ -1406,7 +1411,7 @@ exports.update = async (req, res, next) => {
       syncOrderingLocationFlags(item);
     }
 
-    await item.save();
+    await saveFoodTruckUpdateWithScheduleEvent({ item, scheduleChanged });
 
     // To return populated data
     let latest = await Service.getByData(

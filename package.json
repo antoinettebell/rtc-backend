@@ -13,12 +13,14 @@
     "test:tickets": "node src/helper/event-ticket-helper.test.js && node src/helper/event-ticket-tax-helper.test.js && node src/helper/ticket-token-helper.test.js && node src/helper/public-ticket-page.test.js",
     "test:menu-import": "node src/v1/services/menu-csv-import-service.test.js",
     "test:marketing-campaigns": "node --test src/services/marketing-campaign-gateway.test.js src/v1/routes/marketing-campaign-access.test.js",
+    "test:vendor-spotlight-triggers": "node --test src/helper/vendor-schedule-marketing-event.test.js",
     "reconcile:event-vendor-photo-counters": "node scripts/reconcile-event-vendor-photo-counters.js",
     "migrate:reviews": "node scripts/migrate-review-ratings.js"
   },
   "author": "Tailor",
   "license": "MIT",
   "dependencies": {
+    "@azure/storage-queue": "^12.31.0",
     "@sendgrid/mail": "^8.1.5",
     "aws-sdk": "^2.1692.0",
     "bcrypt": "^5.1.1",
