@@ -3,11 +3,20 @@ const test = require('node:test');
 
 const {
   MarketingCampaignGateway,
+  normalizeTimeoutMs,
 } = require('./marketing-campaign-gateway');
 
 function response(data, { ok = true, status = 200 } = {}) {
   return { ok, status, async json() { return { data }; } };
 }
+
+test('uses a bounded regeneration-safe gateway timeout', () => {
+  assert.equal(normalizeTimeoutMs(undefined), 60000);
+  assert.equal(normalizeTimeoutMs('45000'), 45000);
+  assert.equal(normalizeTimeoutMs('999'), 60000);
+  assert.equal(normalizeTimeoutMs('120001'), 60000);
+  assert.equal(normalizeTimeoutMs('invalid'), 60000);
+});
 
 test('uses the internal control API and forwards no admin JWT or provider data', async () => {
   const calls = [];
