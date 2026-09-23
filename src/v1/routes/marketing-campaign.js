@@ -7,6 +7,7 @@ const adminOnly = allowedTo(['SUPER_ADMIN']);
 
 router.get('/campaigns/pending', adminOnly, Controller.listPending);
 router.get('/campaigns/approved', adminOnly, Controller.listApproved);
+router.get('/campaigns/eligible-vendors', adminOnly, Controller.listEligibleVendors);
 router.post('/campaigns/generate', adminOnly, Controller.generate);
 router.get('/campaigns/:campaignId', adminOnly, Controller.getDetails);
 router.post('/campaigns/:campaignId/approve', adminOnly, Controller.approve);

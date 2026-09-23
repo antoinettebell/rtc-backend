@@ -60,7 +60,28 @@ const campaignDetail = (value = {}) => ({
   supportedServices: Array.isArray(value.supportedServices)
     ? value.supportedServices.filter((service) => typeof service === 'string')
     : [],
+  visualVariation: value.visualVariation ? {
+    sequence: Number(value.visualVariation.sequence) || 0,
+    mode: value.visualVariation.mode ?? 'BASELINE',
+    animationVariantId: value.visualVariation.animationVariantId ?? 'STATIC_STACK',
+    imageRotation: Number(value.visualVariation.imageRotation) || 0,
+  } : null,
 });
+
+const eligibleVendor = (value = {}) => ({
+  vendorId: value.vendorId ?? null,
+  businessName: value.businessName ?? null,
+  generationBlocked: value.generationBlocked === true,
+});
+
+const requireVendorIds = (values) => {
+  if (!Array.isArray(values) || values.length === 0 || values.length > 100) {
+    throw new MarketingCampaignGatewayError('INVALID_VENDOR_SELECTION', 400);
+  }
+  const ids = [...new Set(values.map(requireCampaignId))];
+  if (ids.length === 0) throw new MarketingCampaignGatewayError('INVALID_VENDOR_SELECTION', 400);
+  return ids;
+};
 
 const cleanReason = (value) => {
   if (typeof value !== 'string') return '';
@@ -127,9 +148,17 @@ class MarketingCampaignGateway {
     return (Array.isArray(data?.campaigns) ? data.campaigns : []).map(campaignListItem);
   }
 
-  async generateVendorSpotlights(requestId) {
+  async listEligibleVendors() {
+    const data = await this.request('/admin/vendors/eligible');
+    return (Array.isArray(data?.vendors) ? data.vendors : []).map(eligibleVendor);
+  }
+
+  async generateVendorSpotlights(requestId, vendorIds) {
     const data = await this.request('/admin/campaigns/generate', {
-      method: 'POST', body: { requestId: requireCampaignId(requestId) },
+      method: 'POST', body: {
+        requestId: requireCampaignId(requestId),
+        vendorIds: requireVendorIds(vendorIds),
+      },
     });
     return (Array.isArray(data?.results) ? data.results : []).map((result) => ({
       action: result?.action ?? null,
@@ -171,4 +200,5 @@ module.exports = {
   normalizeTimeoutMs,
   campaignListItem,
   campaignDetail,
+  eligibleVendor,
 };
