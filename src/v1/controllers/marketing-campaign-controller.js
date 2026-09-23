@@ -20,6 +20,11 @@ const createMarketingCampaignController = (service = gateway) => ({
       return res.data({ campaigns: await service.listApprovedCampaigns() });
     } catch (error) { return safeFailure(res, error); }
   },
+  generate: async (req, res) => {
+    try {
+      return res.data({ results: await service.generateVendorSpotlights(req.body?.requestId) });
+    } catch (error) { return safeFailure(res, error); }
+  },
   getDetails: async (req, res) => {
     try {
       return res.data({ campaign: await service.getCampaignDetails(req.params.campaignId) });

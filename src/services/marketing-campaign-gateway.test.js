@@ -93,3 +93,22 @@ test('approval forwards only the authenticated admin identifier', async () => {
   await gateway.approveCampaign('campaign-1', 'admin-1');
   assert.deepEqual(JSON.parse(calls[0].options.body), { approvedBy: 'admin-1' });
 });
+
+test('manual generation forwards one idempotency identifier and projects safe results', async () => {
+  const calls = [];
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://marketing.internal', serviceKey: 'secret',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response({ results: [{
+        action: 'PROCESSING',
+        campaign: { campaignId: 'campaign-new', businessName: 'Vendor', providerPayload: { secret: true } },
+      }] });
+    },
+  });
+  const results = await gateway.generateVendorSpotlights('manual-request-1');
+  assert.equal(results[0].campaign.campaignId, 'campaign-new');
+  assert.equal('providerPayload' in results[0].campaign, false);
+  assert.equal(calls[0].url, 'https://marketing.internal/admin/campaigns/generate');
+  assert.deepEqual(JSON.parse(calls[0].options.body), { requestId: 'manual-request-1' });
+});
