@@ -15,7 +15,9 @@
     "test:marketing-campaigns": "node --test src/services/marketing-campaign-gateway.test.js src/v1/routes/marketing-campaign-access.test.js",
     "test:vendor-spotlight-triggers": "node --test src/helper/vendor-schedule-marketing-event.test.js",
     "reconcile:event-vendor-photo-counters": "node scripts/reconcile-event-vendor-photo-counters.js",
-    "migrate:reviews": "node scripts/migrate-review-ratings.js"
+    "migrate:reviews": "node scripts/migrate-review-ratings.js",
+    "migrate:menu-truck-scopes": "node scripts/migrate-menu-truck-scopes.js",
+    "test:menu-truck-scopes": "node src/helper/menu-truck-unit-scope.test.js && node scripts/migrate-menu-truck-scopes.test.js"
   },
   "author": "Tailor",
   "license": "MIT",

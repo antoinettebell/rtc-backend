@@ -50,6 +50,9 @@ const {
 } = require('../../helper/order-bogo-pricing-helper');
 const VendorComplianceService = require('../services/vendor-compliance-service');
 const { OrderModel, TapToPayPaymentAttemptModel } = require('../../models');
+const {
+  isMenuTreeAvailableForTruck,
+} = require('../../helper/menu-truck-unit-scope');
 
 const { env } = require('../../config');
 
@@ -476,12 +479,18 @@ const buildWalkUpAuditFields = ({
 
 const resolveOrderTruckUnit = ({ foodTruck, locationId, truckUnitId = null, user }) => {
   const units = foodTruck?.truck_units || [];
-  return (
-    units.find(
+  const requestedTruckUnitId =
+    user?.userType === 'EMPLOYEE'
+      ? user.assigned_truck_unit_id
+      : truckUnitId;
+  if (user?.userType === 'EMPLOYEE' || requestedTruckUnitId) {
+    return units.find(
       (unit) =>
-        unit._id?.toString() ===
-        (truckUnitId || user.assigned_truck_unit_id)?.toString()
-    ) ||
+        unit._id?.toString() === requestedTruckUnitId?.toString() &&
+        !unit.is_archived
+    ) || null;
+  }
+  return (
     units.find(
       (unit) =>
         !unit.is_archived &&
@@ -1884,6 +1893,16 @@ exports.validateOrder = async (req, res, next) => {
       );
     }
 
+    const orderTruckUnit = resolveOrderTruckUnit({
+      foodTruck,
+      locationId,
+      truckUnitId,
+      user,
+    });
+    if (!orderTruckUnit) {
+      return res.error(new Error('Select an active food truck for this order.'), 409);
+    }
+
     let deliveryValidation = null;
     if (fulfillmentType === 'DELIVERY') {
       try {
@@ -1923,6 +1942,18 @@ exports.validateOrder = async (req, res, next) => {
     ).size;
     if (requestedMenuItemCount !== Object.keys(menuIds).length) {
       return res.error(new Error('Order items mismatched'), 409);
+    }
+    const unavailableMenuItem = Object.values(menuIds).find(
+      (menuItem) =>
+        !isMenuTreeAvailableForTruck(menuItem, orderTruckUnit._id, foodTruck)
+    );
+    if (unavailableMenuItem) {
+      return res.error(
+        new Error(
+          `"${unavailableMenuItem.name}" is not available from the selected food truck.`
+        ),
+        409
+      );
     }
 
     const menuItems = [];
@@ -3758,6 +3789,16 @@ exports.add = async (req, res, next) => {
       );
     }
 
+    const orderTruckUnit = resolveOrderTruckUnit({
+      foodTruck,
+      locationId,
+      truckUnitId,
+      user,
+    });
+    if (!orderTruckUnit) {
+      return res.error(new Error('Select an active food truck for this order.'), 409);
+    }
+
     let deliveryValidation = null;
     if (fulfillmentType === 'DELIVERY') {
       try {
@@ -3797,6 +3838,18 @@ exports.add = async (req, res, next) => {
     ).size;
     if (requestedMenuItemCount !== Object.keys(menuIds).length) {
       return res.error(new Error('Order items mismatched'), 409);
+    }
+    const unavailableMenuItem = Object.values(menuIds).find(
+      (menuItem) =>
+        !isMenuTreeAvailableForTruck(menuItem, orderTruckUnit._id, foodTruck)
+    );
+    if (unavailableMenuItem) {
+      return res.error(
+        new Error(
+          `"${unavailableMenuItem.name}" is not available from the selected food truck.`
+        ),
+        409
+      );
     }
 
     const menuItems = [];
@@ -4274,13 +4327,6 @@ exports.add = async (req, res, next) => {
         if (total < 0) total = 0; // Ensure total doesn't go negative
       }
     }
-    const orderTruckUnit = resolveOrderTruckUnit({
-      foodTruck,
-      locationId,
-      truckUnitId,
-      user,
-    });
-
     if (vendorPosOrder && normalizedPaymentMethod === 'TAP_TO_PAY') {
       const nativeTransactionId = String(transactionId || '').trim();
       if (!nativeTransactionId) {

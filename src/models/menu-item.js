@@ -116,6 +116,17 @@ const mSchema = mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    truckServiceScope: {
+      type: String,
+      enum: ['ALL_ACTIVE_TRUCKS', 'SELECTED_TRUCKS'],
+      default: null,
+    },
+    truckUnitIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        default: undefined,
+      },
+    ],
     itemType: {
       type: String,
       enum: ['INDIVIDUAL', 'COMBO'],

@@ -13,6 +13,7 @@ module.exports = {
       categoryId: Joi.string(),
       limit: Joi.number(),
       page: Joi.number(),
+      truckUnitId: Joi.string().trim(),
     }),
   },
 
@@ -28,6 +29,10 @@ module.exports = {
       price: Joi.number().required(),
       minQty: Joi.number().min(1).required(),
       maxQty: Joi.number().min(1).required(),
+      truckServiceScope: Joi.string()
+        .valid('ALL_ACTIVE_TRUCKS', 'SELECTED_TRUCKS')
+        .required(),
+      truckUnitIds: Joi.array().items(Joi.string().trim()),
 
       //comment code
       hasDiscount: Joi.boolean().required(),
@@ -160,6 +165,11 @@ module.exports = {
       available: Joi.boolean(),
       minQty: Joi.number().min(1),
       maxQty: Joi.number().min(1),
+      truckServiceScope: Joi.string().valid(
+        'ALL_ACTIVE_TRUCKS',
+        'SELECTED_TRUCKS'
+      ),
+      truckUnitIds: Joi.array().items(Joi.string().trim()),
       hasDiscount: Joi.boolean().required(),
       discountMode: Joi.string()
         .valid('CUSTOM', 'PREDEFINED')

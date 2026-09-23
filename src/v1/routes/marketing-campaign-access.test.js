@@ -21,8 +21,8 @@ test('marketing campaign routes are SUPER_ADMIN only', async () => {
 test('manual generation controller forwards only the request identifier and selected vendors', async () => {
   const calls = [];
   const controller = createMarketingCampaignController({
-    async generateVendorSpotlights(requestId, vendorIds) {
-      calls.push([requestId, vendorIds]);
+    async generateVendorSpotlights(requestId, vendorSelections) {
+      calls.push([requestId, vendorSelections]);
       return [{ action: 'PROCESSING', campaign: { campaignId: 'campaign-new' } }];
     },
   });
@@ -30,12 +30,16 @@ test('manual generation controller forwards only the request identifier and sele
   await controller.generate(
     {
       body: {
-        requestId: 'manual-request-1', vendorIds: ['vendor-1'], providerPayload: { secret: true },
+        requestId: 'manual-request-1',
+        vendorSelections: [{ vendorId: 'vendor-1', truckUnitIds: ['truck-1'] }],
+        providerPayload: { secret: true },
       },
     },
     { data(value) { body = value; return value; } }
   );
-  assert.deepEqual(calls, [['manual-request-1', ['vendor-1']]]);
+  assert.deepEqual(calls, [['manual-request-1', [
+    { vendorId: 'vendor-1', truckUnitIds: ['truck-1'] },
+  ]]])
   assert.equal(body.results[0].campaign.campaignId, 'campaign-new');
 });
 

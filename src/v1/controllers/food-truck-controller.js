@@ -45,6 +45,11 @@ const { filterActivePublicMarketplaceEvents } = require('../../helper/public-mar
 const {
   saveFoodTruckUpdateWithScheduleEvent,
 } = require('../../helper/vendor-schedule-marketing-event');
+const {
+  activeTruckUnits,
+  primaryTruckUnitId,
+  isMenuTreeAvailableForTruck,
+} = require('../../helper/menu-truck-unit-scope');
 
 // Customer ordering must receive the requirements of items nested inside
 // combos and BOGO/BOGOHO rewards, not only their display fields.
@@ -59,6 +64,8 @@ const customerNestedMenuItemSelect = {
   hasDiscount: 1,
   discountRules: 1,
   available: 1,
+  truckServiceScope: 1,
+  truckUnitIds: 1,
   itemType: 1,
   categoryId: 1,
   meatId: 1,
@@ -962,12 +969,18 @@ exports.getMenu = async (req, res, next) => {
   try {
     let {
       params: { id: _id },
+      query: { truckUnitId },
       user,
     } = req;
 
     const ft = await Service.getById(_id);
     if (!ft) {
       return res.error(new Error('No food truck found'), 409);
+    }
+    const activeUnitIds = new Set(activeTruckUnits(ft).map((unit) => unit._id.toString()));
+    const targetTruckUnitId = String(truckUnitId || primaryTruckUnitId(ft) || '');
+    if (!targetTruckUnitId || !activeUnitIds.has(targetTruckUnitId)) {
+      return res.error(new Error('Select an active food truck to view its menu.'), 400);
     }
     let userRestrictDiet = [];
 
@@ -1018,7 +1031,11 @@ exports.getMenu = async (req, res, next) => {
         ],
       })
     )
-      .filter((item) => item.categoryId)
+      .filter(
+        (item) =>
+          item.categoryId &&
+          isMenuTreeAvailableForTruck(item, targetTruckUnitId, ft)
+      )
       .map((item) => {
         if (item && item.categoryId && typeof item.categoryId === 'object') {
           item.category = item.categoryId;

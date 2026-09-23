@@ -114,6 +114,40 @@ assert.equal(
   'reference names must be treated as literal text'
 );
 
+const primaryTruckId = new Types.ObjectId();
+const secondTruckId = new Types.ObjectId();
+const foodTruck = {
+  truck_units: [
+    { _id: primaryTruckId, name: 'Main Truck', is_primary: true },
+    { _id: secondTruckId, name: 'Second Truck' },
+  ],
+};
+assert.deepStrictEqual(
+  menuCsvImportService.resolveMenuTruckScope({
+    _rowNumber: 10,
+    foodTruckAvailability: 'ALL',
+  }, foodTruck),
+  { truckServiceScope: 'ALL_ACTIVE_TRUCKS', truckUnitIds: [] }
+);
+assert.deepStrictEqual(
+  menuCsvImportService.resolveMenuTruckScope({
+    _rowNumber: 11,
+    foodTruckAvailability: 'Main Truck|Second Truck',
+  }, foodTruck).truckUnitIds.map(String),
+  [String(primaryTruckId), String(secondTruckId)]
+);
+assert.throws(
+  () => menuCsvImportService.resolveMenuTruckScope({
+    _rowNumber: 12,
+    foodTruckAvailability: 'Unknown Truck',
+  }, foodTruck),
+  /active food truck "Unknown Truck" was not found/
+);
+assert.throws(
+  () => menuCsvImportService.resolveMenuTruckScope({ _rowNumber: 13 }, foodTruck),
+  /missing required value for foodTruckAvailability/
+);
+
 (async () => {
   const referenceId = new Types.ObjectId();
   const fakeReferenceModel = {

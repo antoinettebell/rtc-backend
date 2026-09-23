@@ -114,13 +114,20 @@ test('manual generation forwards one idempotency identifier and projects safe re
     },
   });
   const results = await gateway.generateVendorSpotlights(
-    'manual-request-1', ['vendor-1', 'vendor-2'],
+    'manual-request-1', [
+      { vendorId: 'vendor-1', truckUnitIds: ['truck-1'] },
+      { vendorId: 'vendor-2', truckUnitIds: ['truck-2'] },
+    ],
   );
   assert.equal(results[0].campaign.campaignId, 'campaign-new');
   assert.equal('providerPayload' in results[0].campaign, false);
   assert.equal(calls[0].url, 'https://marketing.internal/admin/campaigns/generate');
   assert.deepEqual(JSON.parse(calls[0].options.body), {
-    requestId: 'manual-request-1', vendorIds: ['vendor-1', 'vendor-2'],
+    requestId: 'manual-request-1',
+    vendorSelections: [
+      { vendorId: 'vendor-1', truckUnitIds: ['truck-1'] },
+      { vendorId: 'vendor-2', truckUnitIds: ['truck-2'] },
+    ],
   });
 });
 
@@ -129,10 +136,12 @@ test('eligible vendor listing projects only checkbox-safe fields', async () => {
     baseUrl: 'https://marketing.internal', serviceKey: 'secret',
     fetchImpl: async () => response({ vendors: [{
       vendorId: 'vendor-1', businessName: 'Vendor', generationBlocked: false,
+      truckUnits: [{ truckUnitId: 'truck-1', name: 'Main Truck', isPrimary: true }],
       providerPayload: { secret: true },
     }] }),
   });
   assert.deepEqual(await gateway.listEligibleVendors(), [{
     vendorId: 'vendor-1', businessName: 'Vendor', generationBlocked: false,
+    truckUnits: [{ truckUnitId: 'truck-1', name: 'Main Truck', isPrimary: true }],
   }]);
 });
