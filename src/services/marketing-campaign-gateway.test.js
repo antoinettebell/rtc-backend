@@ -44,10 +44,17 @@ test('projects only safe campaign details', async () => {
       campaignId: 'campaign-1', businessName: 'Vendor', videoUrl: 'https://video.example/current.mp4',
       selectedFoodImages: [{ name: 'Taco', category: 'Individual', url: 'https://img.example/taco.jpg', prompt: 'secret' }],
       scheduleText: 'THIS WEEK', supportedServices: ['PICKUP'], rawProviderResponse: { secret: true },
+      visualVariation: {
+        sequence: 2, mode: 'IMAGES_ONLY', animationVariantId: 'ZOOM_FADE', imageRotation: 2,
+        providerPayload: { secret: true },
+      },
     } }),
   });
   const detail = await gateway.getCampaignDetails('campaign-1');
   assert.equal(detail.selectedFoodImages[0].name, 'Taco');
+  assert.deepEqual(detail.visualVariation, {
+    sequence: 2, mode: 'IMAGES_ONLY', animationVariantId: 'ZOOM_FADE', imageRotation: 2,
+  });
   assert.equal('prompt' in detail.selectedFoodImages[0], false);
   assert.equal('rawProviderResponse' in detail, false);
 });
@@ -106,9 +113,26 @@ test('manual generation forwards one idempotency identifier and projects safe re
       }] });
     },
   });
-  const results = await gateway.generateVendorSpotlights('manual-request-1');
+  const results = await gateway.generateVendorSpotlights(
+    'manual-request-1', ['vendor-1', 'vendor-2'],
+  );
   assert.equal(results[0].campaign.campaignId, 'campaign-new');
   assert.equal('providerPayload' in results[0].campaign, false);
   assert.equal(calls[0].url, 'https://marketing.internal/admin/campaigns/generate');
-  assert.deepEqual(JSON.parse(calls[0].options.body), { requestId: 'manual-request-1' });
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    requestId: 'manual-request-1', vendorIds: ['vendor-1', 'vendor-2'],
+  });
+});
+
+test('eligible vendor listing projects only checkbox-safe fields', async () => {
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://marketing.internal', serviceKey: 'secret',
+    fetchImpl: async () => response({ vendors: [{
+      vendorId: 'vendor-1', businessName: 'Vendor', generationBlocked: false,
+      providerPayload: { secret: true },
+    }] }),
+  });
+  assert.deepEqual(await gateway.listEligibleVendors(), [{
+    vendorId: 'vendor-1', businessName: 'Vendor', generationBlocked: false,
+  }]);
 });
