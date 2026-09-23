@@ -9,11 +9,14 @@
     "test:plans": "node src/helper/vendor-plan-helper.test.js",
     "test:sms": "node src/helper/sms-helper.test.js",
     "test:employee-shifts": "node src/v1/services/employee-operational-day.test.js",
+    "test:employee-orders": "node src/helper/employee-operational-access.test.js && node src/helper/employee-order-access.test.js",
     "test:reviews": "node src/helper/review-url-helper.test.js",
     "test:tickets": "node src/helper/event-ticket-helper.test.js && node src/helper/event-ticket-tax-helper.test.js && node src/helper/ticket-token-helper.test.js && node src/helper/public-ticket-page.test.js",
     "test:menu-import": "node src/v1/services/menu-csv-import-service.test.js",
     "reconcile:event-vendor-photo-counters": "node scripts/reconcile-event-vendor-photo-counters.js",
-    "migrate:reviews": "node scripts/migrate-review-ratings.js"
+    "migrate:reviews": "node scripts/migrate-review-ratings.js",
+    "migrate:menu-truck-scopes": "node scripts/migrate-menu-truck-scopes.js",
+    "test:menu-truck-scopes": "node src/helper/menu-truck-unit-scope.test.js && node scripts/migrate-menu-truck-scopes.test.js"
   },
   "author": "Tailor",
   "license": "MIT",

@@ -1,4 +1,4 @@
-const { OrderModel: Model } = require('../../models');
+const { FoodTruckModel, OrderModel: Model } = require('../../models');
 const { BaseService } = require('../../common-services');
 const mongoose = require('mongoose');
 const {
@@ -13,6 +13,9 @@ const {
   getOperationalDayQueryEnvelope,
   isOperationalDayInRange,
 } = require('../../helper/employee-operational-day-helper');
+const {
+  buildEmployeeOrderScope,
+} = require('../../helper/employee-order-access');
 
 const cashPaymentMethods = ['COD', 'CASH'];
 const digitalPaymentMethods = ['APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY'];
@@ -100,6 +103,7 @@ class OrderService extends BaseService {
   ) {
     const skip = (+page - 1) * limit;
     let q = {};
+    let employeeOperationalDay = null;
     if (user?.userType === 'CUSTOMER') {
       q.userId = new mongoose.Types.ObjectId(user._id);
     }
@@ -107,21 +111,17 @@ class OrderService extends BaseService {
       q['foodTruck.userId'] = new mongoose.Types.ObjectId(user._id);
     }
     if (user?.userType === 'EMPLOYEE') {
-      const startOfToday = new Date();
-      startOfToday.setHours(0, 0, 0, 0);
-      const endOfToday = new Date(startOfToday);
-      endOfToday.setDate(endOfToday.getDate() + 1);
-      q.foodTruckId = new mongoose.Types.ObjectId(user.food_truck_id);
-      q.locationId = user.assigned_location_id;
-      q.created_by_type = 'EMPLOYEE';
-      q.employee_internal_id = user.employee_internal_id;
-      q.$or = [
-        { created_at: { $gte: startOfToday, $lt: endOfToday } },
-        {
-          created_at: null,
-          createdAt: { $gte: startOfToday, $lt: endOfToday },
-        },
-      ];
+      const foodTruck = await FoodTruckModel.findById(user.food_truck_id)
+        .select('schedule_time_zone')
+        .lean();
+      const timeZone = foodTruck?.schedule_time_zone || 'America/New_York';
+      const operationalDayKey = getOperationalDayKey(new Date(), timeZone);
+      const { start, end } = getOperationalDayQueryEnvelope(
+        operationalDayKey,
+        operationalDayKey
+      );
+      q = buildEmployeeOrderScope({ user, start, end });
+      employeeOperationalDay = { operationalDayKey, timeZone };
     }
     if (id) {
       q['_id'] = new mongoose.Types.ObjectId(id);
@@ -503,8 +503,19 @@ class OrderService extends BaseService {
     },
   ])
 )[0];
-      return {
-      data: (data?.records || []).map((item) => {
+    const records = (data?.records || []).filter(
+      (item) =>
+        !employeeOperationalDay ||
+        isOperationalDayInRange({
+          value: item.created_at || item.createdAt,
+          operationalDayKey: employeeOperationalDay.operationalDayKey,
+          startDayKey: employeeOperationalDay.operationalDayKey,
+          endDayKey: employeeOperationalDay.operationalDayKey,
+          timeZone: employeeOperationalDay.timeZone,
+        })
+    );
+    return {
+      data: records.map((item) => {
         item.items = (item.items || []).map((it) => {
           it.menuItem =it.fullMenuItemData;
           // it.menuItem = (item.menuItems || []).find(
@@ -518,7 +529,9 @@ class OrderService extends BaseService {
         delete item.menuItems;
         return item;
       }),
-      total: data?.metaData?.[0]?.total || 0,
+      total: employeeOperationalDay
+        ? records.length
+        : data?.metaData?.[0]?.total || 0,
     };
   }
 
