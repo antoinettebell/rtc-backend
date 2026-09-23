@@ -127,6 +127,16 @@ class MarketingCampaignGateway {
     return (Array.isArray(data?.campaigns) ? data.campaigns : []).map(campaignListItem);
   }
 
+  async generateVendorSpotlights(requestId) {
+    const data = await this.request('/admin/campaigns/generate', {
+      method: 'POST', body: { requestId: requireCampaignId(requestId) },
+    });
+    return (Array.isArray(data?.results) ? data.results : []).map((result) => ({
+      action: result?.action ?? null,
+      campaign: result?.campaign ? campaignListItem(result.campaign) : null,
+    }));
+  }
+
   async getCampaignDetails(campaignId) {
     const id = requireCampaignId(campaignId);
     const data = await this.request(`/admin/campaigns/${encodeURIComponent(id)}`);
