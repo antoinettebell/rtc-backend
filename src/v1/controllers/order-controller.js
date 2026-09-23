@@ -53,6 +53,10 @@ const { OrderModel, TapToPayPaymentAttemptModel } = require('../../models');
 const {
   isMenuTreeAvailableForTruck,
 } = require('../../helper/menu-truck-unit-scope');
+const {
+  assertEmployeeCanUpdateOrder,
+  employeeCanAccessOrder,
+} = require('../../helper/employee-order-access');
 
 const { env } = require('../../config');
 
@@ -4689,7 +4693,7 @@ exports.update = async (req, res, next) => {
       if (
         !foodTruck ||
         (user.userType === 'EMPLOYEE' &&
-          item.locationId?.toString() !== user.assigned_location_id?.toString())
+          !employeeCanAccessOrder({ user, order: item }))
       ) {
         return res.error(new Error('Order not found or access denied'), 404);
       }
@@ -4723,27 +4727,8 @@ exports.update = async (req, res, next) => {
     }
 
     if (user.userType === 'EMPLOYEE' && orderStatus) {
-      const employeeAllowedStatuses = [
-        'PREPARING',
-        'READY_FOR_PICKUP',
-        'COMPLETED',
-      ];
-
-      if (!employeeAllowedStatuses.includes(orderStatus)) {
-        return res.error(
-          new Error('Employees can only advance assigned POS orders'),
-          403
-        );
-      }
-
-      if (!WALK_UP_ORDER_SOURCES.includes(item.orderSource)) {
-        return res.error(
-          new Error('Employees can only update walk-up POS orders'),
-          403
-        );
-      }
-
       await assertActiveEmployeeSession(user);
+      assertEmployeeCanUpdateOrder({ user, order: item, orderStatus });
     }
 
     if (
