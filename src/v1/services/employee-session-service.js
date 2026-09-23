@@ -18,6 +18,9 @@ const {
   isRefundedOrder,
   isRevenueOrder,
 } = require('../../helper/vendor-sales-summary-helper');
+const {
+  buildEmployeeOrderScope,
+} = require('../../helper/employee-order-access');
 
 const toNumber = (value) => {
   const amount = Number(value);
@@ -425,32 +428,30 @@ class EmployeeSessionService extends BaseService {
     const operationalDayKey = getOperationalDayKey(new Date(), timeZone);
     const { start, end } = getOperationalDayQueryEnvelope(operationalDayKey);
     const query = {
-      created_by_type: 'EMPLOYEE',
-      employee_internal_id: user.employee_internal_id,
-      food_truck_id: user.food_truck_id,
-      location_id: user.assigned_location_id,
-      deletedAt: null,
-      $or: [
-        { created_at: { $gte: start, $lt: end } },
-        {
-          created_at: null,
-          createdAt: { $gte: start, $lt: end },
-        },
-      ],
+      ...buildEmployeeOrderScope({ user, start, end }),
       ...(Array.isArray(statuses) && statuses.length
         ? { orderStatus: { $in: statuses } }
         : {}),
     };
 
     const orders = await OrderModel.find(query)
+      .populate({
+        path: 'userId',
+        select: 'firstName lastName profilePic',
+      })
       .sort({ created_at: -1, createdAt: -1 })
       .lean();
 
-    return orders.filter(
-      (order) =>
-        getOperationalDayKey(order.created_at || order.createdAt, timeZone) ===
-        operationalDayKey
-    );
+    return orders
+      .filter(
+        (order) =>
+          getOperationalDayKey(order.created_at || order.createdAt, timeZone) ===
+          operationalDayKey
+      )
+      .map((order) => ({
+        ...order,
+        user: order.user || order.userId || null,
+      }));
   }
 
   async getEmployeeDashboard({

@@ -15,6 +15,11 @@ const {
   ACTIVE_BOGO_TYPES,
   getComboSubItemId,
 } = require('../../helper/combo-promotion-helper');
+const {
+  normalizeMenuTruckScope,
+  isMenuTreeAvailableForTruck,
+  assertReferencedItemCoversParent,
+} = require('../../helper/menu-truck-unit-scope');
 const entityName = 'Menu';
 
 // Vendor/employee walk-up ordering needs the same nested option data as
@@ -31,6 +36,8 @@ const nestedMenuItemSelect = {
   hasDiscount: 1,
   discountRules: 1,
   available: 1,
+  truckServiceScope: 1,
+  truckUnitIds: 1,
   itemType: 1,
   categoryId: 1,
   meatId: 1,
@@ -163,6 +170,93 @@ const assertBogoRewardsAreEligible = async ({
   }
 };
 
+const getMenuFoodTruck = async (userId) => {
+  const foodTruck = await FoodTruckService.getByData(
+    { userId },
+    { singleResult: true }
+  );
+  if (!foodTruck) {
+    const error = new Error('Food truck not found.');
+    error.code = 404;
+    throw error;
+  }
+  return foodTruck;
+};
+
+const getReferenceId = (entry, key) => entry?.[key]?._id || entry?.[key];
+
+const assertMenuReferenceScopes = async ({
+  userId,
+  foodTruck,
+  menuItem,
+  itemId = null,
+}) => {
+  const comboIds = (Array.isArray(menuItem.subItem) ? menuItem.subItem : [])
+    .map((entry) => getReferenceId(entry, 'menuItem'))
+    .filter((id) => mongoose.Types.ObjectId.isValid(id));
+  const bogoIds = (Array.isArray(menuItem.bogoItems) ? menuItem.bogoItems : [])
+    .filter((entry) => !entry?.isSameItem)
+    .map((entry) => getReferenceId(entry, 'itemId'))
+    .filter((id) => mongoose.Types.ObjectId.isValid(id));
+  const referencedIds = [...new Set([...comboIds, ...bogoIds].map(String))];
+  const referencedItems = referencedIds.length
+    ? await MenuItemModel.find({
+        _id: { $in: referencedIds },
+        userId,
+        deletedAt: null,
+      }).select('name truckServiceScope truckUnitIds')
+    : [];
+  const referencedById = new Map(
+    referencedItems.map((item) => [item._id.toString(), item])
+  );
+
+  if (referencedById.size !== referencedIds.length) {
+    const error = new Error('A combo, add-on, or BOGO item is unavailable for this vendor.');
+    error.code = 409;
+    throw error;
+  }
+
+  comboIds.forEach((id) =>
+    assertReferencedItemCoversParent({
+      parent: menuItem,
+      child: referencedById.get(String(id)),
+      foodTruck,
+      relationLabel: 'Combo or add-on item',
+    })
+  );
+  bogoIds.forEach((id) =>
+    assertReferencedItemCoversParent({
+      parent: menuItem,
+      child: referencedById.get(String(id)),
+      foodTruck,
+      relationLabel: 'BOGO item',
+    })
+  );
+
+  if (!itemId) return;
+  const parents = await MenuItemModel.find({
+    userId,
+    deletedAt: null,
+    _id: { $ne: itemId },
+    $or: [
+      { 'subItem.menuItem': itemId },
+      { 'bogoItems.itemId': itemId },
+    ],
+  }).select('name truckServiceScope truckUnitIds subItem bogoItems');
+
+  parents.forEach((parent) => {
+    const isComboReference = (parent.subItem || []).some(
+      (entry) => String(getReferenceId(entry, 'menuItem')) === String(itemId)
+    );
+    assertReferencedItemCoversParent({
+      parent,
+      child: menuItem,
+      foodTruck,
+      relationLabel: isComboReference ? 'Combo or add-on item' : 'BOGO item',
+    });
+  });
+};
+
 /**
  * Helper to process BOGO items and handle isSameItem logic
  * @param {Object} item - Menu item object
@@ -214,7 +308,7 @@ const processBogoItems = (item) => {
 exports.list = async (req, res, next) => {
   try {
     let {
-      query: { limit = 10, page = 1, search, categoryId, userId },
+      query: { limit = 10, page = 1, search, categoryId, userId, truckUnitId },
       params: { id: _id },
       user,
     } = req;
@@ -289,6 +383,17 @@ exports.list = async (req, res, next) => {
         item.meatId = item.meat._id;
       }
 
+      if (user.userType === 'EMPLOYEE' || truckUnitId) {
+        const foodTruck = await getMenuFoodTruck(scopedUserId);
+        const targetTruckUnitId =
+          user.userType === 'EMPLOYEE'
+            ? user.assigned_truck_unit_id
+            : truckUnitId;
+        if (!isMenuTreeAvailableForTruck(item, targetTruckUnitId, foodTruck)) {
+          return res.error(new Error('Menu not found.'), 404);
+        }
+      }
+
       // Handle isSameItem logic
       item = processBogoItems(item);
 
@@ -316,7 +421,7 @@ exports.list = async (req, res, next) => {
     if (user && user.userType === 'SUPER_ADMIN' && userId) {
       q.userId = new mongoose.Types.ObjectId(userId);
     }
-    const data = (
+    let data = (
       await Service.getByData(
         { ...q, deletedAt: null },
         {
@@ -383,10 +488,21 @@ exports.list = async (req, res, next) => {
     });
     // console.log("call",data)
 
-    const total = await Service.getCount({
-      ...q,
-      deletedAt: null,
-    });
+    const targetTruckUnitId =
+      user?.userType === 'EMPLOYEE'
+        ? user.assigned_truck_unit_id
+        : truckUnitId;
+    if (targetTruckUnitId) {
+      const scopedUserId =
+        user.userType === 'EMPLOYEE' ? user.vendor_user_id : user._id;
+      const foodTruck = await getMenuFoodTruck(scopedUserId);
+      data = data.filter((item) =>
+        isMenuTreeAvailableForTruck(item, targetTruckUnitId, foodTruck)
+      );
+    }
+    const total = targetTruckUnitId
+      ? data.length
+      : await Service.getCount({ ...q, deletedAt: null });
     return res.data(
       {
         [`${entityName.toLocaleLowerCase()}List`]: data,
@@ -596,6 +712,8 @@ exports.add = async (req, res, next) => {
         comboSideOptions,
         comboSideOptionCosts,
         comboSidesPerOrder,
+        truckServiceScope,
+        truckUnitIds,
       },
       user,
     } = req;
@@ -618,6 +736,13 @@ exports.add = async (req, res, next) => {
     if (newDish) {
       await assertNewDishAllowedForUser(user._id);
     }
+    const foodTruck = await getMenuFoodTruck(user._id);
+    const menuTruckScope = normalizeMenuTruckScope({
+      truckServiceScope,
+      truckUnitIds,
+      foodTruck,
+      requireExplicit: true,
+    });
 
     let finalDiscountType = discountType || 'FIXED';
     let finalDiscountValue = discount || 0;
@@ -715,6 +840,16 @@ exports.add = async (req, res, next) => {
       hasDiscount,
       discountType: finalDiscountType,
     });
+    await assertMenuReferenceScopes({
+      userId: user._id,
+      foodTruck,
+      menuItem: {
+        name,
+        subItem,
+        bogoItems,
+        ...menuTruckScope,
+      },
+    });
 
     let data = await Service.create({
       name,
@@ -757,6 +892,7 @@ exports.add = async (req, res, next) => {
       comboSideOptions: normalizedComboSideOptions,
       comboSideOptionCosts: normalizedComboSideOptionCosts,
       comboSidesPerOrder: normalizedComboSidesPerOrder,
+      ...menuTruckScope,
     });
 
     if (data) {
@@ -823,6 +959,8 @@ exports.update = async (req, res, next) => {
         comboSideOptions,
         comboSideOptionCosts,
         comboSidesPerOrder,
+        truckServiceScope,
+        truckUnitIds,
       },
       params: { id },
       user,
@@ -861,6 +999,17 @@ exports.update = async (req, res, next) => {
     if (newDish) {
       await assertNewDishAllowedForUser(user._id);
     }
+    const foodTruck = await getMenuFoodTruck(item.userId);
+    const menuTruckScope = normalizeMenuTruckScope({
+      truckServiceScope:
+        truckServiceScope === undefined
+          ? item.truckServiceScope
+          : truckServiceScope,
+      truckUnitIds:
+        truckUnitIds === undefined ? item.truckUnitIds : truckUnitIds,
+      foodTruck,
+      requireExplicit: false,
+    });
 
     // ---------- Discount Logic ----------
     let finalDiscountType = hasDiscount ? discountType : 'FIXED';
@@ -987,6 +1136,17 @@ exports.update = async (req, res, next) => {
       hasDiscount,
       discountType: finalDiscountType,
     });
+    await assertMenuReferenceScopes({
+      userId: item.userId,
+      foodTruck,
+      itemId: item._id,
+      menuItem: {
+        name: name || item.name,
+        subItem: nextSubItems,
+        bogoItems: bogoItems || [],
+        ...menuTruckScope,
+      },
+    });
 
     // ---------- Update Fields ----------
     Object.assign(item, {
@@ -1029,6 +1189,7 @@ exports.update = async (req, res, next) => {
       comboSideOptions: normalizedComboSideOptions,
       comboSideOptionCosts: normalizedComboSideOptionCosts,
       comboSidesPerOrder: normalizedComboSidesPerOrder,
+      ...menuTruckScope,
     });
 
     await item.save();

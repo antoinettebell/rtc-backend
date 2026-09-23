@@ -20,6 +20,12 @@ const {
   getComboSubItemId,
   hasActiveBogoPromotion,
 } = require('../../helper/combo-promotion-helper');
+const {
+  MENU_TRUCK_SCOPE,
+  activeTruckUnits,
+  normalizeMenuTruckScope,
+  assertReferencedItemCoversParent,
+} = require('../../helper/menu-truck-unit-scope');
 
 const URL_PATTERN = /^https?:\/\//i;
 const WINDOWS_1252_REPLACEMENTS = {
@@ -942,6 +948,51 @@ class MenuCsvImportService {
     return this.parseRequiredObjectId(rowUserId, 'userId', row._rowNumber);
   }
 
+  resolveMenuTruckScope(row, foodTruck) {
+    const rawAvailability = this.parseRequiredString(
+      row.foodTruckAvailability,
+      'foodTruckAvailability',
+      row._rowNumber
+    );
+    const normalizedAvailability = rawAvailability.toUpperCase();
+    if (['ALL', 'ALL FOOD TRUCKS', 'BOTH'].includes(normalizedAvailability)) {
+      return normalizeMenuTruckScope({
+        truckServiceScope: MENU_TRUCK_SCOPE.ALL,
+        truckUnitIds: [],
+        foodTruck,
+        requireExplicit: true,
+      });
+    }
+
+    const units = activeTruckUnits(foodTruck);
+    const selectedIds = [];
+    for (const truckName of this.parseStringArray(rawAvailability)) {
+      const matches = units.filter(
+        (unit) =>
+          String(unit.name || '').trim().toLowerCase() ===
+          truckName.trim().toLowerCase()
+      );
+      if (matches.length === 0) {
+        throw new Error(
+          `Row ${row._rowNumber}: active food truck "${truckName}" was not found for this vendor.`
+        );
+      }
+      if (matches.length > 1) {
+        throw new Error(
+          `Row ${row._rowNumber}: food truck name "${truckName}" is duplicated. Rename the truck units before importing.`
+        );
+      }
+      selectedIds.push(matches[0]._id);
+    }
+
+    return normalizeMenuTruckScope({
+      truckServiceScope: MENU_TRUCK_SCOPE.SELECTED,
+      truckUnitIds: selectedIds,
+      foodTruck,
+      requireExplicit: true,
+    });
+  }
+
   getMenuItemId(row) {
     return String(row.menuItemId || row._id || row.id || '').trim();
   }
@@ -1052,6 +1103,8 @@ class MenuCsvImportService {
       minQty: this.parseNumber(row.minQty, 1, 'minQty', row._rowNumber),
       maxQty: this.parseNumber(row.maxQty, 99, 'maxQty', row._rowNumber),
       available: this.parseBoolean(row.available, true),
+      truckServiceScope: referenceIds.menuTruckScope.truckServiceScope,
+      truckUnitIds: referenceIds.menuTruckScope.truckUnitIds,
       itemType: row.itemType || 'INDIVIDUAL',
       meatWellness: row.meatWellness || 'NA',
       categoryId,
@@ -1149,6 +1202,82 @@ class MenuCsvImportService {
     }
   }
 
+  async validateMenuTruckReferences({
+    menuItem,
+    rowUserId,
+    updateFilter,
+    rowNumber,
+    foodTruck,
+  }) {
+    const comboIds = (menuItem.subItem || [])
+      .map((entry) => entry?.menuItem)
+      .filter((id) => Types.ObjectId.isValid(id));
+    const bogoIds = (menuItem.bogoItems || [])
+      .filter((entry) => !entry?.isSameItem)
+      .map((entry) => entry?.itemId)
+      .filter((id) => Types.ObjectId.isValid(id));
+    const referenceIds = [...new Set([...comboIds, ...bogoIds].map(String))];
+    const referencedItems = referenceIds.length
+      ? await MenuItemModel.find({
+          _id: { $in: referenceIds },
+          userId: rowUserId,
+          deletedAt: null,
+        }).select('name truckServiceScope truckUnitIds')
+      : [];
+    const referencedById = new Map(
+      referencedItems.map((item) => [item._id.toString(), item])
+    );
+    if (referencedById.size !== referenceIds.length) {
+      throw new Error(
+        `Row ${rowNumber}: a combo, add-on, or BOGO item is unavailable for this vendor.`
+      );
+    }
+    try {
+      comboIds.forEach((id) =>
+        assertReferencedItemCoversParent({
+          parent: menuItem,
+          child: referencedById.get(String(id)),
+          foodTruck,
+          relationLabel: 'Combo or add-on item',
+        })
+      );
+      bogoIds.forEach((id) =>
+        assertReferencedItemCoversParent({
+          parent: menuItem,
+          child: referencedById.get(String(id)),
+          foodTruck,
+          relationLabel: 'BOGO item',
+        })
+      );
+    } catch (error) {
+      throw new Error(`Row ${rowNumber}: ${error.message}`);
+    }
+
+    const existingItem = await MenuItemModel.findOne(updateFilter).select('_id');
+    if (!existingItem) return;
+    const parents = await MenuItemModel.find({
+      userId: rowUserId,
+      deletedAt: null,
+      _id: { $ne: existingItem._id },
+      $or: [
+        { 'subItem.menuItem': existingItem._id },
+        { 'bogoItems.itemId': existingItem._id },
+      ],
+    }).select('name truckServiceScope truckUnitIds subItem bogoItems');
+    try {
+      parents.forEach((parent) =>
+        assertReferencedItemCoversParent({
+          parent,
+          child: menuItem,
+          foodTruck,
+          relationLabel: 'Referenced item',
+        })
+      );
+    } catch (error) {
+      throw new Error(`Row ${rowNumber}: ${error.message}`);
+    }
+  }
+
   async validateVendor(vendorUserId) {
     const vendor = await UserModel.findOne({
       _id: vendorUserId,
@@ -1174,6 +1303,17 @@ class MenuCsvImportService {
     return getVendorPlanCapabilities(foodTruck?.planId);
   }
 
+  async getVendorFoodTruck(vendorUserId) {
+    const foodTruck = await FoodTruckModel.findOne({
+      userId: vendorUserId,
+      deletedAt: null,
+    })
+      .populate('planId')
+      .lean();
+    if (!foodTruck) throw new Error('Selected vendor food truck was not found.');
+    return foodTruck;
+  }
+
   async importFromCsv({ csvText, vendorUserId, imageFiles = [] }) {
     const records = this.toRecords(csvText);
     this.validateUniqueRecordNames(records);
@@ -1194,7 +1334,8 @@ class MenuCsvImportService {
     );
 
     await this.validateVendor(vendorObjectId);
-    const vendorCapabilities = await this.getVendorCapabilities(vendorObjectId);
+    const foodTruck = await this.getVendorFoodTruck(vendorObjectId);
+    const vendorCapabilities = getVendorPlanCapabilities(foodTruck?.planId);
     const canHighlightNewDish = !!vendorCapabilities.newDishHighlight;
 
     const summary = {
@@ -1235,6 +1376,7 @@ class MenuCsvImportService {
         const referenceIds = {
           meatId: await this.resolveMeatId(row),
           dietIds: await this.resolveDietObjectIds(row),
+          menuTruckScope: this.resolveMenuTruckScope(row, foodTruck),
         };
         const menuItem = this.buildMenuItem(
           row,
@@ -1259,6 +1401,13 @@ class MenuCsvImportService {
           rowUserId,
           updateFilter,
           rowNumber: row._rowNumber,
+        });
+        await this.validateMenuTruckReferences({
+          menuItem,
+          rowUserId,
+          updateFilter,
+          rowNumber: row._rowNumber,
+          foodTruck,
         });
         const result = await MenuItemModel.updateOne(
           updateFilter,

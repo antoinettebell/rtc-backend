@@ -54,6 +54,13 @@ const {
 } = require('../../helper/order-bogo-pricing-helper');
 const VendorComplianceService = require('../services/vendor-compliance-service');
 const { OrderModel, TapToPayPaymentAttemptModel } = require('../../models');
+const {
+  isMenuTreeAvailableForTruck,
+} = require('../../helper/menu-truck-unit-scope');
+const {
+  assertEmployeeCanUpdateOrder,
+  employeeCanAccessOrder,
+} = require('../../helper/employee-order-access');
 
 const { env } = require('../../config');
 
@@ -480,12 +487,18 @@ const buildWalkUpAuditFields = ({
 
 const resolveOrderTruckUnit = ({ foodTruck, locationId, truckUnitId = null, user }) => {
   const units = foodTruck?.truck_units || [];
-  return (
-    units.find(
+  const requestedTruckUnitId =
+    user?.userType === 'EMPLOYEE'
+      ? user.assigned_truck_unit_id
+      : truckUnitId;
+  if (user?.userType === 'EMPLOYEE' || requestedTruckUnitId) {
+    return units.find(
       (unit) =>
-        unit._id?.toString() ===
-        (truckUnitId || user.assigned_truck_unit_id)?.toString()
-    ) ||
+        unit._id?.toString() === requestedTruckUnitId?.toString() &&
+        !unit.is_archived
+    ) || null;
+  }
+  return (
     units.find(
       (unit) =>
         !unit.is_archived &&
@@ -1837,6 +1850,16 @@ exports.validateOrder = async (req, res, next) => {
       );
     }
 
+    const orderTruckUnit = resolveOrderTruckUnit({
+      foodTruck,
+      locationId,
+      truckUnitId,
+      user,
+    });
+    if (!orderTruckUnit) {
+      return res.error(new Error('Select an active food truck for this order.'), 409);
+    }
+
     let deliveryValidation = null;
     if (fulfillmentType === 'DELIVERY') {
       try {
@@ -1876,6 +1899,18 @@ exports.validateOrder = async (req, res, next) => {
     ).size;
     if (requestedMenuItemCount !== Object.keys(menuIds).length) {
       return res.error(new Error('Order items mismatched'), 409);
+    }
+    const unavailableMenuItem = Object.values(menuIds).find(
+      (menuItem) =>
+        !isMenuTreeAvailableForTruck(menuItem, orderTruckUnit._id, foodTruck)
+    );
+    if (unavailableMenuItem) {
+      return res.error(
+        new Error(
+          `"${unavailableMenuItem.name}" is not available from the selected food truck.`
+        ),
+        409
+      );
     }
 
     const menuItems = [];
@@ -3712,6 +3747,16 @@ exports.add = async (req, res, next) => {
       );
     }
 
+    const orderTruckUnit = resolveOrderTruckUnit({
+      foodTruck,
+      locationId,
+      truckUnitId,
+      user,
+    });
+    if (!orderTruckUnit) {
+      return res.error(new Error('Select an active food truck for this order.'), 409);
+    }
+
     let deliveryValidation = null;
     if (fulfillmentType === 'DELIVERY') {
       try {
@@ -3751,6 +3796,18 @@ exports.add = async (req, res, next) => {
     ).size;
     if (requestedMenuItemCount !== Object.keys(menuIds).length) {
       return res.error(new Error('Order items mismatched'), 409);
+    }
+    const unavailableMenuItem = Object.values(menuIds).find(
+      (menuItem) =>
+        !isMenuTreeAvailableForTruck(menuItem, orderTruckUnit._id, foodTruck)
+    );
+    if (unavailableMenuItem) {
+      return res.error(
+        new Error(
+          `"${unavailableMenuItem.name}" is not available from the selected food truck.`
+        ),
+        409
+      );
     }
 
     const menuItems = [];
@@ -4228,13 +4285,6 @@ exports.add = async (req, res, next) => {
         if (total < 0) total = 0; // Ensure total doesn't go negative
       }
     }
-    const orderTruckUnit = resolveOrderTruckUnit({
-      foodTruck,
-      locationId,
-      truckUnitId,
-      user,
-    });
-
     if (vendorPosOrder && normalizedPaymentMethod === 'TAP_TO_PAY') {
       const nativeTransactionId = String(transactionId || '').trim();
       if (!nativeTransactionId) {
@@ -4597,7 +4647,7 @@ exports.update = async (req, res, next) => {
       if (
         !foodTruck ||
         (user.userType === 'EMPLOYEE' &&
-          item.locationId?.toString() !== user.assigned_location_id?.toString())
+          !employeeCanAccessOrder({ user, order: item }))
       ) {
         return res.error(new Error('Order not found or access denied'), 404);
       }
@@ -4631,27 +4681,8 @@ exports.update = async (req, res, next) => {
     }
 
     if (user.userType === 'EMPLOYEE' && orderStatus) {
-      const employeeAllowedStatuses = [
-        'PREPARING',
-        'READY_FOR_PICKUP',
-        'COMPLETED',
-      ];
-
-      if (!employeeAllowedStatuses.includes(orderStatus)) {
-        return res.error(
-          new Error('Employees can only advance assigned POS orders'),
-          403
-        );
-      }
-
-      if (!WALK_UP_ORDER_SOURCES.includes(item.orderSource)) {
-        return res.error(
-          new Error('Employees can only update walk-up POS orders'),
-          403
-        );
-      }
-
       await assertActiveEmployeeSession(user);
+      assertEmployeeCanUpdateOrder({ user, order: item, orderStatus });
     }
 
     if (
