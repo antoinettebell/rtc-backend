@@ -1,5 +1,16 @@
 const SAFE_CAMPAIGN_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/;
 const SAFE_REASON = /^[\p{L}\p{N} .,_'-]{0,500}$/u;
+const DEFAULT_TIMEOUT_MS = 60000;
+const MIN_TIMEOUT_MS = 1000;
+const MAX_TIMEOUT_MS = 120000;
+
+const normalizeTimeoutMs = (value) => {
+  if (value === undefined || value === null || value === '') return DEFAULT_TIMEOUT_MS;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= MIN_TIMEOUT_MS && parsed <= MAX_TIMEOUT_MS
+    ? parsed
+    : DEFAULT_TIMEOUT_MS;
+};
 
 class MarketingCampaignGatewayError extends Error {
   constructor(code, status = 502) {
@@ -65,12 +76,12 @@ class MarketingCampaignGateway {
     baseUrl = process.env.MARKETING_CONTROL_API_URL,
     serviceKey = process.env.MARKETING_CONTROL_API_KEY,
     fetchImpl = globalThis.fetch,
-    timeoutMs = 10000,
+    timeoutMs = process.env.MARKETING_CONTROL_TIMEOUT_MS,
   } = {}) {
     this.baseUrl = String(baseUrl || '').trim().replace(/\/+$/, '');
     this.serviceKey = String(serviceKey || '').trim();
     this.fetchImpl = fetchImpl;
-    this.timeoutMs = timeoutMs;
+    this.timeoutMs = normalizeTimeoutMs(timeoutMs);
   }
 
   async request(path, { method = 'GET', body } = {}) {
@@ -147,6 +158,7 @@ class MarketingCampaignGateway {
 module.exports = {
   MarketingCampaignGateway,
   MarketingCampaignGatewayError,
+  normalizeTimeoutMs,
   campaignListItem,
   campaignDetail,
 };
