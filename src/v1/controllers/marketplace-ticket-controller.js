@@ -743,6 +743,7 @@ exports.validateTicket = async (req, res, next) => {
           checked_in_at: checkedInAt,
           checked_in_by_user_id: req.user._id,
           checked_in_session_id: req.body.scanner_session_id || null,
+          checked_in_action_source: 'COORDINATOR',
         },
       },
       { new: true }
@@ -1172,8 +1173,9 @@ exports.publicValidateTicket = async (req, res, next) => {
         $set: {
           status: 'CHECKED_IN',
           checked_in_at: checkedInAt,
-          checked_in_by_user_id: session.coordinator_user_id,
+          checked_in_by_user_id: session.assigned_staff_user_id || session.coordinator_user_id,
           checked_in_session_id: String(session._id),
+          checked_in_action_source: session.action_source || 'COORDINATOR',
         },
       },
       { new: true }

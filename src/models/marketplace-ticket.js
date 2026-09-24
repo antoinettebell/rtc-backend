@@ -29,6 +29,7 @@ const mSchema = mongoose.Schema(
       default: null,
     },
     checked_in_session_id: { type: String, default: null },
+    checked_in_action_source: { type: String, enum: ['COORDINATOR', 'INVITEE', 'ADMIN', 'SYSTEM'], default: null },
     delivered_at: { type: Date, default: null },
   },
   { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } }

@@ -14,6 +14,7 @@ const schema = mongoose.Schema({
   }],
   logo_url: { type: String, default: null },
   logo_key: { type: String, default: null },
+  tap_to_pay_serial_number: { type: String, default: null, trim: true },
   review_status: {
     type: String,
     enum: ['DRAFT', 'PENDING_REVIEW', 'APPROVED', 'REJECTED'],

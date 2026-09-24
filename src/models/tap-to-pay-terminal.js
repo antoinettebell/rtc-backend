@@ -16,9 +16,10 @@ const schema = new mongoose.Schema(
     food_truck_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'food-trucks',
-      required: true,
+      default: null,
       index: true,
     },
+    event_vendor_profile_id: { type: String, default: null, index: true },
     vendor_user_id: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'users',
@@ -68,6 +69,7 @@ const schema = new mongoose.Schema(
 );
 
 schema.index({ food_truck_id: 1, device_id: 1 }, { unique: true });
+schema.index({ event_vendor_profile_id: 1, device_id: 1 }, { unique: true, partialFilterExpression: { event_vendor_profile_id: { $type: 'string' } } });
 schema.index({ food_truck_id: 1, status: 1, last_seen_at: -1 });
 
 module.exports = mongoose.model('tap_to_pay_terminals', schema);

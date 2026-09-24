@@ -66,6 +66,11 @@ assert.strictEqual(marketplace.capabilities.maxSocialMediaLinks, 2);
 assert.strictEqual(marketplace.capabilities.maxGalleryPhotos, 10);
 assert.strictEqual(marketplace.capabilities.employeeLogin, false);
 assert.strictEqual(marketplace.capabilities.deliveryAcceptance, false);
+assert.strictEqual(marketplace.capabilities.employeeWalkUpPos, false);
+assert.strictEqual(marketplace.capabilities.tapToPay, true);
+assert.strictEqual(marketplace.capabilities.generalPurchaseCheckout, true);
+assert(marketplace.details.includes('Tap to Pay / General Purchase Checkout'));
+assert(marketplace.details.includes('3.5% processing fee'));
 assert.strictEqual(platinum.capabilities.employeeLogin, true);
 assert.strictEqual(elite.capabilities.eventMarketplace, true);
 assert.deepStrictEqual(elite.capabilities.walkUpPosPaymentMethods, [
