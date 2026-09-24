@@ -286,7 +286,7 @@ const awardApplication = async (controller, applicationId) => {
   assert.equal(second.error, undefined);
   assert.equal(state.bids[1].bid_status, 'AWARDED');
   assert.equal(state.bids[2].bid_status, 'SUBMITTED', 'untouched bid remains pending for an explicit coordinator decision');
-  assert.equal(state.event.status, 'AWARDED');
+  assert.equal(state.event.status, 'OPEN', 'public events remain open after vendor awards are filled');
   assert.equal(second.response.payload.remaining_food_vendor_awards, 0);
   assert.equal(state.questionArchives, 1);
   assert.equal(state.outcomes.filter((message) => message.title.includes('not selected')).length, 0);
@@ -361,7 +361,18 @@ const awardApplication = async (controller, applicationId) => {
   const batchController = loadController(batchState);
   const batch = await award(batchController, ['bid-1', 'bid-2']);
   assert.equal(batch.error, undefined, 'multiple selected bids can still be awarded in one checkout batch');
-  assert.equal(batchState.event.status, 'AWARDED');
+  assert.equal(batchState.event.status, 'OPEN', 'public events remain open after a batch award');
+
+  const privateCateredState = createState();
+  Object.assign(privateCateredState.event, {
+    event_visibility: 'PRIVATE',
+    ticket_sales_enabled: false,
+    fully_catered_event: true,
+  });
+  const privateCateredController = loadController(privateCateredState);
+  const privateCateredAward = await award(privateCateredController, ['bid-1', 'bid-2']);
+  assert.equal(privateCateredAward.error, undefined);
+  assert.equal(privateCateredState.event.status, 'AWARDED', 'solely private catered events become awarded');
 
   const closedState = createState();
   closedState.event.status = 'CLOSED';
@@ -401,7 +412,7 @@ const awardApplication = async (controller, applicationId) => {
   const secondApplication = await awardApplication(applicationController, 'application-2');
   assert.equal(secondApplication.error, undefined);
   assert.equal(applicationState.applications[2].application_status, 'SUBMITTED');
-  assert.equal(applicationState.event.status, 'AWARDED');
+  assert.equal(applicationState.event.status, 'OPEN', 'public events remain open after application awards are filled');
 
   const batchedFoodApplicationState = createState();
   batchedFoodApplicationState.bids = [];

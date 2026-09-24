@@ -282,6 +282,9 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    amendment_id: { type: String, default: null, index: true },
+    supersedes_bid_id: { type: String, default: null, index: true },
+    superseded_by_bid_id: { type: String, default: null, index: true },
   },
   {
     timestamps: {

@@ -3,6 +3,7 @@ const router = express.Router();
 const {
   MarketplaceController: Controller,
   MarketplaceTicketController: TicketController,
+  MarketplaceTicketStaffController: TicketStaffController,
   EventVendorController,
 } = require('../controllers');
 const { validate, MarketplaceValidation: Validation } = require('../validations');
@@ -23,6 +24,14 @@ router.get('/event-vendor/events', allowedTo(['VENDOR']), EventVendorController.
 router.post('/event-vendor/events/:eventId/applications', allowedTo(['VENDOR']), EventVendorController.submitApplication);
 router.get('/event-vendor/applications/my', allowedTo(['VENDOR']), EventVendorController.myApplications);
 router.patch('/event-vendor/applications/:applicationId/withdraw', allowedTo(['VENDOR']), EventVendorController.withdrawApplication);
+router.post('/event-vendor/tap-to-pay/activation-code', allowedTo(['VENDOR']), EventVendorController.createTapToPayActivationCode);
+router.put('/event-vendor/tap-to-pay/terminal', allowedTo(['VENDOR']), EventVendorController.registerTapToPayTerminal);
+router.get('/event-vendor/tap-to-pay/terminal-status', allowedTo(['VENDOR']), EventVendorController.getTapToPayTerminalStatus);
+router.post('/event-vendor/general-purchases/prepare', allowedTo(['VENDOR']), EventVendorController.prepareGeneralPurchase);
+router.post('/event-vendor/general-purchases/:purchaseId/complete', allowedTo(['VENDOR']), EventVendorController.completeGeneralPurchase);
+router.post('/event-vendor/general-purchases/:purchaseId/cancel', allowedTo(['VENDOR']), EventVendorController.cancelGeneralPurchase);
+router.post('/event-vendor/general-purchases/:purchaseId/refund', allowedTo(['VENDOR']), EventVendorController.refundGeneralPurchase);
+router.get('/event-vendor/general-purchases', allowedTo(['VENDOR']), EventVendorController.listGeneralPurchases);
 router.post('/event-vendor/applications/:applicationId/award', allowedTo(['CUSTOMER']), EventVendorController.awardApplication);
 router.patch('/event-vendor/applications/:applicationId/not-select', allowedTo(['CUSTOMER']), EventVendorController.declineApplication);
 router.post(
@@ -35,6 +44,7 @@ router.get('/event-vendor/events/:eventId/applications', allowedTo(['CUSTOMER'])
 router.get('/admin/event-vendors', allowedTo(['SUPER_ADMIN']), EventVendorController.adminListProfiles);
 router.get('/admin/event-vendors/:profileId', allowedTo(['SUPER_ADMIN']), EventVendorController.adminGetProfile);
 router.put('/admin/event-vendors/:profileId/review', allowedTo(['SUPER_ADMIN']), EventVendorController.adminReviewProfile);
+router.patch('/admin/event-vendors/:profileId/tap-to-pay-terminals/:terminalId', allowedTo(['SUPER_ADMIN']), EventVendorController.adminUpdateTapToPayTerminal);
 
 router.post(
   '/events',
@@ -160,6 +170,18 @@ router.post(
   allowedTo(['CUSTOMER']),
   TicketController.createScannerSession
 );
+
+router.get('/events/:eventId/ticket-staff', allowedTo(['CUSTOMER']), TicketStaffController.listForEvent);
+router.post('/events/:eventId/ticket-staff', allowedTo(['CUSTOMER']), TicketStaffController.assign);
+router.post('/ticket-staff/:assignmentId/resend', allowedTo(['CUSTOMER']), TicketStaffController.resend);
+router.post('/ticket-staff/:assignmentId/revoke', allowedTo(['CUSTOMER']), TicketStaffController.revoke);
+router.get('/ticket-staff/my', allowedTo(['CUSTOMER']), TicketStaffController.myInvitations);
+router.post('/ticket-staff/:assignmentId/respond', allowedTo(['CUSTOMER']), TicketStaffController.respond);
+router.post('/ticket-staff/:assignmentId/scanner-session', allowedTo(['CUSTOMER']), TicketStaffController.createScannerSession);
+router.get('/admin/ticket-staff', allowedTo(['SUPER_ADMIN']), TicketStaffController.adminList);
+router.post('/admin/events/:eventId/ticket-staff', allowedTo(['SUPER_ADMIN']), TicketStaffController.adminAssign);
+router.post('/admin/ticket-staff/:assignmentId/resend', allowedTo(['SUPER_ADMIN']), TicketStaffController.adminResend);
+router.post('/admin/ticket-staff/:assignmentId/revoke', allowedTo(['SUPER_ADMIN']), TicketStaffController.adminRevoke);
 
 router.post(
   '/events/:eventId/tickets/cancel-event',
@@ -367,6 +389,36 @@ router.get(
   '/events/:eventId/bids',
   allowedTo(['CUSTOMER']),
   Controller.getEventBids
+);
+
+router.get(
+  '/events/:eventId/award-amendments',
+  allowedTo(['CUSTOMER', 'VENDOR', 'SUPER_ADMIN']),
+  Controller.listAwardAmendments
+);
+
+router.patch(
+  '/events/:eventId/award-amendments/vip-guest-count',
+  allowedTo(['CUSTOMER']),
+  Controller.updateAwardedVipGuestCount
+);
+
+router.post(
+  '/award-amendments/:amendmentId/respond',
+  allowedTo(['VENDOR']),
+  Controller.respondToAwardAmendment
+);
+
+router.post(
+  '/award-amendments/:amendmentId/accept',
+  allowedTo(['CUSTOMER', 'SUPER_ADMIN']),
+  Controller.acceptAwardAmendment
+);
+
+router.post(
+  '/award-amendments/:amendmentId/reject',
+  allowedTo(['CUSTOMER', 'SUPER_ADMIN']),
+  Controller.rejectAwardAmendment
 );
 
 router.post(

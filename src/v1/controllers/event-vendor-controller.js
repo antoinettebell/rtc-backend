@@ -12,10 +12,15 @@ const {
   MarketplaceAgreementAuditModel,
   MarketplaceEventImageModel,
   MarketplaceEventQuestionModel,
+  MarketplaceGeneralPurchaseModel,
+  TapToPayTerminalModel,
 } = require('../../models');
 const { addObjectWithKey } = require('../../helper/aws');
 const { docusign } = require('../../config');
 const CyberSourceRefundHelper = require('../../helper/cybersource-refund-helper');
+const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
+const CyberSourceActivationCodeHelper = require('../../helper/cybersource-activation-code-helper');
+const SmsHelper = require('../../helper/sms-helper');
 const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
 const {
   findOrCreateEventVendorApplication,
@@ -76,6 +81,10 @@ const {
 const {
   isEventVendorApplicationUnlocked,
 } = require('../../helper/marketplace-vendor-access-policy');
+const {
+  buildGeneralPurchaseTotals,
+  buildGeneralPurchaseRefundRequest,
+} = require('../../helper/marketplace-general-purchase-helper');
 
 const TYPES = ['MERCHANDISE', 'SERVICE', 'OTHER'];
 const EVENT_VENDOR_PUBLIC_EVENT_FIELDS = [
@@ -121,6 +130,20 @@ const assertApprovedProfile = async (userId) => {
   }
   return profile;
 };
+
+const sanitizePhone = (value) => {
+  const phone = String(value || '').replace(/\D/g, '');
+  return phone ? phone.slice(0, 15) : null;
+};
+
+const generalPurchaseReceiptBody = ({ purchase, profile }) =>
+  [
+    `RDC receipt: Tap to Pay approved for General Purchase from ${String(profile.business_name || 'Marketplace Vendor').slice(0, 60)}.`,
+    `Subtotal $${Number(purchase.subtotal).toFixed(2)},`,
+    `tax $${Number(purchase.tax_amount).toFixed(2)},`,
+    `total $${Number(purchase.total).toFixed(2)}.`,
+    'Reply STOP to opt out.',
+  ].join(' ');
 
 const validateProfileForSubmission = async (profile) => {
   if (!profile?.business_name || !profile?.business_description || !profile?.vendor_types?.length) {
@@ -1098,6 +1121,218 @@ exports.eventApplications = async (req, res, next) => {
   } catch (e) { return next(e); }
 };
 
+exports.createTapToPayActivationCode = async (req, res, next) => {
+  try {
+    await assertEventVendor(req.user._id);
+    await assertApprovedProfile(req.user._id);
+    const activation = await CyberSourceActivationCodeHelper.createActivationCode();
+    res.set('Cache-Control', 'no-store');
+    res.set('Pragma', 'no-cache');
+    return res.data({ activation_code: activation.token, expires_in_ms: activation.ttl }, 'Tap to Pay activation code generated');
+  } catch (e) { return next(e); }
+};
+
+exports.registerTapToPayTerminal = async (req, res, next) => {
+  try {
+    await assertEventVendor(req.user._id);
+    const profile = await assertApprovedProfile(req.user._id);
+    const deviceId = String(req.body.device_id || '').trim();
+    if (!deviceId) throw error('Tap to Pay terminal serial ID is required');
+    const now = new Date();
+    const existing = await TapToPayTerminalModel.findOne({ event_vendor_profile_id: profile.profile_id, device_id: deviceId });
+    const terminal = await TapToPayTerminalModel.findOneAndUpdate(
+      { event_vendor_profile_id: profile.profile_id, device_id: deviceId },
+      {
+        $set: {
+          food_truck_id: null,
+          vendor_user_id: req.user._id,
+          assigned_user_type: 'VENDOR',
+          assigned_user_id: req.user._id,
+          device_id_suffix: deviceId.slice(-4),
+          device_label: String(req.body.device_label || existing?.device_label || 'iPhone').trim().slice(0, 120),
+          environment: ['test', 'sandbox'].includes(String(req.body.environment || '').toLowerCase()) ? 'TEST' : 'PRODUCTION',
+          status: 'ACTIVE',
+          last_seen_at: now,
+          last_activation_status: req.body.activation_status === 'SUCCEEDED' ? 'SUCCEEDED' : (existing?.last_activation_status || 'UNKNOWN'),
+          ...(req.body.activation_status === 'SUCCEEDED' ? {
+            last_activation_at: now,
+            last_activation_error_code: null,
+            last_activation_error_message: null,
+            reactivation_required: false,
+            reactivation_reason: null,
+            ...(existing?.reactivation_required ? { reactivation_completed_at: now } : {}),
+          } : {}),
+        },
+        $setOnInsert: { registered_at: now },
+        $push: { history: { action: existing ? 'SEEN' : 'REGISTERED', actor_type: 'VENDOR', actor_id: req.user._id, occurred_at: now } },
+      },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+    profile.tap_to_pay_serial_number = deviceId;
+    await profile.save();
+    return res.data({
+      registered: true,
+      terminal_id: terminal._id,
+      terminal_serial_suffix: deviceId.slice(-4),
+      reactivation_required: terminal.reactivation_required,
+    }, 'Tap to Pay terminal registered');
+  } catch (e) { return next(e); }
+};
+
+exports.getTapToPayTerminalStatus = async (req, res, next) => {
+  try {
+    await assertEventVendor(req.user._id);
+    const profile = await assertApprovedProfile(req.user._id);
+    const deviceId = String(req.query.device_id || '').trim();
+    const terminal = await TapToPayTerminalModel.findOne({ event_vendor_profile_id: profile.profile_id, device_id: deviceId });
+    if (!terminal) return res.data({ known: false, status: 'UNREGISTERED', reactivation_required: false }, 'Tap to Pay terminal status');
+    terminal.last_seen_at = new Date();
+    await terminal.save();
+    return res.data({
+      known: true,
+      terminal_id: terminal._id,
+      status: terminal.status,
+      reactivation_required: terminal.reactivation_required,
+      reactivation_reason: terminal.reactivation_reason,
+      device_id_suffix: terminal.device_id_suffix,
+    }, 'Tap to Pay terminal status');
+  } catch (e) { return next(e); }
+};
+
+exports.prepareGeneralPurchase = async (req, res, next) => {
+  try {
+    await assertEventVendor(req.user._id);
+    const profile = await assertApprovedProfile(req.user._id);
+    const checkoutKey = String(req.body.checkout_key || '').trim();
+    if (!checkoutKey) throw error('Checkout key is required');
+    const totals = buildGeneralPurchaseTotals({ items: req.body.items, taxRate: req.body.tax_rate });
+    if (totals.total <= 0) throw error('General Purchase total must be greater than zero');
+    const phone = sanitizePhone(req.body.customer_phone);
+    let purchase = await MarketplaceGeneralPurchaseModel.findOneAndUpdate(
+      { vendor_user_id: req.user._id, checkout_key: checkoutKey, status: 'PREPARED' },
+      { $set: { ...totals, customer_phone: phone } },
+      { new: true }
+    );
+    if (!purchase) {
+      try {
+        purchase = await MarketplaceGeneralPurchaseModel.create({
+          event_vendor_profile_id: profile.profile_id,
+          vendor_user_id: req.user._id,
+          checkout_key: checkoutKey,
+          ...totals,
+          customer_phone: phone,
+        });
+      } catch (createError) {
+        if (createError?.code !== 11000) throw createError;
+        purchase = await MarketplaceGeneralPurchaseModel.findOne({ vendor_user_id: req.user._id, checkout_key: checkoutKey });
+      }
+    }
+    if (!purchase || purchase.status !== 'PREPARED') throw error('This checkout has already been submitted.', 409);
+    return res.data({ purchase: {
+      id: purchase.purchase_id,
+      reference: purchase.reference,
+      items: purchase.items,
+      subtotal: purchase.subtotal,
+      tax_rate: purchase.tax_rate,
+      tax_amount: purchase.tax_amount,
+      total: purchase.total,
+      currency: purchase.currency,
+      status: purchase.status,
+    } }, 'General Purchase prepared');
+  } catch (e) { return next(e); }
+};
+
+exports.completeGeneralPurchase = async (req, res, next) => {
+  try {
+    await assertEventVendor(req.user._id);
+    const profile = await assertApprovedProfile(req.user._id);
+    const transactionId = String(req.body.transaction_id || '').trim();
+    if (!transactionId) throw error('A verified Tap to Pay transaction is required');
+    const duplicate = await MarketplaceGeneralPurchaseModel.findOne({ transaction_id: transactionId, status: 'COMPLETED' }).lean();
+    if (duplicate) throw error('This Tap to Pay transaction has already been used.', 409);
+    const purchase = await MarketplaceGeneralPurchaseModel.findOneAndUpdate(
+      { purchase_id: req.params.purchaseId, vendor_user_id: req.user._id, status: 'PREPARED' },
+      { $set: { status: 'PROCESSING' } },
+      { new: true }
+    );
+    if (!purchase) throw error('General Purchase is unavailable or already processing.', 409);
+    try {
+      await CyberSourcePaymentHelper.verifyTransaction({
+        transactionId,
+        expectedAmount: purchase.total,
+        expectedCurrency: purchase.currency,
+        expectedReference: purchase.reference,
+      });
+    } catch (verificationError) {
+      purchase.status = 'REVIEW_REQUIRED';
+      await purchase.save();
+      throw Object.assign(new Error('Tap to Pay could not be verified with the payment processor.'), { code: 502 });
+    }
+    purchase.status = 'COMPLETED';
+    purchase.transaction_id = transactionId;
+    purchase.auth_code = req.body.auth_code || null;
+    purchase.invoice_number = req.body.invoice_number || null;
+    purchase.account_number = req.body.account_number || null;
+    purchase.account_type = req.body.account_type || null;
+    purchase.completed_at = new Date();
+    await purchase.save();
+    if (purchase.customer_phone) {
+      void SmsHelper.sendSms({
+        to: purchase.customer_phone,
+        body: generalPurchaseReceiptBody({ purchase, profile }),
+        metadata: { purchaseId: purchase.purchase_id, receiptType: 'MARKETPLACE_GENERAL_PURCHASE_SMS' },
+      }).catch((smsError) => console.error('General Purchase receipt SMS failed', { purchaseId: purchase.purchase_id, code: smsError?.code || 'SMS_FAILED' }));
+    }
+    return res.data({ purchase }, 'General Purchase completed');
+  } catch (e) { return next(e); }
+};
+
+exports.cancelGeneralPurchase = async (req, res, next) => {
+  try {
+    await assertEventVendor(req.user._id);
+    const purchase = await MarketplaceGeneralPurchaseModel.findOneAndUpdate(
+      { purchase_id: req.params.purchaseId, vendor_user_id: req.user._id, status: 'PREPARED' },
+      { $set: { status: 'CANCELED', canceled_at: new Date() } },
+      { new: true }
+    );
+    if (!purchase) throw error('General Purchase is unavailable.', 409);
+    return res.data({ canceled: true }, 'General Purchase canceled');
+  } catch (e) { return next(e); }
+};
+
+exports.listGeneralPurchases = async (req, res, next) => {
+  try {
+    await assertEventVendor(req.user._id);
+    const purchases = await MarketplaceGeneralPurchaseModel.find({ vendor_user_id: req.user._id }).sort({ createdAt: -1 }).limit(100).lean();
+    return res.data({ purchaseList: purchases }, 'General Purchases');
+  } catch (e) { return next(e); }
+};
+
+exports.refundGeneralPurchase = async (req, res, next) => {
+  try {
+    await assertEventVendor(req.user._id);
+    const purchase = await MarketplaceGeneralPurchaseModel.findOneAndUpdate(
+      { purchase_id: req.params.purchaseId, vendor_user_id: req.user._id, status: { $in: ['COMPLETED', 'REFUND_FAILED'] } },
+      { $set: { status: 'REFUND_PROCESSING', refund_failure_reason: null } },
+      { new: true }
+    );
+    if (!purchase) throw error('General Purchase is not available for refund.', 409);
+    const refund = await CyberSourceRefundHelper.processRefund(buildGeneralPurchaseRefundRequest(purchase));
+    if (!refund?.success) {
+      purchase.status = 'REFUND_FAILED';
+      purchase.refund_failure_reason = refund?.message || 'Processor refund failed';
+      await purchase.save();
+      throw Object.assign(new Error(purchase.refund_failure_reason), { code: 502 });
+    }
+    purchase.status = 'REFUNDED';
+    purchase.refund_transaction_id = refund.refundTransactionId || null;
+    purchase.refund_mode = refund.mode === 'void' ? 'void' : 'refund';
+    purchase.refunded_at = new Date();
+    await purchase.save();
+    return res.data({ purchase }, 'General Purchase refunded');
+  } catch (e) { return next(e); }
+};
+
 exports.adminListProfiles = async (req, res, next) => {
   try {
     const page = Math.max(1, Number(req.query.page || 1));
@@ -1128,7 +1363,37 @@ exports.adminGetProfile = async (req, res, next) => {
       source: 'REPOSITORY',
       status: 'ACTIVE',
     }).sort({ category: 1, created_at: -1 }).lean();
-    return res.data({ eventVendorProfile: profile, photoList: photos }, 'Marketplace Vendor profile review');
+    const terminals = await TapToPayTerminalModel.find({ event_vendor_profile_id: profile.profile_id }).sort({ last_seen_at: -1 }).lean();
+    return res.data({ eventVendorProfile: profile, photoList: photos, tapToPayTerminals: terminals }, 'Marketplace Vendor profile review');
+  } catch (e) { return next(e); }
+};
+
+exports.adminUpdateTapToPayTerminal = async (req, res, next) => {
+  try {
+    const profile = await EventVendorProfileModel.findOne({ profile_id: req.params.profileId, status: 'ACTIVE' });
+    if (!profile) throw error('Marketplace Vendor profile not found', 404);
+    const terminal = await TapToPayTerminalModel.findOne({ _id: req.params.terminalId, event_vendor_profile_id: profile.profile_id });
+    if (!terminal) throw error('Tap to Pay terminal not found', 404);
+    const action = String(req.body.action || '').toUpperCase();
+    const reason = String(req.body.reason || '').trim().slice(0, 500);
+    if (action === 'REQUIRE_REACTIVATION') {
+      terminal.reactivation_required = true;
+      terminal.reactivation_requested_at = new Date();
+      terminal.reactivation_requested_by = req.user._id;
+      terminal.reactivation_reason = reason || 'Requested by RTC support';
+    } else if (action === 'MARK_HISTORICAL') {
+      terminal.status = 'HISTORICAL';
+    } else if (action === 'RESTORE_ACTIVE') {
+      terminal.status = 'ACTIVE';
+    } else if (action === 'CLEAR_REACTIVATION') {
+      terminal.reactivation_required = false;
+      terminal.reactivation_reason = null;
+    } else {
+      throw error('Select a valid Tap to Pay terminal action');
+    }
+    terminal.history.push({ action, actor_type: 'SUPER_ADMIN', actor_id: req.user._id, reason: reason || null, occurred_at: new Date() });
+    await terminal.save();
+    return res.data({ terminal }, 'Tap to Pay terminal updated');
   } catch (e) { return next(e); }
 };
 

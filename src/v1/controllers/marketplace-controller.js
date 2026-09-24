@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const {
   FoodTruckService,
   MarketplaceApplicationService,
+  MarketplaceBidAmendmentService,
   MarketplaceAttachmentService,
   MarketplaceAgreementAuditService,
   MarketplaceBidService,
@@ -123,6 +124,7 @@ const {
   MarketplaceAdminDraftModel,
   MarketplaceApplicationModel,
   MarketplaceAttachmentModel,
+  MarketplaceBidAmendmentModel,
   MarketplaceBidModel,
   MarketplacePaymentModel,
   OperationalNotificationModel,
@@ -186,6 +188,17 @@ const {
   getMarketplaceFilledSlotSummary,
   isMarketplaceVendorReductionBlocked,
 } = require('../../helper/marketplace-participation-helper');
+const {
+  OPEN_AMENDMENT_STATUSES,
+  VIP_CAPACITY_LOCK_MESSAGE,
+  buildReplacementBidAmounts,
+  canRequestVipAwardAmendment,
+  getAwardedEventStatus,
+  getVipAwardAmountField,
+  isSolelyPrivateCateredEvent,
+  isVipAward,
+  isVipCapacityIncreaseLocked,
+} = require('../../helper/marketplace-award-amendment-helper');
 
 const buildError = (message, code = 400) => {
   const error = new Error(message);
@@ -2765,6 +2778,7 @@ const IMPORTANT_EVENT_CHANGE_FIELDS = {
   longitude: 'Address/location',
   guest_count: 'Guest count',
   number_of_guests: 'Guest count',
+  vip_guest_count: 'VIP guest count',
   budgeted_amount: 'Budget/vendor fee setup',
   vendor_fee: 'Budget/vendor fee setup',
   payment_responsibility: 'Budget/vendor fee setup',
@@ -2801,6 +2815,7 @@ const BID_REVISION_EVENT_CHANGE_FIELDS = new Set([
   'longitude',
   'guest_count',
   'number_of_guests',
+  'vip_guest_count',
   'primary_service_style',
   'service_type',
   'service_types',
@@ -2912,6 +2927,137 @@ const requestBidRevisionsForEventChanges = async (event, changes = []) => {
       },
     }
   );
+};
+
+const sanitizeBidAmendment = (amendment) => {
+  const plain = toPlainObject(amendment) || {};
+  return {
+    amendment_id: plain.amendment_id,
+    event_id: plain.event_id,
+    original_bid_id: plain.original_bid_id,
+    replacement_bid_id: plain.replacement_bid_id || null,
+    vendor_user_id: plain.vendor_user_id,
+    food_truck_id: plain.food_truck_id,
+    vendor: typeof plain.vendor_user_id === 'object' ? plain.vendor_user_id : null,
+    food_truck: typeof plain.food_truck_id === 'object' ? plain.food_truck_id : null,
+    previous_vip_guest_count: plain.previous_vip_guest_count,
+    requested_vip_guest_count: plain.requested_vip_guest_count,
+    editable_amount_field: plain.editable_amount_field,
+    original_amount: plain.original_amount,
+    proposed_amount: plain.proposed_amount,
+    response_type: plain.response_type,
+    status: plain.status,
+    requested_at: plain.requested_at,
+    vendor_responded_at: plain.vendor_responded_at,
+    reviewed_at: plain.reviewed_at,
+    rejection_reason: plain.rejection_reason || null,
+    created_at: plain.created_at,
+    updated_at: plain.updated_at,
+  };
+};
+
+const notifyVendorOfBidAmendment = async ({ event, amendment }) => {
+  await MarketplaceCommunications.sendMarketplaceCommunication({
+    userId: amendment.vendor_user_id,
+    title: 'Catered event guest count changed',
+    body: `${event.event_name || 'An event'} has an updated VIP guest count. Review and reconfirm your awarded price.`,
+    emailSubject: `Review Your Awarded Bid — ${event.event_name || 'Event'}`,
+    emailBody: `The VIP guest count for ${event.event_name || 'the event'} increased. Your existing award remains active. Open the app to reconfirm your current price or submit an amended price for coordinator review.`,
+    data: {
+      notificationType: 'MARKETPLACE_AWARD_AMENDMENT_REQUESTED',
+      eventId: event.event_id,
+      amendmentId: amendment.amendment_id,
+      bidId: amendment.original_bid_id,
+    },
+    channels: ['push', 'email'],
+    metadata: { eventId: event.event_id, amendmentId: amendment.amendment_id },
+  });
+};
+
+const createVipAwardAmendments = async ({ beforeEvent, event }) => {
+  const previousVipCount = Number(beforeEvent?.vip_guest_count || 0);
+  const requestedVipCount = Number(event?.vip_guest_count || 0);
+  if (requestedVipCount <= previousVipCount) return [];
+
+  const awardedBids = await MarketplaceBidService.getByData(
+    {
+      event_id: event.event_id,
+      bid_status: 'AWARDED',
+      archived_at: null,
+    },
+    { lean: true }
+  );
+  const affectedBids = awardedBids.filter(isVipAward);
+  const amendments = [];
+
+  for (const bid of affectedBids) {
+    const amountField = getVipAwardAmountField(bid);
+    let amendment = await MarketplaceBidAmendmentService.getByData(
+      {
+        event_id: event.event_id,
+        original_bid_id: bid.bid_id,
+        status: { $in: OPEN_AMENDMENT_STATUSES },
+      },
+      { singleResult: true }
+    );
+
+    if (amendment) {
+      amendment.previous_vip_guest_count = Math.min(
+        Number(amendment.previous_vip_guest_count || previousVipCount),
+        previousVipCount
+      );
+      amendment.requested_vip_guest_count = requestedVipCount;
+      amendment.status = 'AWAITING_VENDOR';
+      amendment.proposed_amount = null;
+      amendment.response_type = null;
+      amendment.vendor_responded_at = null;
+      amendment.requested_at = new Date();
+      await amendment.save();
+    } else {
+      amendment = await MarketplaceBidAmendmentService.create({
+        event_id: event.event_id,
+        original_bid_id: bid.bid_id,
+        coordinator_user_id: event.customer_user_id,
+        vendor_user_id: bid.vendor_user_id,
+        food_truck_id: bid.food_truck_id,
+        previous_vip_guest_count: previousVipCount,
+        requested_vip_guest_count: requestedVipCount,
+        editable_amount_field: amountField,
+        original_amount: roundMoney(bid[amountField] || 0),
+        status: 'AWAITING_VENDOR',
+      });
+    }
+    amendments.push(amendment);
+    try {
+      await notifyVendorOfBidAmendment({ event, amendment });
+    } catch (notificationError) {
+      console.error('Marketplace award amendment notification failed', {
+        eventId: event.event_id,
+        amendmentId: amendment.amendment_id,
+        message: notificationError.message,
+      });
+    }
+  }
+  return amendments;
+};
+
+const getBidAmendment = async (amendmentId) => {
+  const amendment = await MarketplaceBidAmendmentService.getByData(
+    { amendment_id: amendmentId },
+    { singleResult: true }
+  );
+  if (!amendment) throw buildError('Award amendment not found', 404);
+  return amendment;
+};
+
+const assertAmendmentCoordinatorAccess = (amendment, user) => {
+  if (user.userType === 'SUPER_ADMIN') return;
+  if (
+    user.userType !== 'CUSTOMER' ||
+    String(amendment.coordinator_user_id) !== String(user._id)
+  ) {
+    throw buildError('You cannot review this award amendment', 403);
+  }
 };
 
 // A specialty addition is an opportunity, not a forced revision. The existing
@@ -4200,7 +4346,7 @@ const finalizeFoodVendorAwardBatch = async ({
   const eventFullyAwarded = foodSelectionClosed && marketplaceVendorNeedsFilled;
 
   const eventUpdate = {
-    status: eventFullyAwarded ? 'AWARDED' : event.status,
+    status: getAwardedEventStatus(event, eventFullyAwarded),
     agreement_provider: null,
     agreement_status: 'NOT_REQUIRED',
     agreement_error_message: null,
@@ -4774,8 +4920,10 @@ exports.updateEvent = async (req, res, next) => {
       throw buildError('Only customers can update marketplace events', 403);
     }
     const event = await getOwnedEvent(req.params.eventId, req.user._id);
-    if (['AWARDED', 'CANCELLED'].includes(event.status)) {
-      throw buildError('Awarded or cancelled events cannot be edited.', 400);
+    if (event.status === 'CANCELLED' || (
+      event.status === 'AWARDED' && isSolelyPrivateCateredEvent(event)
+    )) {
+      throw buildError('Awarded private catered events or cancelled events cannot be edited.', 400);
     }
     const gaCommitted = Number(event.ga_tickets_sold || 0) + Number(event.ga_tickets_reserved || 0);
     const vipCommitted = Number(event.vip_tickets_sold || 0) + Number(event.vip_tickets_reserved || 0);
@@ -4784,6 +4932,24 @@ exports.updateEvent = async (req, res, next) => {
     }
     if (req.body.vip_ticket_quantity != null && Number(req.body.vip_ticket_quantity) < vipCommitted) {
       throw buildError(`VIP Ticket Capacity cannot be lower than ${vipCommitted} sold or reserved ticket(s).`, 409);
+    }
+    if (req.body.vip_ticket_quantity != null && isVipCapacityIncreaseLocked({
+      currentCapacity: event.vip_ticket_quantity,
+      proposedCapacity: req.body.vip_ticket_quantity,
+      eventTiming: getMarketplaceEventTiming(event),
+    })) {
+      const error = buildError(VIP_CAPACITY_LOCK_MESSAGE, 409);
+      error.error_code = 'VIP_CAPACITY_INCREASE_LOCKED';
+      throw error;
+    }
+    if (req.body.vip_guest_count != null && isVipCapacityIncreaseLocked({
+      currentCapacity: event.vip_guest_count,
+      proposedCapacity: req.body.vip_guest_count,
+      eventTiming: getMarketplaceEventTiming(event),
+    })) {
+      const error = buildError(VIP_CAPACITY_LOCK_MESSAGE, 409);
+      error.error_code = 'VIP_CAPACITY_INCREASE_LOCKED';
+      throw error;
     }
     if (req.body.vip_section_enabled === false && vipCommitted > 0) {
       throw buildError('The VIP section cannot be disabled after VIP tickets have been sold or reserved.', 409);
@@ -4893,6 +5059,10 @@ exports.updateEvent = async (req, res, next) => {
     } else {
       const importantChanges = getImportantEventChanges(event, marketplaceEvent);
       await requestBidRevisionsForEventChanges(marketplaceEvent, importantChanges);
+      await createVipAwardAmendments({
+        beforeEvent: event,
+        event: marketplaceEvent,
+      });
       await notifyVendorsOfEventChanges(
         marketplaceEvent,
         importantChanges
@@ -7756,7 +7926,7 @@ exports.acceptApplication = async (req, res, next) => {
     const updatedCapacity = await getFoodVendorAwardState(event);
     if (updatedCapacity.remaining === 0 && await areFoodVendorServiceRequirementsFilled(event)) {
       if (await areMarketplaceVendorAwardNeedsFilled(event)) {
-        event.status = 'AWARDED';
+        event.status = getAwardedEventStatus(event, true);
         await event.save();
         await notifyCoordinatorOfMatchLocked(event);
       }
@@ -8298,7 +8468,7 @@ exports.adminMarketplaceEvents = async (req, res, next) => {
     ]);
 
     const eventIds = events.map((event) => event.event_id).filter(Boolean);
-    const [eventsWithImages, bids, applications, eventVendorApplications, adminDrafts] = await Promise.all([
+    const [eventsWithImages, bids, applications, eventVendorApplications, adminDrafts, amendments] = await Promise.all([
       MarketplaceEventService.attachImages(events),
       eventIds.length
         ? MarketplaceBidService.getModel()
@@ -8333,6 +8503,13 @@ exports.adminMarketplaceEvents = async (req, res, next) => {
             admin_user_id: req.user._id,
           }).lean()
         : [],
+      eventIds.length
+        ? MarketplaceBidAmendmentModel.find({ event_id: { $in: eventIds } })
+            .populate('vendor_user_id', 'firstName lastName email mobileNumber countryCode')
+            .populate('food_truck_id', 'name logo')
+            .sort({ requested_at: -1 })
+            .lean()
+        : [],
     ]);
     const adminDraftsByEventId = new Map(adminDrafts.map((draft) => [draft.event_id, draft]));
 
@@ -8351,6 +8528,11 @@ exports.adminMarketplaceEvents = async (req, res, next) => {
       acc[application.event_id].push(application);
       return acc;
     }, {});
+    const amendmentsByEventId = amendments.reduce((acc, amendment) => {
+      acc[amendment.event_id] = acc[amendment.event_id] || [];
+      acc[amendment.event_id].push(sanitizeBidAmendment(amendment));
+      return acc;
+    }, {});
 
     const marketplaceEventList = eventsWithImages.map((event) => {
       const eventBids = bidsByEventId[event.event_id] || [];
@@ -8360,6 +8542,7 @@ exports.adminMarketplaceEvents = async (req, res, next) => {
       return {
         ...event,
         admin_draft: adminDraftsByEventId.get(event.event_id) || null,
+        award_amendments: amendmentsByEventId[event.event_id] || [],
         submission_summaries: [
           ...eventBids.map((submission) => buildSubmissionSummary('FOOD_BID', submission)),
           ...foodApplications.map((submission) =>
@@ -9029,6 +9212,24 @@ exports.adminUpdateEvent = async (req, res, next) => {
     const draftKey = getAdminDraftKey({ adminUserId: req.user._id, eventId: req.params.eventId });
     const existingDraft = await MarketplaceAdminDraftModel.findOne({ draft_key: draftKey }).lean();
     const proposedUpdates = { ...(existingDraft?.payload || {}), ...requestedUpdates };
+    if (proposedUpdates.vip_ticket_quantity != null && isVipCapacityIncreaseLocked({
+      currentCapacity: event.vip_ticket_quantity,
+      proposedCapacity: proposedUpdates.vip_ticket_quantity,
+      eventTiming: getMarketplaceEventTiming(event),
+    })) {
+      const error = buildError(VIP_CAPACITY_LOCK_MESSAGE, 409);
+      error.error_code = 'VIP_CAPACITY_INCREASE_LOCKED';
+      throw error;
+    }
+    if (proposedUpdates.vip_guest_count != null && isVipCapacityIncreaseLocked({
+      currentCapacity: event.vip_guest_count,
+      proposedCapacity: proposedUpdates.vip_guest_count,
+      eventTiming: getMarketplaceEventTiming(event),
+    })) {
+      const error = buildError(VIP_CAPACITY_LOCK_MESSAGE, 409);
+      error.error_code = 'VIP_CAPACITY_INCREASE_LOCKED';
+      throw error;
+    }
     const draft = await saveAdminDraft({
       adminUserId: req.user._id,
       eventId: req.params.eventId,
@@ -9129,6 +9330,7 @@ exports.adminUpdateEvent = async (req, res, next) => {
       await session.endSession();
     }
     await notifyBidsOfNewSpecialtyRequirements(marketplaceEvent, event);
+    await createVipAwardAmendments({ beforeEvent: event, event: marketplaceEvent });
     return res.data({ marketplaceEvent }, 'Marketplace event updated');
   } catch (e) {
     const validationErrors = getAdminValidationErrors(e);
@@ -9149,6 +9351,304 @@ exports.adminUpdateEvent = async (req, res, next) => {
   }
 };
 
+exports.listAwardAmendments = async (req, res, next) => {
+  try {
+    const query = { event_id: req.params.eventId };
+    if (req.user.userType === 'CUSTOMER') {
+      await getOwnedEvent(req.params.eventId, req.user._id);
+    } else if (req.user.userType === 'VENDOR') {
+      query.vendor_user_id = req.user._id;
+    } else if (req.user.userType !== 'SUPER_ADMIN') {
+      throw buildError('You cannot view award amendments', 403);
+    }
+    const amendments = await MarketplaceBidAmendmentService.getByData(query, {
+      lean: true,
+      sort: { requested_at: -1 },
+    });
+    return res.data(
+      { amendments: amendments.map(sanitizeBidAmendment) },
+      'Award amendments retrieved'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.updateAwardedVipGuestCount = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'CUSTOMER') {
+      throw buildError('Only the event coordinator can update the awarded VIP guest count', 403);
+    }
+    const event = await getOwnedEvent(req.params.eventId, req.user._id);
+    const awardedBids = await MarketplaceBidService.getByData(
+      {
+        event_id: event.event_id,
+        bid_status: 'AWARDED',
+        archived_at: null,
+      },
+      { lean: true }
+    );
+    if (!canRequestVipAwardAmendment({ event, awardedBids })) {
+      throw buildError('An active awarded VIP caterer is required for this change.', 409);
+    }
+    const requestedVipGuestCount = Number(req.body.vip_guest_count);
+    const previousVipGuestCount = Number(event.vip_guest_count || 0);
+    if (!Number.isInteger(requestedVipGuestCount) || requestedVipGuestCount <= previousVipGuestCount) {
+      throw buildError('Enter a VIP guest count greater than the current awarded count.', 400);
+    }
+    if (isVipCapacityIncreaseLocked({
+      currentCapacity: previousVipGuestCount,
+      proposedCapacity: requestedVipGuestCount,
+      eventTiming: getMarketplaceEventTiming(event),
+    })) {
+      const error = buildError(VIP_CAPACITY_LOCK_MESSAGE, 409);
+      error.error_code = 'VIP_CAPACITY_INCREASE_LOCKED';
+      throw error;
+    }
+    const marketplaceEvent = await MarketplaceEventService.update(
+      {
+        event_id: event.event_id,
+        customer_user_id: req.user._id,
+        status: { $in: ['OPEN', 'REOPENED', 'CLOSED', 'AWARDED'] },
+      },
+      { vip_guest_count: requestedVipGuestCount },
+      { getNew: true }
+    );
+    const amendments = await createVipAwardAmendments({ beforeEvent: event, event: marketplaceEvent });
+    return res.data({ marketplaceEvent, amendments: amendments.map(sanitizeBidAmendment) }, 'Awarded VIP guest count updated');
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.respondToAwardAmendment = async (req, res, next) => {
+  try {
+    if (req.user.userType !== 'VENDOR') {
+      throw buildError('Only the awarded vendor can respond to this amendment', 403);
+    }
+    const amendment = await getBidAmendment(req.params.amendmentId);
+    if (String(amendment.vendor_user_id) !== String(req.user._id)) {
+      throw buildError('You cannot respond to this award amendment', 403);
+    }
+    if (amendment.status !== 'AWAITING_VENDOR') {
+      throw buildError('This award amendment is not awaiting a vendor response', 409);
+    }
+
+    const responseType = String(req.body.response_type || '').toUpperCase();
+    if (!['RECONFIRMED', 'REVISED'].includes(responseType)) {
+      throw buildError('Choose Reconfirm or Revise Price', 400);
+    }
+    const proposedAmount = responseType === 'RECONFIRMED'
+      ? roundMoney(amendment.original_amount)
+      : roundMoney(req.body.proposed_amount);
+    if (responseType === 'REVISED' && (
+      req.body.proposed_amount == null || !Number.isFinite(Number(req.body.proposed_amount)) ||
+      Number(req.body.proposed_amount) < 0
+    )) {
+      throw buildError('Enter a valid amended price', 400);
+    }
+
+    amendment.response_type = responseType;
+    amendment.proposed_amount = proposedAmount;
+    amendment.status = 'PENDING_REVIEW';
+    amendment.vendor_responded_at = new Date();
+    amendment.rejection_reason = null;
+    await amendment.save();
+
+    const event = await MarketplaceEventService.getByData(
+      { event_id: amendment.event_id },
+      { singleResult: true }
+    );
+    try {
+      await MarketplaceCommunications.sendMarketplaceCommunication({
+        userId: amendment.coordinator_user_id,
+        title: 'Revised awarded bid submitted',
+        body: `${event?.event_name || 'Your event'} has an award amendment ready for review.`,
+        emailSubject: `Revised Bid Submitted — ${event?.event_name || 'Event'}`,
+        emailBody: `The awarded vendor responded to the increased VIP headcount for ${event?.event_name || 'your event'}. Open the app to review the amendment.`,
+        data: {
+          notificationType: 'MARKETPLACE_AWARD_AMENDMENT_SUBMITTED',
+          eventId: amendment.event_id,
+          amendmentId: amendment.amendment_id,
+        },
+        channels: ['push', 'email'],
+        metadata: { eventId: amendment.event_id, amendmentId: amendment.amendment_id },
+      });
+    } catch (notificationError) {
+      console.error('Marketplace award amendment coordinator notification failed', {
+        eventId: amendment.event_id,
+        amendmentId: amendment.amendment_id,
+        message: notificationError.message,
+      });
+    }
+
+    return res.data(
+      { amendment: sanitizeBidAmendment(amendment) },
+      'Award amendment submitted for coordinator review'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
+exports.acceptAwardAmendment = async (req, res, next) => {
+  const session = await mongoose.startSession();
+  let acceptedAmendment;
+  let replacementBid;
+  try {
+    const amendment = await getBidAmendment(req.params.amendmentId);
+    assertAmendmentCoordinatorAccess(amendment, req.user);
+    if (amendment.status !== 'PENDING_REVIEW') {
+      throw buildError('Only submitted award amendments can be accepted', 409);
+    }
+
+    await session.withTransaction(async () => {
+      const currentAmendment = await MarketplaceBidAmendmentModel.findOne({
+        amendment_id: amendment.amendment_id,
+        status: 'PENDING_REVIEW',
+      }).session(session);
+      if (!currentAmendment) {
+        throw buildError('This award amendment was already reviewed', 409);
+      }
+      const event = await MarketplaceEventService.getModel().findOne({
+        event_id: currentAmendment.event_id,
+      }).session(session);
+      const originalBid = await MarketplaceBidModel.findOne({
+        bid_id: currentAmendment.original_bid_id,
+        bid_status: 'AWARDED',
+        archived_at: null,
+      }).session(session);
+      if (!event || !originalBid) {
+        throw buildError('The active awarded bid is no longer available', 409);
+      }
+      const activeFinalPayment = await MarketplacePaymentModel.findOne({
+        event_id: event.event_id,
+        bid_id: originalBid.bid_id,
+        payment_type: 'FINAL_EVENT_PAYMENT',
+        payment_status: { $in: ['PENDING', 'PROCESSING', 'PAID'] },
+      }).session(session);
+      if (activeFinalPayment) {
+        throw buildError('This award can no longer be amended because final payment has started', 409);
+      }
+
+      const original = originalBid.toObject();
+      ['_id', '__v', 'bid_id', 'created_at', 'updated_at', 'archived_at',
+        'archived_reason', 'superseded_by_bid_id'].forEach((field) => delete original[field]);
+      const amountUpdates = buildReplacementBidAmounts({
+        bid: originalBid,
+        proposedAmount: currentAmendment.proposed_amount,
+        event,
+      });
+      [replacementBid] = await MarketplaceBidModel.create([{
+        ...original,
+        ...amountUpdates,
+        amendment_id: currentAmendment.amendment_id,
+        supersedes_bid_id: originalBid.bid_id,
+        bid_status: 'AWARDED',
+        archived_at: null,
+        archived_reason: null,
+      }], { session });
+
+      originalBid.archived_at = new Date();
+      originalBid.archived_reason = 'SUPERSEDED_BY_ACCEPTED_AMENDMENT';
+      originalBid.superseded_by_bid_id = replacementBid.bid_id;
+      await originalBid.save({ session });
+
+      currentAmendment.status = 'ACCEPTED';
+      currentAmendment.replacement_bid_id = replacementBid.bid_id;
+      currentAmendment.reviewed_at = new Date();
+      currentAmendment.reviewed_by_user_id = req.user._id;
+      currentAmendment.rejection_reason = null;
+      await currentAmendment.save({ session });
+      acceptedAmendment = currentAmendment;
+    });
+
+    try {
+      await MarketplaceCommunications.sendMarketplaceCommunication({
+        userId: acceptedAmendment.vendor_user_id,
+        title: 'Award amendment accepted',
+        body: 'Your amended awarded price is now active for final payment.',
+        emailSubject: 'Award Amendment Accepted',
+        emailBody: 'The event coordinator accepted your amended awarded price. The prior award has been archived and the accepted amendment is now active.',
+        data: {
+          notificationType: 'MARKETPLACE_AWARD_AMENDMENT_ACCEPTED',
+          eventId: acceptedAmendment.event_id,
+          amendmentId: acceptedAmendment.amendment_id,
+          bidId: replacementBid.bid_id,
+        },
+        channels: ['push', 'email'],
+        metadata: {
+          eventId: acceptedAmendment.event_id,
+          amendmentId: acceptedAmendment.amendment_id,
+        },
+      });
+    } catch (notificationError) {
+      console.error('Marketplace award amendment acceptance notification failed', {
+        eventId: acceptedAmendment.event_id,
+        amendmentId: acceptedAmendment.amendment_id,
+        message: notificationError.message,
+      });
+    }
+
+    return res.data({
+      amendment: sanitizeBidAmendment(acceptedAmendment),
+      replacement_bid_id: replacementBid.bid_id,
+    }, 'Award amendment accepted');
+  } catch (e) {
+    return next(e);
+  } finally {
+    await session.endSession();
+  }
+};
+
+exports.rejectAwardAmendment = async (req, res, next) => {
+  try {
+    const amendment = await getBidAmendment(req.params.amendmentId);
+    assertAmendmentCoordinatorAccess(amendment, req.user);
+    if (amendment.status !== 'PENDING_REVIEW') {
+      throw buildError('Only submitted award amendments can be rejected', 409);
+    }
+    const reason = String(req.body.reason || '').trim();
+    if (!reason) throw buildError('Enter a reason for rejecting the amendment', 400);
+
+    amendment.status = 'REJECTED';
+    amendment.reviewed_at = new Date();
+    amendment.reviewed_by_user_id = req.user._id;
+    amendment.rejection_reason = reason.slice(0, 500);
+    await amendment.save();
+
+    try {
+      await MarketplaceCommunications.sendMarketplaceCommunication({
+        userId: amendment.vendor_user_id,
+        title: 'Award amendment not accepted',
+        body: 'Your original awarded price remains active. Open the event to review the coordinator response.',
+        emailSubject: 'Award Amendment Review Complete',
+        emailBody: `The coordinator did not accept the proposed amendment. Your original award remains active. Reason: ${amendment.rejection_reason}`,
+        data: {
+          notificationType: 'MARKETPLACE_AWARD_AMENDMENT_REJECTED',
+          eventId: amendment.event_id,
+          amendmentId: amendment.amendment_id,
+        },
+        channels: ['push', 'email'],
+        metadata: { eventId: amendment.event_id, amendmentId: amendment.amendment_id },
+      });
+    } catch (notificationError) {
+      console.error('Marketplace award amendment rejection notification failed', {
+        eventId: amendment.event_id,
+        amendmentId: amendment.amendment_id,
+        message: notificationError.message,
+      });
+    }
+
+    return res.data(
+      { amendment: sanitizeBidAmendment(amendment) },
+      'Award amendment rejected; the original award remains active'
+    );
+  } catch (e) {
+    return next(e);
+  }
+};
+
 exports.createFinalEventPayment = async (req, res, next) => {
   try {
     const isCoordinator = req.user.userType === 'CUSTOMER';
@@ -9164,7 +9664,10 @@ exports.createFinalEventPayment = async (req, res, next) => {
           { singleResult: true }
         );
     if (!event) throw buildError('Marketplace event not found', 404);
-    if (!['AWARDED', 'CLOSED'].includes(event.status)) {
+    const publicTicketedAwardPaymentAllowed =
+      event.ticket_sales_enabled === true &&
+      ['OPEN', 'REOPENED', 'CLOSED'].includes(event.status);
+    if (!['AWARDED', 'CLOSED'].includes(event.status) && !publicTicketedAwardPaymentAllowed) {
       throw buildError('Final event payment is only available for awarded events.', 400);
     }
     if (isCoordinator) {

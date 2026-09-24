@@ -10,6 +10,8 @@ const mSchema = mongoose.Schema(
       required: true,
       index: true,
     },
+    assigned_staff_user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'users', default: null, index: true },
+    action_source: { type: String, enum: ['COORDINATOR', 'INVITEE', 'ADMIN', 'SYSTEM'], default: 'COORDINATOR' },
     expires_at: { type: Date, required: true, index: { expires: 0 } },
     revoked_at: { type: Date, default: null, index: true },
     last_used_at: { type: Date, default: null },

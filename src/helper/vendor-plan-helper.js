@@ -13,6 +13,8 @@ const VENDOR_PLAN_TIERS = {
       '🌐 Up to 2 website/social media links',
       '🖼️ Business logo',
       '📸 Photo gallery (up to 10 photos)',
+      'Tap to Pay / General Purchase Checkout',
+      '3.5% processing fee',
     ],
     capabilities: {
       vendorSubtype: 'EVENT_VENDOR',
@@ -23,7 +25,8 @@ const VENDOR_PLAN_TIERS = {
       employeeLogin: false,
       employeeWalkUpPos: false,
       walkUpPosPaymentMethods: [],
-      tapToPay: false,
+      tapToPay: true,
+      generalPurchaseCheckout: true,
       multipleTruckUnits: false,
       maxSocialMediaLinks: 2,
       maxGalleryPhotos: 10,
