@@ -123,14 +123,14 @@ const normalizeTaxIdType = (value) => {
   const normalized = String(value || '').toUpperCase();
   return normalized === 'SSN' ? 'SSN' : 'EIN';
 };
-const applyFoodTruckTaxId = (item, { ein, ssn, infoType }) => {
+const applyFoodTruckTaxId = (item, { ein, ssn }) => {
   const rawEin = ein !== undefined ? ein : undefined;
   const rawSsn = ssn !== undefined ? ssn : undefined;
   if (rawEin === undefined && rawSsn === undefined) {
     return;
   }
 
-  const taxType = normalizeTaxIdType(infoType || (rawSsn ? 'SSN' : 'EIN'));
+  const taxType = normalizeTaxIdType(rawSsn ? 'SSN' : 'EIN');
   const rawValue = taxType === 'SSN' ? rawSsn : rawEin;
   if (String(rawValue || '').includes('*')) {
     return;
@@ -1392,7 +1392,7 @@ exports.update = async (req, res, next) => {
       item.planId = planId;
     }
 
-	    applyFoodTruckTaxId(item, { ein, ssn, infoType });
+	    applyFoodTruckTaxId(item, { ein, ssn });
 
     if (addOns) {
       item.addOns = addOns;
