@@ -412,10 +412,14 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     const expired = days_until_expiration !== null && days_until_expiration < 0;
     const isOptionalDocument = !requirement.required;
     const isEinDocument = requirement.type === 'EIN';
+    const profileTaxIdentifierVerified = isEinDocument && (
+      taxIdRequirementType === 'SSN' ? hasSsnOnProfile : hasEinOnProfile
+    );
     let status = 'missing';
 
-    if (isEinDocument && taxIdRequirementType === 'SSN') {
-      status = 'not_required';
+    if (profileTaxIdentifierVerified) {
+      status = 'verified';
+      score += requirement.scoreWeight;
     } else if (verified) {
       status = 'verified';
       score += requirement.scoreWeight;
@@ -463,11 +467,7 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   });
 
   if (taxIdRequirementType === 'SSN') {
-    if (hasSsnOnProfile) {
-      score += Number(getComplianceRequirement('EIN')?.scoreWeight || 0);
-    } else {
-      missingRequirements.push('SSN_PROFILE');
-    }
+    if (!hasSsnOnProfile) missingRequirements.push('SSN_PROFILE');
   } else if (!hasEinOnProfile) {
     missingRequirements.push('EIN_PROFILE');
   }

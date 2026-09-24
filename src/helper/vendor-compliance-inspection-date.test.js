@@ -93,6 +93,11 @@ assert.match(
 );
 assert.match(
   serviceSource,
+  /const profileTaxIdentifierVerified = isEinDocument[\s\S]*status = 'verified';[\s\S]*score \+= requirement\.scoreWeight/,
+  'A securely stored profile EIN or SSN must satisfy the tax identifier score requirement'
+);
+assert.match(
+  serviceSource,
   /score < 100 \|\| hasPendingReview \|\| !eligible/,
   'Compliance must remain yellow until the full score is complete and eligible'
 );
@@ -125,6 +130,21 @@ assert.match(
   routesSource,
   /admin\/documents\/\:documentId\/archive'[\s\S]*Controller\.adminArchiveDocument/,
   'Admins must have a dedicated compliance archive endpoint'
+);
+
+const foodTruckControllerSource = fs.readFileSync(
+  path.join(__dirname, '../v1/controllers/food-truck-controller.js'),
+  'utf8'
+);
+assert.match(
+  foodTruckControllerSource,
+  /const applyFoodTruckTaxId = \(item, \{ ein, ssn \}\)/,
+  'Tax identifier persistence must infer EIN or SSN from the tax fields, not the truck profile type'
+);
+assert.doesNotMatch(
+  foodTruckControllerSource,
+  /applyFoodTruckTaxId\(item, \{ ein, ssn, infoType \}\)/,
+  'Food truck or caterer profile type must not be interpreted as the tax identifier type'
 );
 
 console.log('vendor compliance inspection date tests passed');
