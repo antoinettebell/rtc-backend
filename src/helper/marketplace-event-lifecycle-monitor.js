@@ -1,4 +1,4 @@
-const { MarketplaceEventModel } = require('../models');
+const { MarketplaceEventModel, MarketplaceTicketModel } = require('../models');
 const {
   getMarketplaceEventTiming,
 } = require('./marketplace-event-close-helper');
@@ -7,6 +7,13 @@ const ONE_MINUTE = 60 * 1000;
 const SCANNER_WINDOW_MS = 24 * 60 * 60 * 1000;
 const NON_TICKETED_CLOSE_DELAY_MS = 24 * 60 * 60 * 1000;
 const CLOSABLE_EVENT_STATUSES = ['OPEN', 'REOPENED', 'AWARDED'];
+
+const shouldRevokeActiveTickets = (event = {}, update = {}) =>
+  event.ticket_sales_enabled === true &&
+  (
+    !!update.ticket_scanning_closed_at ||
+    (update.status === 'CLOSED' && !!event.ticket_scanning_closed_at)
+  );
 
 const getMarketplaceLifecycleUpdate = (event = {}, now = new Date()) => {
   const timing = getMarketplaceEventTiming(event);
@@ -76,7 +83,19 @@ const reconcileMarketplaceEventLifecycles = async (now = new Date()) => {
       { $set: update }
     );
     if (result.modifiedCount || result.nModified) {
-      results.push({ event_id: event.event_id, fields: Object.keys(update) });
+      let revokedTicketCount = 0;
+      if (shouldRevokeActiveTickets(event, update)) {
+        const ticketResult = await MarketplaceTicketModel.updateMany(
+          { event_id: event.event_id, status: 'ACTIVE' },
+          { $set: { status: 'REVOKED', revoked_at: now } }
+        );
+        revokedTicketCount = ticketResult.modifiedCount || ticketResult.nModified || 0;
+      }
+      results.push({
+        event_id: event.event_id,
+        fields: Object.keys(update),
+        revokedTicketCount,
+      });
     }
   }
   return results;
@@ -111,6 +130,7 @@ module.exports = {
   NON_TICKETED_CLOSE_DELAY_MS,
   SCANNER_WINDOW_MS,
   getMarketplaceLifecycleUpdate,
+  shouldRevokeActiveTickets,
   reconcileMarketplaceEventLifecycles,
   runMarketplaceEventLifecycleMonitor,
   startMarketplaceEventLifecycleMonitor,

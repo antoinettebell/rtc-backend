@@ -888,16 +888,21 @@ exports.cancelEventAndRefundTickets = async (req, res, next) => {
 
 exports.closeScanner = async (req, res, next) => {
   try {
+    const now = new Date();
     const event = await MarketplaceEventModel.findOneAndUpdate(
       {
         event_id: req.params.eventId,
         customer_user_id: req.user._id,
         ticket_scanning_closed_at: null,
       },
-      { $set: { ticket_scanning_closed_at: new Date() } },
+      { $set: { ticket_scanning_closed_at: now } },
       { new: true }
     );
     if (!event) throw buildError('Event not found or scanner already closed', 404);
+    await MarketplaceTicketModel.updateMany(
+      { event_id: event.event_id, status: 'ACTIVE' },
+      { $set: { status: 'REVOKED', revoked_at: now } }
+    );
     return res.data({ marketplaceEvent: event }, 'Ticket scanning closed');
   } catch (error) {
     return next(error);

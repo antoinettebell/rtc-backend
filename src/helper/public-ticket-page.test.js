@@ -19,6 +19,14 @@ assert.doesNotMatch(ticketHtml, /<Summer & Music>/);
 assert.match(ticketHtml, /<img src="data:image\/png;base64,secure-ticket-qr"/);
 assert.doesNotMatch(ticketHtml, /qrcodejs|new QRCode/);
 
+const revokedTicketHtml = renderTicketPage({
+  event,
+  ticket: { ticket_type: 'GA', attendee_label: 'Guest 1', status: 'REVOKED' },
+  qrDataUrl: 'data:image/png;base64,secure-ticket-qr',
+});
+assert.match(revokedTicketHtml, />REVOKED</);
+assert.doesNotMatch(revokedTicketHtml, /<img src="data:image\/png;base64,secure-ticket-qr"/);
+
 const scannerHtml = renderScannerPage({ event, sessionToken: 'scanner-secret' });
 assert.match(scannerHtml, /html5-qrcode@2\.3\.8/);
 assert.match(scannerHtml, /facingMode:'environment'/);

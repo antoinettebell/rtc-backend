@@ -1,6 +1,7 @@
 const assert = require('assert');
 const {
   getMarketplaceLifecycleUpdate,
+  shouldRevokeActiveTickets,
 } = require('./marketplace-event-lifecycle-monitor');
 
 const baseEvent = {
@@ -40,6 +41,28 @@ assert.ok(scannerExpired.ticket_scanning_closed_at);
 assert.equal(scannerExpired.status, 'CLOSED');
 assert.ok(scannerExpired.closed_at);
 assert.ok(scannerExpired.vendor_applications_closed_at);
+assert.equal(
+  shouldRevokeActiveTickets(baseEvent, scannerExpired),
+  true
+);
+assert.equal(
+  shouldRevokeActiveTickets(baseEvent, ended),
+  false
+);
+assert.equal(
+  shouldRevokeActiveTickets(
+    { ...baseEvent, ticket_scanning_closed_at: new Date() },
+    { status: 'CLOSED' }
+  ),
+  true
+);
+assert.equal(
+  shouldRevokeActiveTickets(
+    { ...baseEvent, ticket_sales_enabled: false },
+    { ticket_scanning_closed_at: new Date() }
+  ),
+  false
+);
 
 const manuallyClosedBeforeEnd = getMarketplaceLifecycleUpdate(
   {
