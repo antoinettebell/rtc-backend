@@ -128,6 +128,7 @@ const {
   MarketplaceBidAmendmentModel,
   MarketplaceBidModel,
   MarketplacePaymentModel,
+  MarketplaceVendorNotificationModel,
   OperationalNotificationModel,
 } = require('../../models');
 const {
@@ -195,8 +196,8 @@ const {
   buildReplacementBidAmounts,
   canRequestVipAwardAmendment,
   getAwardedEventStatus,
+  getHoursUntilEventStart,
   getVipAwardAmountField,
-  isSolelyPrivateCateredEvent,
   isVipAward,
   isVipCapacityIncreaseLocked,
 } = require('../../helper/marketplace-award-amendment-helper');
@@ -3005,10 +3006,45 @@ const sanitizeBidAmendment = (amendment) => {
 };
 
 const notifyVendorOfBidAmendment = async ({ event, amendment }) => {
+  const title = 'Catered event guest count changed';
+  const body = `${event.event_name || 'An event'} has an updated VIP guest count. Review and reconfirm your awarded price.`;
+  try {
+    await MarketplaceVendorNotificationModel.findOneAndUpdate(
+      {
+        notification_key: [
+          'award-amendment',
+          amendment.amendment_id,
+          amendment.requested_vip_guest_count,
+          amendment.vendor_user_id,
+        ].join(':'),
+      },
+      {
+        $setOnInsert: {
+          vendor_user_id: amendment.vendor_user_id,
+          event_id: event.event_id,
+          bid_id: amendment.original_bid_id,
+          amendment_id: amendment.amendment_id,
+          type: 'MARKETPLACE_AWARD_AMENDMENT',
+          title,
+          body,
+          status: 'AWAITING_VENDOR',
+          action_required: true,
+          occurred_at: amendment.requested_at || new Date(),
+        },
+      },
+      { upsert: true, new: true }
+    );
+  } catch (error) {
+    console.error('Marketplace amendment bell notification persistence failed', {
+      eventId: event.event_id,
+      amendmentId: amendment.amendment_id,
+      message: error.message,
+    });
+  }
   await MarketplaceCommunications.sendMarketplaceCommunication({
     userId: amendment.vendor_user_id,
-    title: 'Catered event guest count changed',
-    body: `${event.event_name || 'An event'} has an updated VIP guest count. Review and reconfirm your awarded price.`,
+    title,
+    body,
     emailSubject: `Review Your Awarded Bid — ${event.event_name || 'Event'}`,
     emailBody: `The VIP guest count for ${event.event_name || 'the event'} increased. Your existing award remains active. Open the app to reconfirm your current price or submit an amended price for coordinator review.`,
     data: {
@@ -3479,12 +3515,48 @@ const notifyVendorsOfEventChanges = async (event, changes = []) => {
 
   const labels = [...new Set(changes.map((change) => change.label))].join(', ');
   const isUrgent = changes.some((change) => change.urgent);
+  const title = 'Marketplace event updated';
+  const body = `${event.event_name || 'An event'} has updated event details: ${labels}.`;
+
+  await Promise.all(vendorIds.map(async (userId) => {
+    try {
+      await MarketplaceVendorNotificationModel.findOneAndUpdate(
+        {
+          notification_key: [
+            'event-updated',
+            event.event_id,
+            new Date(event.updated_at || Date.now()).getTime(),
+            userId,
+          ].join(':'),
+        },
+        {
+          $setOnInsert: {
+            vendor_user_id: userId,
+            event_id: event.event_id,
+            type: 'MARKETPLACE_EVENT_UPDATED',
+            title,
+            body,
+            status: 'FYI',
+            action_required: false,
+            occurred_at: event.updated_at || new Date(),
+          },
+        },
+        { upsert: true, new: true }
+      );
+    } catch (error) {
+      console.error('Marketplace event bell notification persistence failed', {
+        eventId: event.event_id,
+        userId: String(userId),
+        message: error.message,
+      });
+    }
+  }));
 
   await MarketplaceCommunications.sendMarketplaceCommunications(
     vendorIds.map((userId) => ({
       userId,
-      title: 'Marketplace event updated',
-      body: `${event.event_name || 'An event'} has updated event details: ${labels}.`,
+      title,
+      body,
       emailSubject: `Event Details Updated — ${event.event_name || 'Event'}`,
       emailBody: `The coordinator updated details for ${event.event_name || 'the event'}.\n\nUpdated information: ${labels}\n\nPlease open the app to review the latest event details.`,
       data: {
@@ -4968,10 +5040,16 @@ exports.updateEvent = async (req, res, next) => {
       throw buildError('Only customers can update marketplace events', 403);
     }
     const event = await getOwnedEvent(req.params.eventId, req.user._id);
-    if (event.status === 'CANCELLED' || (
-      event.status === 'AWARDED' && isSolelyPrivateCateredEvent(event)
-    )) {
-      throw buildError('Awarded private catered events or cancelled events cannot be edited.', 400);
+    if (event.status === 'CANCELLED') {
+      throw buildError('Cancelled events cannot be edited.', 400);
+    }
+    if (event.status === 'AWARDED') {
+      const hoursUntilStart = getHoursUntilEventStart({
+        eventTiming: getMarketplaceEventTiming(event),
+      });
+      if (hoursUntilStart != null && hoursUntilStart <= 72) {
+        throw buildError(VIP_CAPACITY_LOCK_MESSAGE, 409);
+      }
     }
     const gaCommitted = Number(event.ga_tickets_sold || 0) + Number(event.ga_tickets_reserved || 0);
     const vipCommitted = Number(event.vip_tickets_sold || 0) + Number(event.vip_tickets_reserved || 0);
@@ -6633,7 +6711,7 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       });
     }
 
-    const [questions, bids, applications, closedCandidateBids, closedCandidateApplications, operationalNotifications, refundRequests] = await Promise.all([
+    const [questions, bids, applications, closedCandidateBids, closedCandidateApplications, operationalNotifications, refundRequests, marketplaceVendorNotifications] = await Promise.all([
       MarketplaceEventQuestionService.getByData(
         {
           vendor_user_id: req.user._id,
@@ -6727,6 +6805,10 @@ exports.vendorNotificationSummary = async (req, res, next) => {
         .limit(50)
         .populate('order_id')
         .lean(),
+      MarketplaceVendorNotificationModel.find({ vendor_user_id: req.user._id })
+        .sort({ occurred_at: -1 })
+        .limit(50)
+        .lean(),
     ]);
 
     const eventIds = [
@@ -6737,6 +6819,7 @@ exports.vendorNotificationSummary = async (req, res, next) => {
           ...applications.map((application) => application.event_id),
           ...closedCandidateBids.map((bid) => bid.event_id),
           ...closedCandidateApplications.map((application) => application.event_id),
+          ...marketplaceVendorNotifications.map((item) => item.event_id),
         ]
           .map((eventId) => String(eventId || '').trim())
           .filter(Boolean)
@@ -6895,8 +6978,29 @@ exports.vendorNotificationSummary = async (req, res, next) => {
       acknowledged: false,
     }));
 
+    const persistedMarketplaceNotificationList = marketplaceVendorNotifications.map((item) => {
+      const event = eventById[String(item.event_id)] || {};
+      return {
+        id: `marketplace-vendor-${item.notification_id}`,
+        notification_id: item.notification_id,
+        type: item.type,
+        event_id: item.event_id,
+        event_name: toNotificationEventLabel(event),
+        event_date: toNotificationEventDate(event),
+        title: item.title,
+        subtitle: item.body,
+        status: item.status,
+        bid_id: item.bid_id || null,
+        amendment_id: item.amendment_id || null,
+        action_required: item.action_required === true,
+        occurred_at: item.occurred_at,
+        acknowledged: false,
+      };
+    });
+
     const marketplaceNotificationList = [
       ...refundNotificationList,
+      ...persistedMarketplaceNotificationList,
       ...operationalNotificationList,
       ...messageNotifications,
       ...bidNotifications,
@@ -6912,6 +7016,7 @@ exports.vendorNotificationSummary = async (req, res, next) => {
         unread_message_count: messageNotifications.filter((item) => item.unread).length,
         action_required_count:
           refundNotificationList.length +
+          persistedMarketplaceNotificationList.filter((item) => item.action_required).length +
           bidNotifications.length +
           applicationNotifications.length +
           closedBidNotifications.length +
@@ -9528,6 +9633,14 @@ exports.respondToAwardAmendment = async (req, res, next) => {
     amendment.vendor_responded_at = new Date();
     amendment.rejection_reason = null;
     await amendment.save();
+    await MarketplaceVendorNotificationModel.updateMany(
+      { amendment_id: amendment.amendment_id, vendor_user_id: req.user._id },
+      { $set: { status: 'PENDING_REVIEW', action_required: false } }
+    ).catch((error) => console.error('Marketplace amendment bell notification update failed', {
+      eventId: amendment.event_id,
+      amendmentId: amendment.amendment_id,
+      message: error.message,
+    }));
 
     const event = await MarketplaceEventService.getByData(
       { event_id: amendment.event_id },
@@ -9638,6 +9751,41 @@ exports.acceptAwardAmendment = async (req, res, next) => {
     });
 
     try {
+      await MarketplaceVendorNotificationModel.updateMany(
+        {
+          amendment_id: acceptedAmendment.amendment_id,
+          vendor_user_id: acceptedAmendment.vendor_user_id,
+        },
+        { $set: { status: 'ACCEPTED', action_required: false } }
+      ).catch((error) => console.error('Marketplace amendment acceptance bell update failed', {
+        eventId: acceptedAmendment.event_id,
+        amendmentId: acceptedAmendment.amendment_id,
+        message: error.message,
+      }));
+      await MarketplaceVendorNotificationModel.findOneAndUpdate(
+        {
+          notification_key: `award-amendment-accepted:${acceptedAmendment.amendment_id}:${acceptedAmendment.vendor_user_id}`,
+        },
+        {
+          $setOnInsert: {
+            vendor_user_id: acceptedAmendment.vendor_user_id,
+            event_id: acceptedAmendment.event_id,
+            bid_id: replacementBid.bid_id,
+            amendment_id: acceptedAmendment.amendment_id,
+            type: 'MARKETPLACE_AWARD_AMENDMENT',
+            title: 'Award amendment accepted',
+            body: 'Your amended awarded price is now active for final payment.',
+            status: 'ACCEPTED',
+            action_required: false,
+            occurred_at: acceptedAmendment.reviewed_at || new Date(),
+          },
+        },
+        { upsert: true, new: true }
+      ).catch((error) => console.error('Marketplace amendment acceptance bell notification failed', {
+        eventId: acceptedAmendment.event_id,
+        amendmentId: acceptedAmendment.amendment_id,
+        message: error.message,
+      }));
       await MarketplaceCommunications.sendMarketplaceCommunication({
         userId: acceptedAmendment.vendor_user_id,
         title: 'Award amendment accepted',
@@ -9692,6 +9840,38 @@ exports.rejectAwardAmendment = async (req, res, next) => {
     await amendment.save();
 
     try {
+      await MarketplaceVendorNotificationModel.updateMany(
+        { amendment_id: amendment.amendment_id, vendor_user_id: amendment.vendor_user_id },
+        { $set: { status: 'REJECTED', action_required: false } }
+      ).catch((error) => console.error('Marketplace amendment rejection bell update failed', {
+        eventId: amendment.event_id,
+        amendmentId: amendment.amendment_id,
+        message: error.message,
+      }));
+      await MarketplaceVendorNotificationModel.findOneAndUpdate(
+        {
+          notification_key: `award-amendment-rejected:${amendment.amendment_id}:${amendment.vendor_user_id}`,
+        },
+        {
+          $setOnInsert: {
+            vendor_user_id: amendment.vendor_user_id,
+            event_id: amendment.event_id,
+            bid_id: amendment.original_bid_id,
+            amendment_id: amendment.amendment_id,
+            type: 'MARKETPLACE_AWARD_AMENDMENT',
+            title: 'Award amendment not accepted',
+            body: 'Your original awarded price remains active. Open the event to review the coordinator response.',
+            status: 'REJECTED',
+            action_required: false,
+            occurred_at: amendment.reviewed_at || new Date(),
+          },
+        },
+        { upsert: true, new: true }
+      ).catch((error) => console.error('Marketplace amendment rejection bell notification failed', {
+        eventId: amendment.event_id,
+        amendmentId: amendment.amendment_id,
+        message: error.message,
+      }));
       await MarketplaceCommunications.sendMarketplaceCommunication({
         userId: amendment.vendor_user_id,
         title: 'Award amendment not accepted',

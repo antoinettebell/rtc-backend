@@ -109,6 +109,7 @@ exports.EventVendorObjectCleanupModel = require('./event-vendor-object-cleanup')
 
 /** Define marketplace event question model */
 exports.MarketplaceEventQuestionModel = require('./marketplace-event-question');
+exports.MarketplaceVendorNotificationModel = require('./marketplace-vendor-notification');
 
 /** Define marketplace attachment model */
 exports.MarketplaceAttachmentModel = require('./marketplace-attachment');
