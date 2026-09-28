@@ -73,7 +73,7 @@ module.exports = {
       }),
 
       authCode: Joi.string().when('paymentMethod', {
-        is: Joi.valid('COD', 'CASH'),
+        is: Joi.valid('COD', 'CASH', 'TAP_TO_PAY'),
         then: Joi.string().optional().allow(null, ''),
         otherwise: Joi.string().required(),
       }),

@@ -117,6 +117,8 @@ const searchTransactionsByReference = async (
 
 const normalizeTransaction = (transaction = {}) => {
   const amountDetails = transaction.orderInformation?.amountDetails || {};
+  const card = transaction.paymentInformation?.card || {};
+  const accountSuffix = String(card.suffix || '').replace(/\D/g, '').slice(-4);
   return {
     id: String(transaction.id || ''),
     status: String(transaction.status || transaction.applicationInformation?.status || '').toUpperCase(),
@@ -128,6 +130,11 @@ const normalizeTransaction = (transaction = {}) => {
     ),
     currency: String(amountDetails.currency || amountDetails.settlementCurrency || '').toUpperCase(),
     reference: String(transaction.clientReferenceInformation?.code || ''),
+    authCode: String(transaction.processorInformation?.approvalCode || '') || null,
+    accountNumber: accountSuffix ? `XXXX${accountSuffix}` : null,
+    accountType: String(card.brandName || card.type || '').toUpperCase() || null,
+    reasonCode: String(transaction.applicationInformation?.reasonCode || '') || null,
+    submittedAt: transaction.submitTimeUTC || null,
   };
 };
 

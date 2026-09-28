@@ -4198,6 +4198,7 @@ exports.add = async (req, res, next) => {
     total = roundCurrency(total + normalizedFoodTruckTip);
 
     let tapToPayAttempt = null;
+    let verifiedTapToPayTransaction = null;
     if (vendorPosOrder && normalizedPaymentMethod === 'TAP_TO_PAY') {
       tapToPayAttempt = await TapToPayPaymentAttemptModel.findOne({
         _id: tapToPayAttemptId,
@@ -4309,7 +4310,7 @@ exports.add = async (req, res, next) => {
       }
 
       try {
-        await CyberSourcePaymentHelper.verifyTransaction({
+        verifiedTapToPayTransaction = await CyberSourcePaymentHelper.verifyTransaction({
           transactionId: nativeTransactionId,
           expectedAmount: total,
           expectedCurrency: 'USD',
@@ -4428,10 +4429,10 @@ exports.add = async (req, res, next) => {
       paymentMethod: normalizedPaymentMethod,
       paymentStatus: normalizedPaymentStatus,
       transactionId,
-      authCode,
+      authCode: verifiedTapToPayTransaction?.authCode || authCode,
       invoiceNumber,
-      accountNumber,
-      accountType,
+      accountNumber: verifiedTapToPayTransaction?.accountNumber || accountNumber,
+      accountType: verifiedTapToPayTransaction?.accountType || accountType,
       statusTime: buildInitialStatusTime(initialOrderStatus),
     });
 

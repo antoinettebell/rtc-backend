@@ -59,10 +59,21 @@ const restoreEnvironment = () => {
             amountDetails: { totalAmount: '125.50', currency: 'USD' },
           },
           clientReferenceInformation: { code: 'payment-123' },
+          processorInformation: { approvalCode: 'A12345' },
+          paymentInformation: {
+            card: { suffix: '1516', brandName: 'Visa' },
+          },
+          applicationInformation: { reasonCode: '100' },
+          submitTimeUTC: '2026-09-28T23:17:19Z',
         }),
       }
     );
     assert.strictEqual(verified.id, 'txn-123');
+    assert.strictEqual(verified.authCode, 'A12345');
+    assert.strictEqual(verified.accountNumber, 'XXXX1516');
+    assert.strictEqual(verified.accountType, 'VISA');
+    assert.strictEqual(verified.reasonCode, '100');
+    assert.strictEqual(verified.submittedAt, '2026-09-28T23:17:19Z');
 
     await assert.rejects(
       () =>
