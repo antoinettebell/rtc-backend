@@ -102,7 +102,7 @@ exports.sendNotification = async (
     android: {
       priority: 'high',
       notification: {
-        channelId: 'rtc-notifications-v2',
+        channelId: 'rtc-notifications-v3',
         sound: 'default',
       },
     },

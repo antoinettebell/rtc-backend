@@ -4,7 +4,7 @@ const path = require('path');
 
 const source = fs.readFileSync(path.join(__dirname, 'fcm.js'), 'utf8');
 
-assert.match(source, /channelId: 'rtc-notifications-v2'/);
+assert.match(source, /channelId: 'rtc-notifications-v3'/);
 assert.match(source, /priority: 'high'/);
 assert.match(source, /sound: 'default'/);
 assert.match(source, /'interruption-level': 'active'/);
