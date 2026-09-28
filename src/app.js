@@ -14,6 +14,9 @@ const { startInventoryExpirationMonitor } = require('./helper/inventory-expirati
 const {
   startTapToPayInterruptionMonitor,
 } = require('./helper/tap-to-pay-interruption-monitor');
+const {
+  startMarketplaceEventLifecycleMonitor,
+} = require('./helper/marketplace-event-lifecycle-monitor');
 
 app.set('trust proxy', 'loopback');
 
@@ -31,6 +34,7 @@ require('./db/connection');
 startEventVendorPhotoCleanup();
 startInventoryExpirationMonitor();
 startTapToPayInterruptionMonitor();
+startMarketplaceEventLifecycleMonitor();
 
 app.use(reshelper);
 

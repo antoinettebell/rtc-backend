@@ -12,12 +12,26 @@ const loadController = (state) => {
         return {
           MarketplaceEventModel: {
             findOne: () => ({ lean: async () => state.event }),
+            findOneAndUpdate: async (query, update) => {
+              if (state.event.ticket_scanning_closed_at) return null;
+              Object.assign(state.event, update.$set);
+              return state.event;
+            },
             updateOne: async () => {
               state.salesCloseMutationAttempts += 1;
               return { modifiedCount: 1 };
             },
           },
           MarketplaceTicketModel: {
+            updateMany: async (query, update) => {
+              const matches = state.tickets.filter(
+                (ticket) =>
+                  ticket.event_id === query.event_id &&
+                  ticket.status === query.status
+              );
+              matches.forEach((ticket) => Object.assign(ticket, update.$set));
+              return { modifiedCount: matches.length };
+            },
             findOneAndUpdate: (query, update) => ({
               select: async () => {
                 const ticket = state.tickets.find(
@@ -129,6 +143,21 @@ const publicScan = async (state, token) => {
   return { response, error };
 };
 
+const closeScanner = async (state) => {
+  const controller = loadController(state);
+  let response;
+  let error;
+  await controller.closeScanner(
+    {
+      params: { eventId: 'event-1' },
+      user: { _id: 'coordinator-1', userType: 'CUSTOMER' },
+    },
+    { data: (payload, message) => { response = { payload, message }; } },
+    (nextError) => { error = nextError; }
+  );
+  return { response, error };
+};
+
 (async () => {
   let state = createState(2);
   let result = await scan(state, 'ticket-1');
@@ -160,6 +189,15 @@ const publicScan = async (state, token) => {
   assert.equal(state.event.ticket_sales_closed_at, null);
   assert.equal(state.salesCloseCountAttempts, 0);
   assert.equal(state.salesCloseMutationAttempts, 0);
+
+  state = createState(2);
+  state.tickets[1].status = 'CHECKED_IN';
+  result = await closeScanner(state);
+  assert.equal(result.error, undefined);
+  assert.ok(state.event.ticket_scanning_closed_at);
+  assert.equal(state.tickets[0].status, 'REVOKED');
+  assert.ok(state.tickets[0].revoked_at);
+  assert.equal(state.tickets[1].status, 'CHECKED_IN');
 
   console.log('marketplace ticket scanning lifecycle controller tests passed');
 })().catch((error) => {

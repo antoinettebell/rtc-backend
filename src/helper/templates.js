@@ -12,7 +12,7 @@ exports.FORGOT_PASSWORD_TEMPLATE = `<html>
             <table border="0" cellpadding="0" cellspacing="0" width="480" >
                 <tr>
                     <td bgcolor="#fc7b03" align="center" style="padding: 20px 30px 0px 30px; color: #bababa; font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 400; line-height: 25px;" >
-                        <img src="https://ft-media-storage.s3.us-east-1.amazonaws.com/a747e1d2-c3b8-4d91-bff2-46d2ae1eff74.png" width="80px"><br />
+                        <img src="https://admin.rounddacornerapp.com/logo-tree.png" width="80" height="80" alt="Round Da' Corner"><br />
                     </td>
                 </tr>
                 <tr>
@@ -81,7 +81,7 @@ exports.OTP_VERIFICATION_TEMPLATE = `<html>
             <table border="0" cellpadding="0" cellspacing="0" width="480" >
                 <tr>
                     <td bgcolor="#fc7b03" align="center" style="padding: 20px 30px 0px 30px; color: #bababa; font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 400; line-height: 25px;" >
-                        <img src="https://ft-media-storage.s3.us-east-1.amazonaws.com/a747e1d2-c3b8-4d91-bff2-46d2ae1eff74.png" width="80px"><br />
+                        <img src="https://admin.rounddacornerapp.com/logo-tree.png" width="80" height="80" alt="Round Da' Corner"><br />
                     </td>
                 </tr>
                 <tr>
@@ -161,7 +161,7 @@ exports.WELCOME_NEW_VENDOR = `<html>
             <table border="0" cellpadding="0" cellspacing="0" width="480" >
                 <tr>
                     <td bgcolor="#fc7b03" align="center" style="padding: 20px 30px 0px 30px; color: #bababa; font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 400; line-height: 25px;" >
-                        <img src="https://ft-media-storage.s3.us-east-1.amazonaws.com/a747e1d2-c3b8-4d91-bff2-46d2ae1eff74.png" width="80px"><br />
+                        <img src="https://admin.rounddacornerapp.com/logo-tree.png" width="80" height="80" alt="Round Da' Corner"><br />
                     </td>
                 </tr>
                 <tr>
@@ -249,7 +249,7 @@ exports.NEW_VENDOR_TO_ADMIN =
   '<table border="0" cellpadding="0" cellspacing="0" width="480" >' +
   '<tr>' +
   '<td bgcolor="#fc7b03" align="center" style="padding: 20px 30px 0px 30px; color: #bababa; font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 400; line-height: 25px;" >' +
-  '<img src="https://ft-media-storage.s3.us-east-1.amazonaws.com/a747e1d2-c3b8-4d91-bff2-46d2ae1eff74.png" width="80px"><br />' +
+  '<img src="https://admin.rounddacornerapp.com/logo-tree.png" width="80" height="80" alt="Round Da Corner"><br />' +
   '</td>' +
   '</tr>' +
   '<tr>' +
@@ -299,7 +299,7 @@ exports.VENDOR_REQUEST_STATUS_APPROVE = `<html>
             <table border="0" cellpadding="0" cellspacing="0" width="480" >
                 <tr>
                     <td bgcolor="#fc7b03" align="center" style="padding: 20px 30px 0px 30px; color: #bababa; font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 400; line-height: 25px;" >
-                        <img src="https://ft-media-storage.s3.us-east-1.amazonaws.com/a747e1d2-c3b8-4d91-bff2-46d2ae1eff74.png" width="80px"><br />
+                        <img src="https://admin.rounddacornerapp.com/logo-tree.png" width="80" height="80" alt="Round Da' Corner"><br />
                     </td>
                 </tr>
                 <tr>
@@ -384,7 +384,7 @@ exports.VENDOR_REQUEST_STATUS_REJECT = `<html>
             <table border="0" cellpadding="0" cellspacing="0" width="480" >
                 <tr>
                     <td bgcolor="#fc7b03" align="center" style="padding: 20px 30px 0px 30px; color: #bababa; font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 400; line-height: 25px;" >
-                        <img src="https://ft-media-storage.s3.us-east-1.amazonaws.com/a747e1d2-c3b8-4d91-bff2-46d2ae1eff74.png" width="80px"><br />
+                        <img src="https://admin.rounddacornerapp.com/logo-tree.png" width="80" height="80" alt="Round Da' Corner"><br />
                     </td>
                 </tr>
                 <tr>
@@ -457,7 +457,7 @@ exports.PAYMENTS_FAILED = `<html>
             <table border="0" cellpadding="0" cellspacing="0" width="480" >
                 <tr>
                     <td bgcolor="#fc7b03" align="center" style="padding: 20px 30px 0px 30px; color: #bababa; font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 400; line-height: 25px;" >
-                        <img src="https://ft-media-storage.s3.us-east-1.amazonaws.com/a747e1d2-c3b8-4d91-bff2-46d2ae1eff74.png" width="80px"><br />
+                        <img src="https://admin.rounddacornerapp.com/logo-tree.png" width="80" height="80" alt="Round Da' Corner"><br />
                     </td>
                 </tr>
                 <tr>
@@ -535,7 +535,7 @@ exports.PAYMENTS_SUCCESS = `<html>
             <table border="0" cellpadding="0" cellspacing="0" width="480" >
                 <tr>
                     <td bgcolor="#28a745" align="center" style="padding: 20px 30px 0px 30px; color: #ffffff; font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 400; line-height: 25px;" >
-                        <img src="https://ft-media-storage.s3.us-east-1.amazonaws.com/a747e1d2-c3b8-4d91-bff2-46d2ae1eff74.png" width="80px"><br />
+                        <img src="https://admin.rounddacornerapp.com/logo-tree.png" width="80" height="80" alt="Round Da' Corner"><br />
                     </td>
                 </tr>
                 <tr>
@@ -595,5 +595,3 @@ exports.PAYMENTS_SUCCESS = `<html>
 </table>
 </body>
 </html>`;
-
-

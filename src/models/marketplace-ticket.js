@@ -18,7 +18,7 @@ const mSchema = mongoose.Schema(
     token_encrypted: { type: String, required: true, select: false },
     status: {
       type: String,
-      enum: ['ACTIVE', 'CHECKED_IN', 'REFUNDED', 'VOIDED', 'EVENT_CANCELLED'],
+      enum: ['ACTIVE', 'CHECKED_IN', 'REFUNDED', 'VOIDED', 'EVENT_CANCELLED', 'REVOKED'],
       default: 'ACTIVE',
       index: true,
     },
@@ -30,6 +30,7 @@ const mSchema = mongoose.Schema(
     },
     checked_in_session_id: { type: String, default: null },
     checked_in_action_source: { type: String, enum: ['COORDINATOR', 'INVITEE', 'ADMIN', 'SYSTEM'], default: null },
+    revoked_at: { type: Date, default: null, index: true },
     delivered_at: { type: Date, default: null },
   },
   { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } }
