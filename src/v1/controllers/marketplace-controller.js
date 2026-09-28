@@ -49,6 +49,7 @@ const {
 } = require('../../helper/marketplace-agreement-document-verification');
 const {
   buildSignedAgreementAttachmentContext,
+  buildReusedSignedAgreementAttachment,
   buildActiveAgreementIdentityKey,
   reserveActiveMarketplaceAgreement,
   resolveMarketplaceAgreementVendorContext,
@@ -1809,6 +1810,53 @@ const persistSignedAgreementAttachment = async (agreement) => {
       uploadedByUserId: agreement.vendor_user_id,
     });
     return currentAttachment;
+  }
+
+  if (agreement.reuse_existing_signed_document) {
+    const sourceAttachment = await MarketplaceAttachmentService.getByData(
+      {
+        uploaded_by_user_id: agreement.vendor_user_id,
+        docusign_envelope_id: agreement.envelope_id,
+        attachment_type: 'AGREEMENT_DOCUMENT',
+        status: 'ACTIVE',
+        file_url: { $ne: null },
+      },
+      { singleResult: true, sort: { created_at: -1 } }
+    );
+    if (sourceAttachment) {
+      const attachment = await MarketplaceAttachmentService.create(
+        buildReusedSignedAgreementAttachment({ sourceAttachment, agreement })
+      );
+      if (agreement.bid_id) {
+        await MarketplaceBidService.update(
+          { bid_id: agreement.bid_id, vendor_user_id: agreement.vendor_user_id },
+          {
+            agreement_document_url: attachment.file_url,
+            agreement_document_key: attachment.file_key,
+          },
+          { getNew: false }
+        );
+      }
+      if (agreement.application_id) {
+        await MarketplaceApplicationService.update(
+          {
+            application_id: agreement.application_id,
+            vendor_user_id: agreement.vendor_user_id,
+          },
+          {
+            agreement_document_url: attachment.file_url,
+            agreement_document_key: attachment.file_key,
+          },
+          { getNew: false }
+        );
+      }
+      await syncMarketplaceAttachmentToVendorDocuments({
+        foodTruckId: agreement.food_truck_id || null,
+        attachment,
+        uploadedByUserId: agreement.vendor_user_id,
+      });
+      return attachment;
+    }
   }
 
   const signedDocuments = await DocuSignHelper.downloadEnvelopeDocuments(
@@ -7337,17 +7385,27 @@ exports.startVendorAgreementSigning = async (req, res, next) => {
         source: 'USER_REFRESH',
         message: 'Existing signed annual agreement reused',
       });
-      await persistSignedAgreementAttachment(
-        buildSignedAgreementAttachmentContext({
-          agreement: validAgreement,
-          eventId: event.event_id,
-          bidId: bid?.bid_id || null,
-          applicationId: application?.application_id || null,
-          vendorUserId: req.user._id,
-          foodTruck,
-          reuseExistingSignedDocument: true,
-        })
-      );
+      const signedAgreementContext = buildSignedAgreementAttachmentContext({
+        agreement: validAgreement,
+        eventId: event.event_id,
+        bidId: bid?.bid_id || null,
+        applicationId: application?.application_id || null,
+        vendorUserId: req.user._id,
+        foodTruck,
+        reuseExistingSignedDocument: true,
+      });
+      try {
+        await persistSignedAgreementAttachment(signedAgreementContext);
+      } catch (error) {
+        await setSubmissionSignatureStatus(signedAgreementContext, 'ERROR');
+        await sendDeveloperAlert('Marketplace signed agreement reuse error', error, {
+          vendor_user_id: req.user._id,
+          event_id: event.event_id,
+          bid_id: bid?.bid_id || null,
+          application_id: application?.application_id || null,
+        });
+        throw error;
+      }
 
       return res.data(
         {

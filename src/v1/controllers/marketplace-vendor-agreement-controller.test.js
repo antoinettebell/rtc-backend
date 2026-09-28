@@ -25,6 +25,8 @@ const {
   );
   assert.match(start, /foodTruck\?\._id \|\| null/);
   assert.match(start, /buildSignedAgreementAttachmentContext/);
+  assert.match(start, /setSubmissionSignatureStatus\(signedAgreementContext, 'ERROR'\)/,
+    'failed annual agreement reuse must restore the current submission to a retryable draft');
   assert.match(start, /active_identity_key: activeIdentityKey/);
   assert.match(start, /reserveActiveMarketplaceAgreement/);
   assert.match(start, /Concurrent signing request reused the active envelope/);
@@ -53,6 +55,15 @@ const {
     recipientViewHelper,
     /returnUrl: returnUrl \|\| docusign\.returnUrl/,
     'a server website return URL cannot replace the vendor app return on a continued step'
+  );
+  const attachmentPersistence = source.slice(
+    source.indexOf('const persistSignedAgreementAttachment'),
+    source.indexOf('const redactLockedMarketplaceEvent')
+  );
+  assert.match(
+    attachmentPersistence,
+    /reuse_existing_signed_document[\s\S]*docusign_envelope_id:[\s\S]*MarketplaceAttachmentService\.create[\s\S]*downloadEnvelopeDocuments/,
+    'annual agreement reuse must prefer the stored signed attachment before provider download fallback'
   );
   const agreementModelSource = fs.readFileSync(
     path.join(__dirname, '../../models/marketplace-vendor-agreement.js'),

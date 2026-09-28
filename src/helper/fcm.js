@@ -99,5 +99,20 @@ exports.sendNotification = async (
     notification: { title, body },
     data,
     token: userFCMToken,
+    android: {
+      priority: 'high',
+      notification: {
+        channelId: 'rtc-notifications-v2',
+        sound: 'default',
+      },
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: 'default',
+          'interruption-level': 'active',
+        },
+      },
+    },
   });
 };

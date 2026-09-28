@@ -51,6 +51,23 @@ const buildSignedAgreementAttachmentLink = ({
   update: { application_id: applicationId },
 });
 
+const buildReusedSignedAgreementAttachment = ({
+  sourceAttachment,
+  agreement,
+}) => ({
+  event_id: agreement.event_id,
+  bid_id: agreement.bid_id || null,
+  application_id: agreement.application_id || null,
+  attachment_type: 'AGREEMENT_DOCUMENT',
+  file_url: sourceAttachment.file_url,
+  file_key: sourceAttachment.file_key || null,
+  original_name: sourceAttachment.original_name || null,
+  mime_type: sourceAttachment.mime_type || 'application/pdf',
+  size_bytes: sourceAttachment.size_bytes || null,
+  uploaded_by_user_id: agreement.vendor_user_id,
+  docusign_envelope_id: agreement.envelope_id,
+});
+
 const buildActiveAgreementIdentityKey = ({
   vendorUserId,
   eventVendorProfileId = null,
@@ -74,6 +91,7 @@ const reserveActiveMarketplaceAgreement = async ({ create, find, identityKey, pa
 module.exports = {
   buildSignedAgreementAttachmentContext,
   buildSignedAgreementAttachmentLink,
+  buildReusedSignedAgreementAttachment,
   buildActiveAgreementIdentityKey,
   reserveActiveMarketplaceAgreement,
   resolveMarketplaceAgreementVendorContext,

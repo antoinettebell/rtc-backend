@@ -2,6 +2,7 @@ const assert = require('assert');
 const {
   buildSignedAgreementAttachmentContext,
   buildSignedAgreementAttachmentLink,
+  buildReusedSignedAgreementAttachment,
   buildActiveAgreementIdentityKey,
   reserveActiveMarketplaceAgreement,
   resolveMarketplaceAgreementVendorContext,
@@ -64,7 +65,27 @@ const {
   });
   assert.equal(link.query.application_id, null);
   assert.equal(link.query.docusign_envelope_id, 'envelope-1');
-  assert.equal(link.update.application_id, 'application-1');
+assert.equal(link.update.application_id, 'application-1');
+
+const reusedAttachment = buildReusedSignedAgreementAttachment({
+  sourceAttachment: {
+    file_url: 'https://files.example/agreement.pdf',
+    file_key: 'agreements/source.pdf',
+    original_name: 'agreement.pdf',
+    mime_type: 'application/pdf',
+    size_bytes: 1234,
+  },
+  agreement: {
+    event_id: 'event-2',
+    bid_id: 'bid-2',
+    vendor_user_id: 'vendor-1',
+    envelope_id: 'envelope-1',
+  },
+});
+assert.equal(reusedAttachment.event_id, 'event-2');
+assert.equal(reusedAttachment.bid_id, 'bid-2');
+assert.equal(reusedAttachment.file_url, 'https://files.example/agreement.pdf');
+assert.equal(reusedAttachment.docusign_envelope_id, 'envelope-1');
   assert.equal(
     buildActiveAgreementIdentityKey({
       vendorUserId: 'vendor-1', eventVendorProfileId: 'profile-1',
