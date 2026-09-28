@@ -1,5 +1,7 @@
 const assert = require('assert');
 const {
+  attachOpenAwardAmendmentsToBids,
+  buildAwardedVipGuestCountUpdate,
   buildReplacementBidAmounts,
   canRequestVipAwardAmendment,
   getAwardedEventStatus,
@@ -8,6 +10,61 @@ const {
   isVipCapacityIncreaseLocked,
   VIP_CAPACITY_LOCK_MESSAGE,
 } = require('./marketplace-award-amendment-helper');
+
+assert.deepStrictEqual(
+  attachOpenAwardAmendmentsToBids(
+    [{ bid_id: 'bid-1', bid_status: 'AWARDED' }, { bid_id: 'bid-2', bid_status: 'AWARDED' }],
+    [{ amendment_id: 'amendment-1', original_bid_id: 'bid-1', status: 'AWAITING_VENDOR' }]
+  ),
+  [
+    {
+      bid_id: 'bid-1',
+      bid_status: 'AWARDED',
+      award_amendment_id: 'amendment-1',
+      award_amendment_status: 'AWAITING_VENDOR',
+    },
+    { bid_id: 'bid-2', bid_status: 'AWARDED' },
+  ]
+);
+
+assert.deepStrictEqual(
+  buildAwardedVipGuestCountUpdate({
+    event: {
+      payment_responsibility: 'COORDINATOR',
+      catered_vip_section_enabled: true,
+      vip_section_enabled: true,
+    },
+    requestedVipGuestCount: 20,
+    requestedBudget: 500,
+  }),
+  {
+    eventChanges: { vip_guest_count: 20, budgeted_amount: 500 },
+    validationMessage: null,
+  }
+);
+assert.equal(
+  buildAwardedVipGuestCountUpdate({
+    event: {
+      payment_responsibility: 'BOTH',
+      catered_vip_section_enabled: true,
+      vip_section_enabled: true,
+    },
+    requestedVipGuestCount: 20,
+    requestedBudget: 499,
+  }).validationMessage,
+  'Budget amount must be at least $500.00 for the paid guest count.'
+);
+assert.deepStrictEqual(
+  buildAwardedVipGuestCountUpdate({
+    event: { payment_responsibility: 'VENDOR' },
+    requestedVipGuestCount: 20,
+    requestedBudget: null,
+  }),
+  {
+    eventChanges: { vip_guest_count: 20 },
+    validationMessage: null,
+  }
+);
 
 assert.equal(
   VIP_CAPACITY_LOCK_MESSAGE,

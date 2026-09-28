@@ -650,6 +650,13 @@ module.exports = {
     }),
   },
 
+  updateAwardedVipGuestCount: {
+    body: Joi.object({
+      vip_guest_count: Joi.number().integer().min(1).required(),
+      budgeted_amount: Joi.number().min(0).allow(null),
+    }),
+  },
+
   vendorAgreementReturn: {
     body: Joi.object({
       status: Joi.string()

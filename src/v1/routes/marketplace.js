@@ -400,6 +400,7 @@ router.get(
 router.patch(
   '/events/:eventId/award-amendments/vip-guest-count',
   allowedTo(['CUSTOMER']),
+  validate(Validation.updateAwardedVipGuestCount),
   Controller.updateAwardedVipGuestCount
 );
 

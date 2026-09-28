@@ -1,3 +1,7 @@
+const {
+  getMarketplaceBudgetGuestCount,
+} = require('./marketplace-participation-helper');
+
 const AMENDMENT_STATUSES = [
   'AWAITING_VENDOR',
   'PENDING_REVIEW',
@@ -52,6 +56,61 @@ const canRequestVipAwardAmendment = ({ event = {}, awardedBids = [] }) =>
     String(event.status || '').toUpperCase()
   ) && awardedBids.some(isVipAward);
 
+const attachOpenAwardAmendmentsToBids = (bids = [], amendments = []) => {
+  const amendmentByBidId = amendments.reduce((result, amendment) => {
+    const bidId = amendment?.original_bid_id;
+    if (!bidId || result[bidId]) return result;
+    result[bidId] = amendment;
+    return result;
+  }, {});
+
+  return bids.map((bid) => {
+    const amendment = amendmentByBidId[bid.bid_id];
+    if (!amendment) return bid;
+    return {
+      ...bid,
+      award_amendment_id: amendment.amendment_id,
+      award_amendment_status: amendment.status,
+    };
+  });
+};
+
+const buildAwardedVipGuestCountUpdate = ({
+  event = {},
+  requestedVipGuestCount,
+  requestedBudget,
+}) => {
+  const eventChanges = { vip_guest_count: requestedVipGuestCount };
+  const coordinatorFundsEvent = ['COORDINATOR', 'BOTH'].includes(
+    String(event.payment_responsibility || '').toUpperCase()
+  );
+  if (!coordinatorFundsEvent) return { eventChanges, validationMessage: null };
+
+  const budget = Number(requestedBudget);
+  if (!Number.isFinite(budget) || budget <= 0) {
+    return {
+      eventChanges,
+      validationMessage: 'Enter the revised coordinator budget.',
+    };
+  }
+
+  const minimumBudget = getMarketplaceBudgetGuestCount({
+    ...event,
+    vip_guest_count: requestedVipGuestCount,
+  }) * 25;
+  if (budget < minimumBudget) {
+    return {
+      eventChanges,
+      validationMessage: `Budget amount must be at least $${minimumBudget.toFixed(2)} for the paid guest count.`,
+    };
+  }
+
+  return {
+    eventChanges: { ...eventChanges, budgeted_amount: budget },
+    validationMessage: null,
+  };
+};
+
 const buildReplacementBidAmounts = ({ bid = {}, proposedAmount, event = {} }) => {
   const amount = Math.round(Number(proposedAmount) * 100) / 100;
   if (!Number.isFinite(amount) || amount < 0) {
@@ -91,6 +150,8 @@ module.exports = {
   OPEN_AMENDMENT_STATUSES,
   VIP_CAPACITY_LOCK_HOURS,
   VIP_CAPACITY_LOCK_MESSAGE,
+  attachOpenAwardAmendmentsToBids,
+  buildAwardedVipGuestCountUpdate,
   buildReplacementBidAmounts,
   canRequestVipAwardAmendment,
   getAwardedEventStatus,

@@ -193,6 +193,8 @@ const {
 const {
   OPEN_AMENDMENT_STATUSES,
   VIP_CAPACITY_LOCK_MESSAGE,
+  attachOpenAwardAmendmentsToBids,
+  buildAwardedVipGuestCountUpdate,
   buildReplacementBidAmounts,
   canRequestVipAwardAmendment,
   getAwardedEventStatus,
@@ -3915,6 +3917,20 @@ const attachFilesToBids = async (bids = [], options = {}) => {
   }));
 };
 
+const attachOpenAwardAmendmentStateToBids = async (bids = []) => {
+  const bidIds = [...new Set(bids.map((bid) => bid.bid_id).filter(Boolean))];
+  if (!bidIds.length) return bids;
+
+  const amendments = await MarketplaceBidAmendmentService.getByData(
+    {
+      original_bid_id: { $in: bidIds },
+      status: { $in: OPEN_AMENDMENT_STATUSES },
+    },
+    { sort: { requested_at: -1 }, lean: true }
+  );
+  return attachOpenAwardAmendmentsToBids(bids, amendments);
+};
+
 const attachFilesToApplications = async (applications = [], options = {}) => {
   const applicationIds = [
     ...new Set(applications.map((item) => item.application_id).filter(Boolean)),
@@ -6587,12 +6603,14 @@ exports.myBids = async (req, res, next) => {
       { vendor_user_id: req.user._id },
       { sort: { submitted_at: -1, created_at: -1 }, lean: true }
     );
-    const marketplaceBidList = await attachFilesToBids(
-      await attachEventsToBids(bids, {
-        fullAccess: false,
-        redactRecord: false,
-      }),
-      { fullAccess: true, redactRecord: false }
+    const marketplaceBidList = await attachOpenAwardAmendmentStateToBids(
+      await attachFilesToBids(
+        await attachEventsToBids(bids, {
+          fullAccess: false,
+          redactRecord: false,
+        }),
+        { fullAccess: true, redactRecord: false }
+      )
     );
 
     return res.data({ marketplaceBidList }, 'Marketplace bids');
@@ -7856,12 +7874,14 @@ exports.awardedBids = async (req, res, next) => {
       { vendor_user_id: req.user._id, bid_status: 'AWARDED' },
       { sort: { updated_at: -1 }, lean: true }
     );
-    const marketplaceBidListWithFiles = await attachFilesToBids(
-      await attachEventsToBids(bids, {
-        fullAccess: false,
-        redactRecord: false,
-      }),
-      { fullAccess: false, redactRecord: false }
+    const marketplaceBidListWithFiles = await attachOpenAwardAmendmentStateToBids(
+      await attachFilesToBids(
+        await attachEventsToBids(bids, {
+          fullAccess: false,
+          redactRecord: false,
+        }),
+        { fullAccess: false, redactRecord: false }
+      )
     );
     const activeFinalPayments = await MarketplacePaymentService.getByData(
       {
@@ -9584,13 +9604,19 @@ exports.updateAwardedVipGuestCount = async (req, res, next) => {
       error.error_code = 'VIP_CAPACITY_INCREASE_LOCKED';
       throw error;
     }
+    const { eventChanges, validationMessage } = buildAwardedVipGuestCountUpdate({
+      event: toPlainObject(event),
+      requestedVipGuestCount,
+      requestedBudget: req.body.budgeted_amount,
+    });
+    if (validationMessage) throw buildError(validationMessage, 400);
     const marketplaceEvent = await MarketplaceEventService.update(
       {
         event_id: event.event_id,
         customer_user_id: req.user._id,
         status: { $in: ['OPEN', 'REOPENED', 'CLOSED', 'AWARDED'] },
       },
-      { vip_guest_count: requestedVipGuestCount },
+      eventChanges,
       { getNew: true }
     );
     const amendments = await createVipAwardAmendments({ beforeEvent: event, event: marketplaceEvent });
