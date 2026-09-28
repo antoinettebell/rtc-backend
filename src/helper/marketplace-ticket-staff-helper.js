@@ -15,7 +15,7 @@ const buildTicketStaffNotification = ({ assignmentId, eventId, title, body }) =>
     deepLink: `rtc-customer://ticket-staff/${assignmentId}`,
     availableActions: 'ACCEPT,DECLINE',
   },
-  channels: ['push'],
+  channels: ['push', 'email'],
   metadata: { assignmentId, eventId },
 });
 
