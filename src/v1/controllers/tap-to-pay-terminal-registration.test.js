@@ -69,6 +69,11 @@ const run = async () => {
       food_truck_id: 'truck-1',
       employee_internal_id: 'EMP-1',
       tap_to_pay_serial_number: null,
+      tap_to_pay_training_acknowledgments: [{
+        acknowledged_at: new Date(),
+        expires_at: new Date(Date.now() + 86_400_000),
+        archived_at: null,
+      }],
       async save() {
         this.saved = true;
       },

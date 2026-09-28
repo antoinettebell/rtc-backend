@@ -43,7 +43,7 @@ const schema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['ACTIVE', 'HISTORICAL'],
+      enum: ['PENDING_ACTIVATION', 'ACTIVE', 'HISTORICAL'],
       default: 'ACTIVE',
       index: true,
     },

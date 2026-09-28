@@ -20,6 +20,10 @@ const { docusign } = require('../../config');
 const CyberSourceRefundHelper = require('../../helper/cybersource-refund-helper');
 const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
 const CyberSourceActivationCodeHelper = require('../../helper/cybersource-activation-code-helper');
+const {
+  resolveMarketplaceTerminalState,
+} = require('../../helper/marketplace-tap-to-pay-terminal-helper');
+const TapToPayTerminalService = require('../services/tap-to-pay-terminal-service');
 const SmsHelper = require('../../helper/sms-helper');
 const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
 const {
@@ -104,6 +108,48 @@ const sanitizeEventVendorEvent = (event) => Object.fromEntries(
     .map((field) => [field, event[field]])
 );
 const error = (message, code = 400) => Object.assign(new Error(message), { code });
+const MARKETPLACE_TERMINAL_OWNERSHIP_MESSAGE =
+  'This phone is already in use on another vendor account. Activation remains pending. Contact RTC support or an administrator for device reassignment.';
+const assertMarketplaceTerminalOwnership = async ({ deviceId, profile, userId }) => {
+  const conflict = await TapToPayTerminalService.findDeviceOwnershipConflict({
+    deviceId,
+    vendorUserId: userId,
+  });
+  if (!conflict) return;
+
+  const now = new Date();
+  await TapToPayTerminalModel.findOneAndUpdate(
+    { event_vendor_profile_id: profile.profile_id, device_id: deviceId },
+    {
+      $set: {
+        food_truck_id: null,
+        vendor_user_id: userId,
+        assigned_user_type: 'VENDOR',
+        assigned_user_id: userId,
+        device_id_suffix: deviceId.slice(-4),
+        device_label: 'iPhone',
+        environment: 'PRODUCTION',
+        status: 'PENDING_ACTIVATION',
+        last_seen_at: now,
+        last_activation_status: 'PENDING',
+        last_activation_error_code: 'DEVICE_OWNERSHIP_CONFLICT',
+        last_activation_error_message: MARKETPLACE_TERMINAL_OWNERSHIP_MESSAGE,
+      },
+      $setOnInsert: { registered_at: now },
+      $push: {
+        history: {
+          action: 'OWNERSHIP_CONFLICT',
+          actor_type: 'VENDOR',
+          actor_id: userId,
+          reason: 'Device reassignment requires RTC support',
+          occurred_at: now,
+        },
+      },
+    },
+    { new: true, upsert: true, setDefaultsOnInsert: true }
+  );
+  throw error(MARKETPLACE_TERMINAL_OWNERSHIP_MESSAGE, 409);
+};
 const getEventVendorDisplayId = (profileId) => {
   const suffix = String(profileId || '').replace(/[^a-zA-Z0-9]/g, '').slice(-6).toUpperCase();
   return `Vendor RTC - ${suffix || 'MASKED'}`;
@@ -1124,7 +1170,15 @@ exports.eventApplications = async (req, res, next) => {
 exports.createTapToPayActivationCode = async (req, res, next) => {
   try {
     await assertEventVendor(req.user._id);
-    await assertApprovedProfile(req.user._id);
+    const profile = await assertApprovedProfile(req.user._id);
+    const deviceId = String(req.body?.device_id || '').trim();
+    if (deviceId) {
+      await assertMarketplaceTerminalOwnership({
+        deviceId,
+        profile,
+        userId: req.user._id,
+      });
+    }
     const activation = await CyberSourceActivationCodeHelper.createActivationCode();
     res.set('Cache-Control', 'no-store');
     res.set('Pragma', 'no-cache');
@@ -1138,8 +1192,18 @@ exports.registerTapToPayTerminal = async (req, res, next) => {
     const profile = await assertApprovedProfile(req.user._id);
     const deviceId = String(req.body.device_id || '').trim();
     if (!deviceId) throw error('Tap to Pay terminal serial ID is required');
+    await assertMarketplaceTerminalOwnership({
+      deviceId,
+      profile,
+      userId: req.user._id,
+    });
     const now = new Date();
     const existing = await TapToPayTerminalModel.findOne({ event_vendor_profile_id: profile.profile_id, device_id: deviceId });
+    const terminalState = resolveMarketplaceTerminalState({
+      activationStatus: req.body.activation_status,
+      existingStatus: existing?.status,
+      existingActivationStatus: existing?.last_activation_status,
+    });
     const terminal = await TapToPayTerminalModel.findOneAndUpdate(
       { event_vendor_profile_id: profile.profile_id, device_id: deviceId },
       {
@@ -1151,10 +1215,13 @@ exports.registerTapToPayTerminal = async (req, res, next) => {
           device_id_suffix: deviceId.slice(-4),
           device_label: String(req.body.device_label || existing?.device_label || 'iPhone').trim().slice(0, 120),
           environment: ['test', 'sandbox'].includes(String(req.body.environment || '').toLowerCase()) ? 'TEST' : 'PRODUCTION',
-          status: 'ACTIVE',
+          status: terminalState.status,
           last_seen_at: now,
-          last_activation_status: req.body.activation_status === 'SUCCEEDED' ? 'SUCCEEDED' : (existing?.last_activation_status || 'UNKNOWN'),
-          ...(req.body.activation_status === 'SUCCEEDED' ? {
+          last_activation_status: terminalState.activationStatus,
+          ...(terminalState.activationStatus !== 'UNKNOWN' ? {
+            last_activation_at: now,
+          } : {}),
+          ...(terminalState.activated ? {
             last_activation_at: now,
             last_activation_error_code: null,
             last_activation_error_message: null,
@@ -1168,10 +1235,15 @@ exports.registerTapToPayTerminal = async (req, res, next) => {
       },
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
-    profile.tap_to_pay_serial_number = deviceId;
-    await profile.save();
+    if (terminalState.activated) {
+      profile.tap_to_pay_serial_number = deviceId;
+      await profile.save();
+    }
     return res.data({
       registered: true,
+      activated: terminalState.activated,
+      status: terminal.status,
+      activation_status: terminal.last_activation_status,
       terminal_id: terminal._id,
       terminal_serial_suffix: deviceId.slice(-4),
       reactivation_required: terminal.reactivation_required,
@@ -1192,6 +1264,7 @@ exports.getTapToPayTerminalStatus = async (req, res, next) => {
       known: true,
       terminal_id: terminal._id,
       status: terminal.status,
+      activation_status: terminal.last_activation_status,
       reactivation_required: terminal.reactivation_required,
       reactivation_reason: terminal.reactivation_reason,
       device_id_suffix: terminal.device_id_suffix,
@@ -1381,6 +1454,8 @@ exports.adminUpdateTapToPayTerminal = async (req, res, next) => {
       terminal.reactivation_requested_at = new Date();
       terminal.reactivation_requested_by = req.user._id;
       terminal.reactivation_reason = reason || 'Requested by RTC support';
+      terminal.status = 'PENDING_ACTIVATION';
+      terminal.last_activation_status = 'PENDING';
     } else if (action === 'MARK_HISTORICAL') {
       terminal.status = 'HISTORICAL';
     } else if (action === 'RESTORE_ACTIVE') {

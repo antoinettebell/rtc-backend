@@ -1092,7 +1092,7 @@ const resolveTapToPayContext = async (user) => {
 /** Store the full terminal identifier returned by the authenticated SDK. */
 exports.registerTapToPayTerminal = async (req, res, next) => {
   try {
-    const deviceId = String(req.body.device_id || '').trim();
+    const deviceId = String(req.body?.device_id || '').trim();
     const { user } = req;
     const { employee, foodTruck } = await resolveTapToPayContext(user);
     if (!foodTruck) return res.error(new Error('Food truck not found'), 404);
@@ -1104,6 +1104,12 @@ exports.registerTapToPayTerminal = async (req, res, next) => {
       );
     }
 
+    const terminal = await TapToPayTerminalService.register({
+      user,
+      employee,
+      foodTruck,
+      body: req.body,
+    });
     if (employee) {
       employee.tap_to_pay_serial_number = deviceId;
       await employee.save();
@@ -1111,12 +1117,6 @@ exports.registerTapToPayTerminal = async (req, res, next) => {
       foodTruck.tap_to_pay_serial_number = deviceId;
       await foodTruck.save();
     }
-    const terminal = await TapToPayTerminalService.register({
-      user,
-      employee,
-      foodTruck,
-      body: req.body,
-    });
 
     return res.data(
       {
@@ -1210,6 +1210,14 @@ exports.createTapToPayActivationCode = async (req, res, next) => {
 
     if (!foodTruck) {
       return res.error(new Error('Food truck not found'), 404);
+    }
+
+    const deviceId = String(req.body?.device_id || '').trim();
+    if (deviceId) {
+      await TapToPayTerminalService.assertDeviceAvailableForVendor({
+        deviceId,
+        vendorUserId: foodTruck.userId,
+      });
     }
 
     if (employee && !buildTrainingStatus(employee).compliant) {

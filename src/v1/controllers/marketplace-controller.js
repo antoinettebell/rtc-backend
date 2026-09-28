@@ -57,6 +57,10 @@ const {
 const MarketplaceCommunications = require('../../helper/marketplace-communications-helper');
 const MailHelper = require('../../helper/mail-helper');
 const {
+  buildIntegrationAlertEmail,
+  getSafeErrorCode,
+} = require('../../helper/integration-alert-email-helper');
+const {
   buildFoodVendorAwardDetailsHtml,
   buildEventVendorAwardDetailsHtml,
 } = require('../../helper/marketplace-award-email-helper');
@@ -1605,18 +1609,17 @@ const getVendorSignerInfo = (user) => ({
 });
 
 const sendDeveloperAlert = async (subject, error, context = {}) => {
+  const occurredAt = new Date();
+  console.error(subject, {
+    occurredAt: occurredAt.toISOString(),
+    errorCode: getSafeErrorCode(error),
+    context,
+  });
   try {
     await MailHelper.sendMail(
       docusign.developerAlertEmail,
       subject,
-      `<p>${subject}</p><pre>${JSON.stringify(
-        {
-          message: error?.message || error,
-          context,
-        },
-        null,
-        2
-      )}</pre>`
+      buildIntegrationAlertEmail({ subject, error, occurredAt })
     );
   } catch (mailError) {
     console.error('Developer alert email failed', mailError?.message || mailError);
@@ -3433,9 +3436,9 @@ const collectVendorEmailAttachments = async ({ bid = null, application = null })
         downloadEnvelopeDocument: DocuSignHelper.downloadEnvelopeDocument,
       }));
     } catch (error) {
-      await sendDeveloperAlert('DocuSign signed document email fetch error', error, {
-        agreement_id: agreement.agreement_id,
-        envelope_id: agreement.envelope_id,
+      console.error('DocuSign signed agreement attachment unavailable', {
+        occurredAt: new Date().toISOString(),
+        errorCode: getSafeErrorCode(error),
       });
     }
   }

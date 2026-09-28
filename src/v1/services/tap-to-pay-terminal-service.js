@@ -3,6 +3,9 @@ const {
   TapToPayTerminalEventModel,
   VendorEmployeeModel,
 } = require('../../models');
+const {
+  getTerminalOwnershipConflict,
+} = require('../../helper/tap-to-pay-terminal-ownership-helper');
 
 const safeText = (value, max = 500) => {
   if (value === undefined || value === null) return null;
@@ -25,8 +28,32 @@ const actorDetails = ({ user, employee, foodTruck }) => ({
   vendor_user_id: foodTruck.userId,
 });
 
+const findDeviceOwnershipConflict = async ({ deviceId, vendorUserId }) => {
+  const normalizedDeviceId = String(deviceId || '').trim();
+  if (!normalizedDeviceId || !vendorUserId) return null;
+  const records = await TapToPayTerminalModel.find({
+    device_id: normalizedDeviceId,
+    status: { $ne: 'HISTORICAL' },
+  }).select('_id vendor_user_id status registered_at createdAt').lean();
+  return getTerminalOwnershipConflict({ records, vendorUserId });
+};
+
+const assertDeviceAvailableForVendor = async ({ deviceId, vendorUserId }) => {
+  const conflict = await findDeviceOwnershipConflict({ deviceId, vendorUserId });
+  if (!conflict) return;
+  const error = new Error(
+    'This phone is already in use on another vendor account. Activation remains pending. Contact RTC support or an administrator for device reassignment.'
+  );
+  error.code = 409;
+  throw error;
+};
+
 const register = async ({ user, employee, foodTruck, body }) => {
   const deviceId = String(body.device_id || '').trim();
+  await assertDeviceAvailableForVendor({
+    deviceId,
+    vendorUserId: foodTruck.userId,
+  });
   const now = new Date();
   const existing = await TapToPayTerminalModel.findOne({
     food_truck_id: foodTruck._id,
@@ -93,6 +120,7 @@ const status = async ({ foodTruck, deviceId }) => {
     known: true,
     terminal_id: terminal._id,
     status: terminal.status,
+    activation_status: terminal.last_activation_status,
     reactivation_required: terminal.reactivation_required,
     reactivation_reason: terminal.reactivation_reason,
     device_id_suffix: terminal.device_id_suffix,
@@ -254,4 +282,15 @@ const adminUpdate = async ({ foodTruck, terminalId, user, body }) => {
   return terminal;
 };
 
-module.exports = { register, status, recordEvent, listForAdmin, adminAdd, adminUpdate, safeText, normalizeEnvironment };
+module.exports = {
+  register,
+  status,
+  recordEvent,
+  listForAdmin,
+  adminAdd,
+  adminUpdate,
+  findDeviceOwnershipConflict,
+  assertDeviceAvailableForVendor,
+  safeText,
+  normalizeEnvironment,
+};
