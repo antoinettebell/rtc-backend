@@ -8526,7 +8526,7 @@ exports.adminMarketplaceEvents = async (req, res, next) => {
     ]);
 
     const eventIds = events.map((event) => event.event_id).filter(Boolean);
-    const [eventsWithImages, bids, applications, eventVendorApplications, adminDrafts, amendments] = await Promise.all([
+    const [eventsWithImages, bids, applications, eventVendorApplications, adminDrafts, amendments, coordinatorAwardPayments] = await Promise.all([
       MarketplaceEventService.attachImages(events),
       eventIds.length
         ? MarketplaceBidService.getModel()
@@ -8568,6 +8568,16 @@ exports.adminMarketplaceEvents = async (req, res, next) => {
             .sort({ requested_at: -1 })
             .lean()
         : [],
+      eventIds.length
+        ? MarketplacePaymentService.getModel()
+            .find({
+              event_id: { $in: eventIds },
+              payment_type: 'COORDINATOR_AWARD_FEE',
+              superseded_at: null,
+            })
+            .sort({ created_at: -1 })
+            .lean()
+        : [],
     ]);
     const adminDraftsByEventId = new Map(adminDrafts.map((draft) => [draft.event_id, draft]));
 
@@ -8591,6 +8601,10 @@ exports.adminMarketplaceEvents = async (req, res, next) => {
       acc[amendment.event_id].push(sanitizeBidAmendment(amendment));
       return acc;
     }, {});
+    const coordinatorPaymentByEventId = coordinatorAwardPayments.reduce((acc, payment) => {
+      if (!acc[payment.event_id]) acc[payment.event_id] = payment;
+      return acc;
+    }, {});
 
     const marketplaceEventList = eventsWithImages.map((event) => {
       const eventBids = bidsByEventId[event.event_id] || [];
@@ -8601,6 +8615,8 @@ exports.adminMarketplaceEvents = async (req, res, next) => {
         ...event,
         admin_draft: adminDraftsByEventId.get(event.event_id) || null,
         award_amendments: amendmentsByEventId[event.event_id] || [],
+        coordinator_award_payment:
+          coordinatorPaymentByEventId[event.event_id] || null,
         submission_summaries: [
           ...eventBids.map((submission) => buildSubmissionSummary('FOOD_BID', submission)),
           ...foodApplications.map((submission) =>

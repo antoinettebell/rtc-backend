@@ -24,7 +24,7 @@ const notification = buildTicketStaffNotification({
   title: 'Ticket staff invitation',
   body: 'Open the app to respond.',
 });
-assert.deepEqual(notification.channels, ['push']);
+assert.deepEqual(notification.channels, ['push', 'email']);
 assert.equal(notification.data.notificationType, 'MARKETPLACE_TICKET_STAFF');
 assert.equal(notification.data.deepLink, 'rtc-customer://ticket-staff/assignment-123');
 assert.equal(notification.data.eventId, 'event-456');
