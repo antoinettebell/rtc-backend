@@ -133,6 +133,47 @@ const searchTransactionsByReference = async (
   });
 };
 
+const objectKeys = (value) =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.keys(value).sort()
+    : [];
+
+const summarizeApplications = (applications, source) =>
+  (Array.isArray(applications) ? applications : []).map((application) => ({
+    source,
+    keys: objectKeys(application),
+    name: String(application?.name || application?.displayName || ''),
+    status: String(application?.status || ''),
+    reasonCode: String(application?.reasonCode || ''),
+    replyCode: String(application?.rCode || application?.icsRcode || ''),
+    replyFlag: String(application?.rFlag || application?.icsRflag || ''),
+  }));
+
+const buildTransactionResponseShape = (transaction = {}) => ({
+  topLevelKeys: objectKeys(transaction),
+  applicationInformationKeys: objectKeys(transaction.applicationInformation),
+  amountDetailsKeys: objectKeys(transaction.orderInformation?.amountDetails),
+  processorInformationKeys: objectKeys(transaction.processorInformation),
+  directFieldPresence: {
+    id: Boolean(transaction.id),
+    requestId: Boolean(transaction.requestId),
+    referenceNumber: Boolean(transaction.referenceNumber),
+    authorizationCode: Boolean(transaction.authorizationCode),
+    reasonCode: transaction.reasonCode !== undefined,
+    icsRcode: transaction.icsRcode !== undefined,
+    icsRflag: transaction.icsRflag !== undefined,
+    amount: transaction.amount !== undefined,
+    currency: transaction.currency !== undefined,
+  },
+  applications: [
+    ...summarizeApplications(
+      transaction.applicationInformation?.applications,
+      'applicationInformation'
+    ),
+    ...summarizeApplications(transaction.applications, 'topLevel'),
+  ],
+});
+
 const normalizeTransaction = (transaction = {}) => {
   const amountDetails = transaction.orderInformation?.amountDetails || {};
   const card = transaction.paymentInformation?.card || {};
@@ -198,17 +239,60 @@ const hasSuccessfulAuthorization = (transaction) => {
 const verifyTransaction = async ({ transactionId, expectedAmount, expectedCurrency = 'USD', expectedReference = null }, options = {}) => {
   assertTapToPayEnabled();
   if (!transactionId) throw new Error('CyberSource transaction ID is required.');
-  const transaction = normalizeTransaction(await retrieveTransaction(transactionId, options));
+  let providerResponse;
+  try {
+    providerResponse = await retrieveTransaction(transactionId, options);
+  } catch (retrievalError) {
+    console.error('CyberSource Tap to Pay transaction retrieval failed', {
+      name: retrievalError?.name || null,
+      code: retrievalError?.code || null,
+      status: retrievalError?.status || retrievalError?.statusCode || null,
+      errorKeys: objectKeys(retrievalError),
+      responseKeys: objectKeys(retrievalError?.response),
+    });
+    throw retrievalError;
+  }
+
+  const transaction = normalizeTransaction(providerResponse);
+  const idMatches = transaction.id === String(transactionId);
+  const authorizationConfirmed = hasSuccessfulAuthorization(transaction);
   const amountMatches = Math.round(transaction.amount * 100) === Math.round(Number(expectedAmount) * 100);
   const currencyMatches = transaction.currency === String(expectedCurrency).toUpperCase();
   const referenceMatches = !expectedReference || transaction.reference === String(expectedReference);
   if (
-    transaction.id !== String(transactionId) ||
-    !hasSuccessfulAuthorization(transaction) ||
+    !idMatches ||
+    !authorizationConfirmed ||
     !amountMatches ||
     !currencyMatches ||
     !referenceMatches
   ) {
+    console.error('CyberSource Tap to Pay transaction verification mismatch', {
+      responseShape: buildTransactionResponseShape(providerResponse),
+      normalized: {
+        idPresent: Boolean(transaction.id),
+        status: transaction.status,
+        reasonCode: transaction.reasonCode,
+        replyCode: transaction.replyCode,
+        replyFlag: transaction.replyFlag,
+        authorizationStatus: transaction.authorizationStatus,
+        authCodePresent: Boolean(transaction.authCode),
+        amount: transaction.amount,
+        currency: transaction.currency,
+        referencePresent: Boolean(transaction.reference),
+      },
+      expected: {
+        amount: Number(expectedAmount),
+        currency: String(expectedCurrency).toUpperCase(),
+        referenceRequired: Boolean(expectedReference),
+      },
+      checks: {
+        idMatches,
+        authorizationConfirmed,
+        amountMatches,
+        currencyMatches,
+        referenceMatches,
+      },
+    });
     const error = new Error('CyberSource transaction verification failed.');
     error.code = 'CYBERSOURCE_VERIFICATION_FAILED';
     throw error;
@@ -218,6 +302,7 @@ const verifyTransaction = async ({ transactionId, expectedAmount, expectedCurren
 
 module.exports = {
   APPROVED_STATUSES,
+  buildTransactionResponseShape,
   getConfig,
   hasSuccessfulAuthorization,
   normalizeTransaction,

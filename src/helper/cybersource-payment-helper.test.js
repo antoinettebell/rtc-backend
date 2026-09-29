@@ -75,6 +75,26 @@ const restoreEnvironment = () => {
     assert.strictEqual(verified.reasonCode, '100');
     assert.strictEqual(verified.submittedAt, '2026-09-28T23:17:19Z');
 
+    const responseShape =
+      CyberSourcePaymentHelper.buildTransactionResponseShape({
+        requestId: 'request-id-not-logged',
+        authorizationCode: 'authorization-code-not-logged',
+        icsRcode: '1',
+        icsRflag: 'SOK',
+        applications: [
+          { displayName: 'Card Authorization', status: 'Success' },
+        ],
+      });
+    assert.strictEqual(responseShape.directFieldPresence.requestId, true);
+    assert.strictEqual(responseShape.directFieldPresence.authorizationCode, true);
+    assert.strictEqual(responseShape.directFieldPresence.icsRcode, true);
+    assert.strictEqual(responseShape.applications[0].name, 'Card Authorization');
+    assert.strictEqual(responseShape.applications[0].status, 'Success');
+    assert.strictEqual(
+      JSON.stringify(responseShape).includes('authorization-code-not-logged'),
+      false
+    );
+
     const pendingSettlement = await CyberSourcePaymentHelper.verifyTransaction(
       {
         transactionId: 'txn-pending-settlement',
