@@ -109,6 +109,64 @@ const restoreEnvironment = () => {
     assert.strictEqual(pendingSettlement.reasonCode, '100');
     assert.strictEqual(pendingSettlement.replyFlag, 'SOK');
 
+    const blankAggregateStatus =
+      await CyberSourcePaymentHelper.verifyTransaction(
+        {
+          transactionId: 'txn-blank-aggregate-status',
+          expectedAmount: 0.08,
+          expectedCurrency: 'USD',
+          expectedReference: 'Rblank01',
+        },
+        {
+          sdk: sdkWithTransaction({
+            orderInformation: {
+              amountDetails: { totalAmount: '0.08', currency: 'USD' },
+            },
+            clientReferenceInformation: { code: 'Rblank01' },
+            processorInformation: { approvalCode: '123456' },
+            applicationInformation: {
+              applications: [
+                {
+                  name: 'ics_auth',
+                  status: 'SUCCESS',
+                  reasonCode: '100',
+                  rCode: '1',
+                  rFlag: 'SOK',
+                },
+              ],
+            },
+          }),
+        }
+      );
+    assert.strictEqual(blankAggregateStatus.status, '');
+    assert.strictEqual(blankAggregateStatus.reasonCode, '100');
+
+    await assert.rejects(
+      () =>
+        CyberSourcePaymentHelper.verifyTransaction(
+          {
+            transactionId: 'txn-declined-despite-reply-fields',
+            expectedAmount: 0.08,
+            expectedCurrency: 'USD',
+          },
+          {
+            sdk: sdkWithTransaction({
+              status: 'DECLINED',
+              orderInformation: {
+                amountDetails: { totalAmount: '0.08', currency: 'USD' },
+              },
+              processorInformation: { approvalCode: '123456' },
+              applicationInformation: {
+                reasonCode: '100',
+                rCode: '1',
+                rFlag: 'SOK',
+              },
+            }),
+          }
+        ),
+      { code: 'CYBERSOURCE_VERIFICATION_FAILED' }
+    );
+
     await assert.rejects(
       () =>
         CyberSourcePaymentHelper.verifyTransaction(

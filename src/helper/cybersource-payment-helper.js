@@ -14,6 +14,17 @@ const SUCCESS_APPLICATION_STATUSES = new Set([
   'SUCCEEDED',
   'TRANSMITTED',
 ]);
+const FAILED_TRANSACTION_STATUSES = new Set([
+  'CANCELED',
+  'CANCELLED',
+  'DECLINED',
+  'FAILED',
+  'INVALID_REQUEST',
+  'REJECTED',
+  'REVERSED',
+  'SERVER_ERROR',
+  'VOIDED',
+]);
 
 const firstConfiguredValue = (...values) =>
   values.find((value) => value !== undefined && value !== null && value !== '');
@@ -169,7 +180,10 @@ const normalizeTransaction = (transaction = {}) => {
 
 const hasSuccessfulAuthorization = (transaction) => {
   if (APPROVED_STATUSES.has(transaction.status)) return true;
-  if (transaction.status !== 'PENDING' || transaction.reasonCode !== '100') {
+  if (
+    FAILED_TRANSACTION_STATUSES.has(transaction.status) ||
+    transaction.reasonCode !== '100'
+  ) {
     return false;
   }
 
