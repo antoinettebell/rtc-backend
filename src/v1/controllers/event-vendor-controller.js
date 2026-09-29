@@ -1329,9 +1329,8 @@ exports.completeGeneralPurchase = async (req, res, next) => {
       { new: true }
     );
     if (!purchase) throw error('General Purchase is unavailable or already processing.', 409);
-    let verifiedTransaction;
     try {
-      verifiedTransaction = await CyberSourcePaymentHelper.verifyTransaction({
+      await CyberSourcePaymentHelper.verifyTransaction({
         transactionId,
         expectedAmount: purchase.total,
         expectedCurrency: purchase.currency,
@@ -1344,10 +1343,10 @@ exports.completeGeneralPurchase = async (req, res, next) => {
     }
     purchase.status = 'COMPLETED';
     purchase.transaction_id = transactionId;
-    purchase.auth_code = verifiedTransaction?.authCode || req.body.auth_code || null;
+    purchase.auth_code = req.body.auth_code || null;
     purchase.invoice_number = req.body.invoice_number || null;
-    purchase.account_number = verifiedTransaction?.accountNumber || req.body.account_number || null;
-    purchase.account_type = verifiedTransaction?.accountType || req.body.account_type || null;
+    purchase.account_number = req.body.account_number || null;
+    purchase.account_type = req.body.account_type || null;
     purchase.completed_at = new Date();
     await purchase.save();
     if (purchase.customer_phone) {

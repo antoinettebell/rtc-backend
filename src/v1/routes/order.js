@@ -53,13 +53,6 @@ router.patch(
   Controller.startTapToPayAttempt
 );
 
-router.post(
-  '/tap-to-pay-attempts/:id/reconcile',
-  allowedTo(['VENDOR', 'EMPLOYEE']),
-  validate(Validation.tapToPayAttemptAction),
-  Controller.reconcileTapToPayAttempt
-);
-
 router.patch(
   '/tap-to-pay-attempts/:id/cancel',
   allowedTo(['VENDOR', 'EMPLOYEE']),

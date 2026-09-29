@@ -46,11 +46,6 @@ mockModule('./custom-notification', {
 });
 mockModule('./cybersource-payment-helper', {
   APPROVED_STATUSES: new Set(['AUTHORIZED', 'SETTLED']),
-  hasSuccessfulAuthorization: (transaction) =>
-    ['AUTHORIZED', 'SETTLED'].includes(transaction.status) ||
-    (transaction.reasonCode === '100' &&
-      transaction.authCode &&
-      transaction.replyCode === '1'),
   searchTransactionsByReference: async () => searchResults,
 });
 
@@ -65,8 +60,6 @@ const attempt = {
   food_truck_id: 'truck-1',
   order_number: 321,
   reference: 'R1234567',
-  amount: 12.34,
-  currency: 'USD',
   vendor_user_id: 'vendor-1',
   actor_type: 'VENDOR',
 };
@@ -105,15 +98,7 @@ const attempt = {
     'Tap to Pay Transaction Canceled'
   );
 
-  searchResults = [
-    {
-      id: 'txn-1',
-      status: 'AUTHORIZED',
-      amount: 12.34,
-      currency: 'USD',
-      reference: 'R1234567',
-    },
-  ];
+  searchResults = [{ id: 'txn-1', status: 'AUTHORIZED' }];
   sentNotification = null;
   const reviewRequired = await reconcileTapToPayAttempt(attempt);
   assert.strictEqual(reviewRequired.status, 'REVIEW_REQUIRED');
@@ -121,66 +106,6 @@ const attempt = {
     sentNotification['vendor-1'].title,
     'Tap to Pay Payment Needs Review'
   );
-
-  searchResults = [
-    {
-      id: 'txn-pending-settlement',
-      status: 'PENDING',
-      amount: 12.34,
-      currency: 'USD',
-      reference: 'R1234567',
-      authCode: 'AUTH123',
-      reasonCode: '100',
-      replyCode: '1',
-    },
-  ];
-  sentNotification = null;
-  const replySuccess = await reconcileTapToPayAttempt(attempt);
-  assert.strictEqual(replySuccess.status, 'REVIEW_REQUIRED');
-  assert.strictEqual(
-    replySuccess.transaction.id,
-    'txn-pending-settlement'
-  );
-
-  searchResults = [
-    {
-      id: 'txn-search-summary',
-      status: 'PENDING',
-      amount: 12.34,
-      currency: 'USD',
-      reference: 'R1234567',
-    },
-  ];
-  const detailedReplySuccess = await reconcileTapToPayAttempt(attempt, {
-    verifyTransaction: async ({ transactionId }) => ({
-      ...searchResults[0],
-      id: transactionId,
-      authCode: 'AUTH456',
-      reasonCode: '100',
-      replyCode: '1',
-    }),
-  });
-  assert.strictEqual(detailedReplySuccess.status, 'REVIEW_REQUIRED');
-  assert.strictEqual(
-    detailedReplySuccess.transaction.id,
-    'txn-search-summary'
-  );
-
-  searchResults = [
-    {
-      id: 'txn-interactive-recovery',
-      status: 'AUTHORIZED',
-      amount: 12.34,
-      currency: 'USD',
-      reference: 'R1234567',
-    },
-  ];
-  sentNotification = null;
-  const interactiveRecovery = await reconcileTapToPayAttempt(attempt, {
-    notifyOnResolution: false,
-  });
-  assert.strictEqual(interactiveRecovery.status, 'REVIEW_REQUIRED');
-  assert.strictEqual(sentNotification, null);
 
   completedOrder = { _id: 'order-1', transactionId: 'txn-completed' };
   sentNotification = null;

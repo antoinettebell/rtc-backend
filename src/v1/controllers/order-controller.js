@@ -31,9 +31,6 @@ const {
   resolveRequestedComboSelections,
 } = require('../../helper/combo-order-selection-helper');
 const CyberSourcePaymentHelper = require('../../helper/cybersource-payment-helper');
-const {
-  reconcileTapToPayAttempt,
-} = require('../../helper/tap-to-pay-interruption-helper');
 const CyberSourceApplePayHelper = require('../../helper/cybersource-apple-pay-helper');
 const CyberSourceGooglePayHelper = require('../../helper/cybersource-google-pay-helper');
 const CyberSourceRefundHelper = require('../../helper/cybersource-refund-helper');
@@ -1060,73 +1057,6 @@ exports.startTapToPayAttempt = async (req, res, next) => {
       return res.error(new Error('Tap to Pay attempt is unavailable'), 409);
     }
     return res.data({ started: true }, 'Tap to Pay attempt started');
-  } catch (error) {
-    return next(error);
-  }
-};
-
-exports.reconcileTapToPayAttempt = async (req, res, next) => {
-  try {
-    let attempt = await TapToPayPaymentAttemptModel.findOne({
-      _id: req.params.id,
-      ...getTapToPayAttemptActorFilter(req.user),
-      status: { $in: ['PROCESSING', 'REVIEW_REQUIRED'] },
-    });
-    if (!attempt) {
-      return res.error(new Error('Tap to Pay attempt is unavailable'), 409);
-    }
-
-    let transaction = null;
-    if (attempt.status === 'REVIEW_REQUIRED' && attempt.transaction_id) {
-      try {
-        transaction = await CyberSourcePaymentHelper.verifyTransaction({
-          transactionId: attempt.transaction_id,
-          expectedAmount: attempt.amount,
-          expectedCurrency: attempt.currency,
-          expectedReference: attempt.reference,
-        });
-      } catch (error) {
-        console.error('Stored Tap to Pay transaction could not be verified', {
-          attemptId: String(attempt._id),
-          code: error?.code,
-        });
-      }
-    } else {
-      const result = await reconcileTapToPayAttempt(attempt, {
-        notifyOnResolution: false,
-      });
-      if (result.status === 'REVIEW_REQUIRED') {
-        transaction = result.transaction;
-      } else if (result.status === 'DECLINED') {
-        return res.data(
-          { confirmed: false, declined: true },
-          'Tap to Pay payment was declined'
-        );
-      }
-    }
-
-    if (!transaction) {
-      return res.data(
-        { confirmed: false, declined: false },
-        'Tap to Pay payment is still being confirmed'
-      );
-    }
-
-    attempt = await TapToPayPaymentAttemptModel.findById(attempt._id);
-    return res.data(
-      {
-        confirmed: true,
-        declined: false,
-        payment: {
-          transactionId: transaction.id,
-          authCode: transaction.authCode,
-          invoiceNumber: attempt.reference,
-          accountNumber: transaction.accountNumber,
-          accountType: transaction.accountType,
-        },
-      },
-      'Tap to Pay payment confirmed'
-    );
   } catch (error) {
     return next(error);
   }
@@ -4268,7 +4198,6 @@ exports.add = async (req, res, next) => {
     total = roundCurrency(total + normalizedFoodTruckTip);
 
     let tapToPayAttempt = null;
-    let verifiedTapToPayTransaction = null;
     if (vendorPosOrder && normalizedPaymentMethod === 'TAP_TO_PAY') {
       tapToPayAttempt = await TapToPayPaymentAttemptModel.findOne({
         _id: tapToPayAttemptId,
@@ -4380,7 +4309,7 @@ exports.add = async (req, res, next) => {
       }
 
       try {
-        verifiedTapToPayTransaction = await CyberSourcePaymentHelper.verifyTransaction({
+        await CyberSourcePaymentHelper.verifyTransaction({
           transactionId: nativeTransactionId,
           expectedAmount: total,
           expectedCurrency: 'USD',
@@ -4499,10 +4428,10 @@ exports.add = async (req, res, next) => {
       paymentMethod: normalizedPaymentMethod,
       paymentStatus: normalizedPaymentStatus,
       transactionId,
-      authCode: verifiedTapToPayTransaction?.authCode || authCode,
+      authCode,
       invoiceNumber,
-      accountNumber: verifiedTapToPayTransaction?.accountNumber || accountNumber,
-      accountType: verifiedTapToPayTransaction?.accountType || accountType,
+      accountNumber,
+      accountType,
       statusTime: buildInitialStatusTime(initialOrderStatus),
     });
 

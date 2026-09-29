@@ -6,6 +6,7 @@ const {
 const CustomNotification = require('./custom-notification');
 const CyberSourcePaymentHelper = require('./cybersource-payment-helper');
 
+const APPROVED_STATUSES = CyberSourcePaymentHelper.APPROVED_STATUSES;
 const NOT_APPROVED_STATUSES = new Set([
   'CANCELED',
   'CANCELLED',
@@ -90,8 +91,6 @@ const reconcileTapToPayAttempt = async (
     now = new Date(),
     searchTransactionsByReference =
       CyberSourcePaymentHelper.searchTransactionsByReference,
-    verifyTransaction = CyberSourcePaymentHelper.verifyTransaction,
-    notifyOnResolution = true,
   } = {}
 ) => {
   const completedOrder = await OrderModel.findOne({
@@ -138,39 +137,9 @@ const reconcileTapToPayAttempt = async (
     return { status: 'RETRY' };
   }
 
-  let approvedTransaction = transactions.find(
-    (transaction) =>
-      CyberSourcePaymentHelper.hasSuccessfulAuthorization(transaction) &&
-      Math.round(Number(transaction.amount) * 100) ===
-        Math.round(Number(attempt.amount) * 100) &&
-      transaction.currency === String(attempt.currency || 'USD').toUpperCase() &&
-      transaction.reference === attempt.reference
+  const approvedTransaction = transactions.find((transaction) =>
+    APPROVED_STATUSES.has(transaction.status)
   );
-  if (!approvedTransaction) {
-    const matchingCandidates = transactions.filter(
-      (transaction) =>
-        transaction.id &&
-        !NOT_APPROVED_STATUSES.has(transaction.status) &&
-        Math.round(Number(transaction.amount) * 100) ===
-          Math.round(Number(attempt.amount) * 100) &&
-        transaction.currency === String(attempt.currency || 'USD').toUpperCase() &&
-        transaction.reference === attempt.reference
-    );
-    for (const candidate of matchingCandidates) {
-      try {
-        approvedTransaction = await verifyTransaction({
-          transactionId: candidate.id,
-          expectedAmount: attempt.amount,
-          expectedCurrency: attempt.currency,
-          expectedReference: attempt.reference,
-        });
-        break;
-      } catch (_) {
-        // The detailed transaction is not yet available or is not approved.
-        // Leave the attempt active so the next reconciliation can try again.
-      }
-    }
-  }
   const declinedTransaction = transactions.find((transaction) =>
     NOT_APPROVED_STATUSES.has(transaction.status)
   );
@@ -197,20 +166,15 @@ const reconcileTapToPayAttempt = async (
   );
   if (!updated) return { status: 'ALREADY_RESOLVED' };
 
-  if (notifyOnResolution) {
-    const note = approvedTransaction
-      ? buildReviewNotification(updated)
-      : buildCanceledNotification(updated);
-    await sendAttemptNotification(updated, note);
-    await TapToPayPaymentAttemptModel.updateOne(
-      { _id: updated._id, notification_sent_at: null },
-      { $set: { notification_sent_at: new Date() } }
-    );
-  }
-  return {
-    status: nextStatus,
-    transaction: approvedTransaction || declinedTransaction || null,
-  };
+  const note = approvedTransaction
+    ? buildReviewNotification(updated)
+    : buildCanceledNotification(updated);
+  await sendAttemptNotification(updated, note);
+  await TapToPayPaymentAttemptModel.updateOne(
+    { _id: updated._id, notification_sent_at: null },
+    { $set: { notification_sent_at: new Date() } }
+  );
+  return { status: nextStatus };
 };
 
 const processPendingTapToPayAttempts = async ({ now = new Date() } = {}) => {

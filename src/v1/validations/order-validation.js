@@ -73,16 +73,13 @@ module.exports = {
       }),
 
       authCode: Joi.string().when('paymentMethod', {
-        is: Joi.valid('COD', 'CASH', 'TAP_TO_PAY'),
+        is: Joi.valid('COD', 'CASH'),
         then: Joi.string().optional().allow(null, ''),
         otherwise: Joi.string().required(),
       }),
-      // Successful native Tap to Pay responses do not always include these
-      // informational processor fields. The transaction ID remains required
-      // and is verified with CyberSource before an order is created.
-      invoiceNumber: Joi.string().optional().allow(null, ''),
-      accountNumber: Joi.string().optional().allow(null, ''),
-      accountType: Joi.string().optional().allow(null, ''),
+      invoiceNumber: Joi.string().optional(),
+      accountNumber: Joi.string().optional(),
+      accountType: Joi.string().optional(),
       tapToPayAttemptId: Joi.string().when('paymentMethod', {
         is: 'TAP_TO_PAY',
         then: Joi.string().required(),
