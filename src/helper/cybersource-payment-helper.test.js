@@ -75,6 +75,61 @@ const restoreEnvironment = () => {
     assert.strictEqual(verified.reasonCode, '100');
     assert.strictEqual(verified.submittedAt, '2026-09-28T23:17:19Z');
 
+    const pendingSettlement = await CyberSourcePaymentHelper.verifyTransaction(
+      {
+        transactionId: 'txn-pending-settlement',
+        expectedAmount: 0.04,
+        expectedCurrency: 'USD',
+        expectedReference: 'R8a7c298',
+      },
+      {
+        sdk: sdkWithTransaction({
+          status: 'PENDING',
+          orderInformation: {
+            amountDetails: { totalAmount: '0.04', currency: 'USD' },
+          },
+          clientReferenceInformation: { code: 'R8a7c298' },
+          processorInformation: { approvalCode: '701606' },
+          applicationInformation: {
+            applications: [
+              {
+                name: 'ics_auth',
+                status: 'SUCCESS',
+                reasonCode: '100',
+                rCode: '1',
+                rFlag: 'SOK',
+              },
+              { name: 'ics_bill', status: 'PENDING' },
+            ],
+          },
+        }),
+      }
+    );
+    assert.strictEqual(pendingSettlement.status, 'PENDING');
+    assert.strictEqual(pendingSettlement.reasonCode, '100');
+    assert.strictEqual(pendingSettlement.replyFlag, 'SOK');
+
+    await assert.rejects(
+      () =>
+        CyberSourcePaymentHelper.verifyTransaction(
+          {
+            transactionId: 'txn-unconfirmed-pending',
+            expectedAmount: 0.04,
+            expectedCurrency: 'USD',
+          },
+          {
+            sdk: sdkWithTransaction({
+              status: 'PENDING',
+              orderInformation: {
+                amountDetails: { totalAmount: '0.04', currency: 'USD' },
+              },
+              applicationInformation: { reasonCode: '100' },
+            }),
+          }
+        ),
+      { code: 'CYBERSOURCE_VERIFICATION_FAILED' }
+    );
+
     await assert.rejects(
       () =>
         CyberSourcePaymentHelper.verifyTransaction(
