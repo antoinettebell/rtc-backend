@@ -35,6 +35,23 @@ test('Tap to Pay orders accept the provider transaction ID without an auth code'
   assert.equal(value.authCode, undefined);
 });
 
+test('Tap to Pay orders accept unavailable optional native provider metadata', async () => {
+  const value = await orderValidation.add.body.validateAsync({
+    ...validOrder,
+    paymentMethod: 'TAP_TO_PAY',
+    tapToPayAttemptId: 'attempt-1',
+    authCode: null,
+    invoiceNumber: null,
+    accountNumber: null,
+    accountType: null,
+  });
+
+  assert.equal(value.transactionId, 'tap-transaction-1');
+  assert.equal(value.invoiceNumber, null);
+  assert.equal(value.accountNumber, null);
+  assert.equal(value.accountType, null);
+});
+
 test('wallet orders still require their processor auth code', async () => {
   await assert.rejects(
     orderValidation.add.body.validateAsync({
