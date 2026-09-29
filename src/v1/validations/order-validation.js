@@ -73,13 +73,15 @@ module.exports = {
       }),
 
       authCode: Joi.string().when('paymentMethod', {
-        is: Joi.valid('COD', 'CASH'),
+        is: Joi.valid('COD', 'CASH', 'TAP_TO_PAY'),
         then: Joi.string().optional().allow(null, ''),
         otherwise: Joi.string().required(),
       }),
-      invoiceNumber: Joi.string().optional(),
-      accountNumber: Joi.string().optional(),
-      accountType: Joi.string().optional(),
+      // The native Tap to Pay result guarantees a transaction ID, but these
+      // informational processor fields may be unavailable.
+      invoiceNumber: Joi.string().optional().allow(null, ''),
+      accountNumber: Joi.string().optional().allow(null, ''),
+      accountType: Joi.string().optional().allow(null, ''),
       tapToPayAttemptId: Joi.string().when('paymentMethod', {
         is: 'TAP_TO_PAY',
         then: Joi.string().required(),
