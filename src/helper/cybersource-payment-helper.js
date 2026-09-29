@@ -7,6 +7,24 @@ const APPROVED_STATUSES = new Set([
   'SUCCEEDED',
   'COMPLETED',
 ]);
+const SUCCESS_APPLICATION_STATUSES = new Set([
+  'AUTHORIZED',
+  'COMPLETED',
+  'SUCCESS',
+  'SUCCEEDED',
+  'TRANSMITTED',
+]);
+const FAILED_TRANSACTION_STATUSES = new Set([
+  'CANCELED',
+  'CANCELLED',
+  'DECLINED',
+  'FAILED',
+  'INVALID_REQUEST',
+  'REJECTED',
+  'REVERSED',
+  'SERVER_ERROR',
+  'VOIDED',
+]);
 
 const firstConfiguredValue = (...values) =>
   values.find((value) => value !== undefined && value !== null && value !== '');
@@ -117,9 +135,18 @@ const searchTransactionsByReference = async (
 
 const normalizeTransaction = (transaction = {}) => {
   const amountDetails = transaction.orderInformation?.amountDetails || {};
+  const card = transaction.paymentInformation?.card || {};
+  const applicationInformation = transaction.applicationInformation || {};
+  const applications = Array.isArray(applicationInformation.applications)
+    ? applicationInformation.applications
+    : [];
+  const authorizationApplication = applications.find((application) =>
+    /auth/i.test(String(application?.name || ''))
+  );
+  const accountSuffix = String(card.suffix || '').replace(/\D/g, '').slice(-4);
   return {
     id: String(transaction.id || ''),
-    status: String(transaction.status || transaction.applicationInformation?.status || '').toUpperCase(),
+    status: String(transaction.status || applicationInformation.status || '').toUpperCase(),
     amount: Number(
       amountDetails.totalAmount ??
       amountDetails.authorizedAmount ??
@@ -128,7 +155,44 @@ const normalizeTransaction = (transaction = {}) => {
     ),
     currency: String(amountDetails.currency || amountDetails.settlementCurrency || '').toUpperCase(),
     reference: String(transaction.clientReferenceInformation?.code || ''),
+    authCode: String(transaction.processorInformation?.approvalCode || '') || null,
+    accountNumber: accountSuffix ? `XXXX${accountSuffix}` : null,
+    accountType: String(card.brandName || card.type || '').toUpperCase() || null,
+    reasonCode:
+      String(
+        authorizationApplication?.reasonCode ||
+          applicationInformation.reasonCode ||
+          ''
+      ) || null,
+    replyCode:
+      String(
+        authorizationApplication?.rCode || applicationInformation.rCode || ''
+      ) || null,
+    replyFlag:
+      String(
+        authorizationApplication?.rFlag || applicationInformation.rFlag || ''
+      ).toUpperCase() || null,
+    authorizationStatus:
+      String(authorizationApplication?.status || '').toUpperCase() || null,
+    submittedAt: transaction.submitTimeUTC || null,
   };
+};
+
+const hasSuccessfulAuthorization = (transaction) => {
+  if (APPROVED_STATUSES.has(transaction.status)) return true;
+  if (
+    FAILED_TRANSACTION_STATUSES.has(transaction.status) ||
+    transaction.reasonCode !== '100'
+  ) {
+    return false;
+  }
+
+  return Boolean(
+    transaction.authCode &&
+      (transaction.replyCode === '1' ||
+        transaction.replyFlag === 'SOK' ||
+        SUCCESS_APPLICATION_STATUSES.has(transaction.authorizationStatus))
+  );
 };
 
 const verifyTransaction = async ({ transactionId, expectedAmount, expectedCurrency = 'USD', expectedReference = null }, options = {}) => {
@@ -140,7 +204,7 @@ const verifyTransaction = async ({ transactionId, expectedAmount, expectedCurren
   const referenceMatches = !expectedReference || transaction.reference === String(expectedReference);
   if (
     transaction.id !== String(transactionId) ||
-    !APPROVED_STATUSES.has(transaction.status) ||
+    !hasSuccessfulAuthorization(transaction) ||
     !amountMatches ||
     !currencyMatches ||
     !referenceMatches
@@ -155,6 +219,7 @@ const verifyTransaction = async ({ transactionId, expectedAmount, expectedCurren
 module.exports = {
   APPROVED_STATUSES,
   getConfig,
+  hasSuccessfulAuthorization,
   normalizeTransaction,
   retrieveTransaction,
   searchTransactionsByReference,
