@@ -166,6 +166,22 @@ const attempt = {
     'txn-search-summary'
   );
 
+  searchResults = [
+    {
+      id: 'txn-interactive-recovery',
+      status: 'AUTHORIZED',
+      amount: 12.34,
+      currency: 'USD',
+      reference: 'R1234567',
+    },
+  ];
+  sentNotification = null;
+  const interactiveRecovery = await reconcileTapToPayAttempt(attempt, {
+    notifyOnResolution: false,
+  });
+  assert.strictEqual(interactiveRecovery.status, 'REVIEW_REQUIRED');
+  assert.strictEqual(sentNotification, null);
+
   completedOrder = { _id: 'order-1', transactionId: 'txn-completed' };
   sentNotification = null;
   const completed = await reconcileTapToPayAttempt(attempt);

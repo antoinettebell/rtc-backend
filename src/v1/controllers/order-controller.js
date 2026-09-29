@@ -1092,7 +1092,9 @@ exports.reconcileTapToPayAttempt = async (req, res, next) => {
         });
       }
     } else {
-      const result = await reconcileTapToPayAttempt(attempt);
+      const result = await reconcileTapToPayAttempt(attempt, {
+        notifyOnResolution: false,
+      });
       if (result.status === 'REVIEW_REQUIRED') {
         transaction = result.transaction;
       } else if (result.status === 'DECLINED') {

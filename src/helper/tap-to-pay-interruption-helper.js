@@ -91,6 +91,7 @@ const reconcileTapToPayAttempt = async (
     searchTransactionsByReference =
       CyberSourcePaymentHelper.searchTransactionsByReference,
     verifyTransaction = CyberSourcePaymentHelper.verifyTransaction,
+    notifyOnResolution = true,
   } = {}
 ) => {
   const completedOrder = await OrderModel.findOne({
@@ -196,14 +197,16 @@ const reconcileTapToPayAttempt = async (
   );
   if (!updated) return { status: 'ALREADY_RESOLVED' };
 
-  const note = approvedTransaction
-    ? buildReviewNotification(updated)
-    : buildCanceledNotification(updated);
-  await sendAttemptNotification(updated, note);
-  await TapToPayPaymentAttemptModel.updateOne(
-    { _id: updated._id, notification_sent_at: null },
-    { $set: { notification_sent_at: new Date() } }
-  );
+  if (notifyOnResolution) {
+    const note = approvedTransaction
+      ? buildReviewNotification(updated)
+      : buildCanceledNotification(updated);
+    await sendAttemptNotification(updated, note);
+    await TapToPayPaymentAttemptModel.updateOne(
+      { _id: updated._id, notification_sent_at: null },
+      { $set: { notification_sent_at: new Date() } }
+    );
+  }
   return {
     status: nextStatus,
     transaction: approvedTransaction || declinedTransaction || null,
