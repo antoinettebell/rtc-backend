@@ -30,6 +30,7 @@ router.get('/.well-known/assetlinks.json', sendAndroidAssetLinks);
 
 router.get('/t/:token', MarketplaceTicketController.publicTicketPage);
 router.get('/events/:shareToken', MarketplaceTicketController.publicTicketInvitation);
+router.get('/event-share/:shareToken', MarketplaceTicketController.publicEventShare);
 router.get(
   '/check-in/:sessionToken',
   MarketplaceTicketController.publicScannerPage

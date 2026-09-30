@@ -14,7 +14,7 @@ const appleAppSiteAssociation = {
     details: [
       {
         appID: CUSTOMER_IOS_APP_ID,
-        paths: ['/events/*'],
+        paths: ['/events/*', '/event-share/*'],
       },
     ],
   },
