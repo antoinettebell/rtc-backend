@@ -207,6 +207,11 @@ router.get(
   MarketplaceTicketController.getTicketInvitationEvent
 );
 
+router.get(
+  '/marketplace/event-shares/:shareToken',
+  MarketplaceTicketController.getSharedEvent
+);
+
 router.post(
   '/marketplace/events/:eventId/tickets/quote',
   publicReviewRateLimit,

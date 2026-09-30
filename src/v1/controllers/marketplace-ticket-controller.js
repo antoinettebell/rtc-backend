@@ -42,6 +42,7 @@ const { isScannerAvailable } = require('../../helper/event-ticket-helper');
 const {
   isPublicMarketplaceEventEligible,
   isPublicTicketPurchaseAvailable,
+  isMarketplaceEventExpired,
   sanitizePublicMarketplaceEvent,
 } = require('../../helper/public-marketplace-event-helper');
 
@@ -105,20 +106,37 @@ const availableTicketInventoryQuery = {
   ],
 };
 
+const shareTokenQuery = (shareToken) => {
+  const tokenHash = hashTicketToken(shareToken);
+  return {
+    $or: [
+      { ticket_share_token_hash: tokenHash },
+      { ticket_share_token_hashes: tokenHash },
+      { 'event_share_links.token_hash': tokenHash },
+    ],
+  };
+};
+
 const getTicketInvitationEvent = (shareToken) => MarketplaceEventModel.findOne({
   ticket_sales_enabled: true,
   ticket_sales_closed_at: null,
   status: { $nin: ['DRAFT', 'CANCELLED'] },
-  $and: [
-    {
-      $or: [
-        { ticket_share_token_hash: hashTicketToken(shareToken) },
-        { ticket_share_token_hashes: hashTicketToken(shareToken) },
-      ],
-    },
-    availableTicketInventoryQuery,
-  ],
+  $and: [shareTokenQuery(shareToken), availableTicketInventoryQuery],
 });
+
+const getEventShare = (shareToken) => MarketplaceEventModel.findOne({
+  status: { $in: ['OPEN', 'REOPENED', 'CLOSED', 'AWARDED'] },
+  'event_share_links.token_hash': hashTicketToken(shareToken),
+}).select('+event_share_links');
+
+const getEventShareImage = (event, shareToken) => {
+  const tokenHash = hashTicketToken(shareToken);
+  return event?.event_share_links?.find((link) => link.token_hash === tokenHash)?.image_url || null;
+};
+
+const escapeHtml = (value) => String(value || '').replace(/[&<>"']/g, (character) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+})[character]);
 
 const attachActiveEventImages = async (event) => {
   if (!event) return event;
@@ -971,6 +989,80 @@ exports.createTicketShareLink = async (req, res, next) => {
       { share_url: `${server.publicTicketBaseURL}/events/${encodeURIComponent(token)}` },
       'Private ticket invitation created'
     );
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.createEventShareLink = async (req, res, next) => {
+  try {
+    const imageURL = String(req.body?.image_url || '').trim();
+    if (!/^https:\/\//i.test(imageURL)) throw buildError('Select an event image to share');
+
+    const event = await MarketplaceEventModel.findOne({
+      event_id: req.params.eventId,
+      customer_user_id: req.user._id,
+      status: { $in: ['OPEN', 'REOPENED', 'CLOSED', 'AWARDED'] },
+    }).lean();
+    if (!event || isMarketplaceEventExpired(event)) {
+      throw buildError('Only a current published event can be shared', 404);
+    }
+
+    const image = await MarketplaceEventImageModel.findOne({
+      event_id: event.event_id,
+      image_url: imageURL,
+      status: 'ACTIVE',
+    }).lean();
+    if (!image) throw buildError('Select an active image from this event');
+
+    const { token, tokenHash } = createTicketToken();
+    await MarketplaceEventModel.updateOne(
+      { _id: event._id, customer_user_id: req.user._id },
+      { $push: { event_share_links: { token_hash: tokenHash, image_url: image.image_url, created_at: new Date() } } }
+    );
+    return res.data({
+      share_url: `${server.publicTicketBaseURL}/event-share/${encodeURIComponent(token)}`,
+      image_url: image.image_url,
+      event_visibility: event.event_visibility,
+      ticket_sales_enabled: event.ticket_sales_enabled === true,
+    }, 'Event share link created');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.getSharedEvent = async (req, res, next) => {
+  try {
+    const event = await getEventShare(req.params.shareToken).lean();
+    if (!event || isMarketplaceEventExpired(event)) throw buildError('Shared event is unavailable', 404);
+    const eventWithImages = await attachActiveEventImages(event);
+    return res.data({
+      marketplaceEvent: sanitizePublicMarketplaceEvent(eventWithImages),
+      selected_image_url: getEventShareImage(event, req.params.shareToken),
+    }, 'Shared event');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.publicEventShare = async (req, res, next) => {
+  try {
+    const event = await getEventShare(req.params.shareToken).lean();
+    if (!event || isMarketplaceEventExpired(event)) {
+      return res.status(404).type('html').send('<!doctype html><html><body><h1>Event unavailable</h1></body></html>');
+    }
+    const shareURL = `${server.publicTicketBaseURL}/event-share/${encodeURIComponent(req.params.shareToken)}`;
+    const appURL = `rtc-customer://event-share/${encodeURIComponent(req.params.shareToken)}`;
+    const imageURL = getEventShareImage(event, req.params.shareToken);
+    const title = escapeHtml(event.event_name || "Round Da' Corner Event");
+    const description = escapeHtml(event.event_description || `${event.event_city || ''}, ${event.event_state || ''}`);
+    const imageMeta = imageURL ? `<meta property="og:image" content="${escapeHtml(imageURL)}"><meta name="twitter:card" content="summary_large_image">` : '';
+    const imageHTML = imageURL ? `<img src="${escapeHtml(imageURL)}" alt="${title}" style="width:100%;border-radius:18px;max-height:440px;object-fit:cover">` : '';
+    const ticketCopy = event.ticket_sales_enabled && !event.ticket_sales_closed_at
+      ? 'Open this event in Round Da\' Corner Eats to view details and available tickets.'
+      : 'Open this event in Round Da\' Corner Eats to view event details.';
+    res.set({ 'Cache-Control': 'private, max-age=300', 'X-Content-Type-Options': 'nosniff' });
+    return res.type('html').send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta property="og:type" content="website"><meta property="og:title" content="${title}"><meta property="og:description" content="${description}"><meta property="og:url" content="${escapeHtml(shareURL)}"><meta name="twitter:title" content="${title}"><meta name="twitter:description" content="${description}">${imageMeta}<title>${title}</title><style>body{background:#0f172a;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;padding:24px}.card{background:#fff;border-radius:22px;color:#172033;margin:auto;max-width:560px;overflow:hidden;padding:28px}.store{background:#176b3a;border-radius:14px;color:#fff;display:block;font-weight:800;margin-top:16px;padding:16px;text-align:center;text-decoration:none}p{color:#526176;line-height:1.5}</style></head><body><main class="card">${imageHTML}<p>ROUND DA' CORNER</p><h1>${title}</h1><p>${description}</p><p>${escapeHtml(ticketCopy)}</p><a class="store" href="${escapeHtml(appURL)}">Open in Round Da' Corner Eats</a><a class="store" href="${escapeHtml(server.customerIosAppStoreURL)}">Download on the App Store</a><a class="store" href="${escapeHtml(server.customerAndroidPlayStoreURL)}">Get it on Google Play</a></main></body></html>`);
   } catch (error) {
     return next(error);
   }

@@ -13,6 +13,11 @@ assert(publicDetail, 'Public event-detail route must exist');
 assert.equal(publicDetail.route.stack.length, 1, 'Public event-detail GET must not authenticate');
 assert.notEqual(publicDetail.route.stack[0].handle.name, 'Authenticate');
 
+const sharedEvent = findRoute(publicRouter, '/marketplace/event-shares/:shareToken', 'get');
+assert(sharedEvent, 'Shared event-detail route must exist');
+assert.equal(sharedEvent.route.stack.length, 1, 'Shared event-detail GET must not authenticate');
+assert.notEqual(sharedEvent.route.stack[0].handle.name, 'Authenticate');
+
 const ticketInvitation = findRoute(
   publicRouter,
   '/marketplace/ticket-invitations/:shareToken',
@@ -56,7 +61,8 @@ assert.notEqual(ticketClick.route.stack[0].handle.name, 'Authenticate');
 
 const quote = findRoute(marketplaceRouter, '/events/:eventId/tickets/quote', 'post');
 const checkout = findRoute(marketplaceRouter, '/events/:eventId/tickets/checkout', 'post');
-assert(quote && checkout, 'Protected ticket routes must exist');
+const createEventShare = findRoute(marketplaceRouter, '/events/:eventId/share-link', 'post');
+assert(quote && checkout && createEventShare, 'Protected ticket and event-share routes must exist');
 
 const exerciseCustomerGuard = (route, user) => new Promise((resolve) => {
   let nextCalled = false;
@@ -71,8 +77,10 @@ const exerciseCustomerGuard = (route, user) => new Promise((resolve) => {
 (async () => {
   assert.deepEqual(await exerciseCustomerGuard(quote, undefined), { nextCalled: false, status: 403 });
   assert.deepEqual(await exerciseCustomerGuard(checkout, undefined), { nextCalled: false, status: 403 });
+  assert.deepEqual(await exerciseCustomerGuard(createEventShare, undefined), { nextCalled: false, status: 403 });
   assert.deepEqual(await exerciseCustomerGuard(quote, { userType: 'CUSTOMER' }), { nextCalled: true, status: null });
   assert.deepEqual(await exerciseCustomerGuard(checkout, { userType: 'CUSTOMER' }), { nextCalled: true, status: null });
+  assert.deepEqual(await exerciseCustomerGuard(createEventShare, { userType: 'CUSTOMER' }), { nextCalled: true, status: null });
 
   const originalGetByData = MarketplaceEventService.getByData;
   const originalGetWithImages = MarketplaceEventService.getWithImages;

@@ -206,7 +206,8 @@ const requestBody = {
   assert.equal(error, undefined);
   assert.equal(response.message, 'Ticket purchase confirmed');
   assert.equal(lastEventFindQuery.event_date, undefined, 'share links are not event-date limited');
-  assert.equal(lastEventFindQuery.$and[0].$or.length, 2, 'legacy and retained link hashes remain valid');
+  assert.equal(lastEventFindQuery.$and[0].$or.length, 3, 'legacy, retained, and general event-share hashes remain valid');
+  assert.ok(lastEventFindQuery.$and[0].$or.some((entry) => entry['event_share_links.token_hash']));
   assert.equal(createdOrderPayload.customer_user_id, null, 'guest checkout does not manufacture an account');
   assert.equal(createdOrderPayload.purchaser_name, 'Guest Buyer');
   assert.equal(createdOrderPayload.purchaser_email, 'guest@example.com');

@@ -159,6 +159,12 @@ router.post(
   TicketController.createTicketShareLink
 );
 
+router.post(
+  '/events/:eventId/share-link',
+  allowedTo(['CUSTOMER']),
+  TicketController.createEventShareLink
+);
+
 router.get(
   '/events/:eventId/tickets/summary',
   allowedTo(['CUSTOMER']),

@@ -90,6 +90,16 @@ const mSchema = mongoose.Schema(
       default: [],
       index: true,
     },
+    event_share_links: {
+      type: [{
+        _id: false,
+        token_hash: { type: String, required: true },
+        image_url: { type: String, default: null },
+        created_at: { type: Date, default: Date.now },
+      }],
+      select: false,
+      default: [],
+    },
     vendor_applications_closed_at: {
       type: Date,
       default: null,
@@ -600,5 +610,7 @@ const mSchema = mongoose.Schema(
     },
   }
 );
+
+mSchema.index({ 'event_share_links.token_hash': 1 });
 
 module.exports = new mongoose.model('marketplace-events', mSchema);
