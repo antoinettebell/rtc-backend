@@ -29,7 +29,7 @@ const createMarketingCampaignController = (service = gateway) => ({
     try {
       return res.data({ results: await service.generateVendorSpotlights(
         req.body?.requestId,
-        req.body?.vendorIds,
+        req.body?.vendorSelections ?? req.body?.vendorIds,
       ) });
     } catch (error) { return safeFailure(res, error); }
   },

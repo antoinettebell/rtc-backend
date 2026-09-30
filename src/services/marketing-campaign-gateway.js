@@ -71,6 +71,11 @@ const campaignDetail = (value = {}) => ({
 const eligibleVendor = (value = {}) => ({
   vendorId: value.vendorId ?? null,
   businessName: value.businessName ?? null,
+  truckUnits: Array.isArray(value.truckUnits) ? value.truckUnits.map((unit) => ({
+    truckUnitId: unit?.truckUnitId ?? null,
+    name: unit?.name ?? null,
+    isPrimary: unit?.isPrimary === true,
+  })).filter((unit) => unit.truckUnitId && unit.name) : [],
   generationBlocked: value.generationBlocked === true,
 });
 
@@ -81,6 +86,22 @@ const requireVendorIds = (values) => {
   const ids = [...new Set(values.map(requireCampaignId))];
   if (ids.length === 0) throw new MarketingCampaignGatewayError('INVALID_VENDOR_SELECTION', 400);
   return ids;
+};
+
+const requireVendorSelections = (values) => {
+  if (!Array.isArray(values) || values.length === 0 || values.length > 100) {
+    throw new MarketingCampaignGatewayError('INVALID_VENDOR_SELECTION', 400);
+  }
+  const seen = new Set();
+  return values.map((selection) => {
+    const vendorId = requireCampaignId(selection?.vendorId);
+    if (seen.has(vendorId)) {
+      throw new MarketingCampaignGatewayError('INVALID_VENDOR_SELECTION', 400);
+    }
+    seen.add(vendorId);
+    const truckUnitIds = requireVendorIds(selection?.truckUnitIds);
+    return { vendorId, truckUnitIds };
+  });
 };
 
 const cleanReason = (value) => {
@@ -153,11 +174,11 @@ class MarketingCampaignGateway {
     return (Array.isArray(data?.vendors) ? data.vendors : []).map(eligibleVendor);
   }
 
-  async generateVendorSpotlights(requestId, vendorIds) {
+  async generateVendorSpotlights(requestId, vendorSelections) {
     const data = await this.request('/admin/campaigns/generate', {
       method: 'POST', body: {
         requestId: requireCampaignId(requestId),
-        vendorIds: requireVendorIds(vendorIds),
+        vendorSelections: requireVendorSelections(vendorSelections),
       },
     });
     return (Array.isArray(data?.results) ? data.results : []).map((result) => ({
