@@ -15,6 +15,7 @@ router.post('/campaigns/generate-app-features', adminOnly, Controller.generateAp
 router.post('/campaigns/generate-events', adminOnly, Controller.generateEvents);
 router.get('/campaigns/:campaignId', adminOnly, Controller.getDetails);
 router.post('/campaigns/:campaignId/approve', adminOnly, Controller.approve);
+router.post('/campaigns/:campaignId/discard', adminOnly, Controller.discard);
 router.post('/campaigns/:campaignId/regenerate', adminOnly, Controller.regenerate);
 
 module.exports = router;

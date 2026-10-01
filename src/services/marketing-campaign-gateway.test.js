@@ -132,6 +132,22 @@ test('approval forwards only the authenticated admin identifier', async () => {
   assert.deepEqual(JSON.parse(calls[0].options.body), { approvedBy: 'admin-1' });
 });
 
+test('discard removes only the selected pending campaign through the control API', async () => {
+  const calls = [];
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://marketing.internal', serviceKey: 'secret',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response({ campaign: { campaignId: 'campaign-1', approvalStatus: 'PENDING_APPROVAL' } });
+    },
+  });
+  const campaign = await gateway.discardCampaign('campaign-1');
+  assert.equal(campaign.campaignId, 'campaign-1');
+  assert.equal(calls[0].url, 'https://marketing.internal/admin/campaigns/campaign-1/discard');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.body, undefined);
+});
+
 test('manual generation forwards one idempotency identifier and projects safe results', async () => {
   const calls = [];
   const gateway = new MarketingCampaignGateway({

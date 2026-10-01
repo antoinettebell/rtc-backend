@@ -76,3 +76,19 @@ test('initial campaign controllers forward only identifiers and selections', asy
     ['events', 'request-2', ['event-1']],
   ]);
 });
+
+test('discard controller forwards only the selected campaign identifier', async () => {
+  const calls = [];
+  const controller = createMarketingCampaignController({
+    async discardCampaign(campaignId) {
+      calls.push(campaignId);
+      return { campaignId, approvalStatus: 'PENDING_APPROVAL' };
+    },
+  });
+  let body;
+  await controller.discard({ params: { campaignId: 'campaign-1' } }, {
+    data(value) { body = value; return value; },
+  });
+  assert.deepEqual(calls, ['campaign-1']);
+  assert.equal(body.campaign.campaignId, 'campaign-1');
+});

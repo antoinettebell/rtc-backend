@@ -257,6 +257,14 @@ class MarketingCampaignGateway {
     return campaignListItem(data?.campaign);
   }
 
+  async discardCampaign(campaignId) {
+    const id = requireCampaignId(campaignId);
+    const data = await this.request(`/admin/campaigns/${encodeURIComponent(id)}/discard`, {
+      method: 'POST',
+    });
+    return campaignListItem(data?.campaign);
+  }
+
   async regenerateCampaign(campaignId, reason) {
     const id = requireCampaignId(campaignId);
     const data = await this.request(`/admin/campaigns/${encodeURIComponent(id)}/regenerate`, {

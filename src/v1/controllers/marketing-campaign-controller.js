@@ -72,6 +72,11 @@ const createMarketingCampaignController = (service = gateway) => ({
       ) });
     } catch (error) { return safeFailure(res, error); }
   },
+  discard: async (req, res) => {
+    try {
+      return res.data({ campaign: await service.discardCampaign(req.params.campaignId) });
+    } catch (error) { return safeFailure(res, error); }
+  },
   regenerate: async (req, res) => {
     try {
       return res.data({ result: await service.regenerateCampaign(
