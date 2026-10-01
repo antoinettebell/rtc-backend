@@ -53,30 +53,18 @@ const mSchema = mongoose.Schema(
       default: null,
       trim: true,
     },
-    socialMedia: [
-      {
-        mediaType: {
-          type: String,
-          enum: [
-            'FACEBOOK',
-            'INSTAGRAM',
-            'TWITTER',
-            'LINKEDIN',
-            'TIKTOK',
-            'YOUTUBE',
-            'SNAPCHAT',
-            'PINTEREST',
-            'REDDIT',
-            'WEB',
-          ],
-          default: 'FACEBOOK',
-        },
-        mediaUrl: {
-          type: String,
-          default: null,
-        },
-      },
-    ],
+    // Mixed temporarily preserves reads of legacy [{ mediaType, mediaUrl }] records.
+    // All current write paths normalize this field to the canonical handle object.
+    socialMedia: {
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({
+        instagram: null,
+        facebook: null,
+        x: null,
+        threads: null,
+        tiktok: null,
+      }),
+    },
     // facebookLink: {
     //   type: String,
     //   default: null,

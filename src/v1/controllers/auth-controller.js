@@ -22,6 +22,10 @@ const { addObject } = require('../../helper/aws');
 const fs = require('fs');
 const { PlanModel } = require('../../models');
 const { hydrateEventVendorUser } = require('../../helper/event-vendor-user-hydration');
+const {
+  normalizeCoordinatorSocialMedia,
+  normalizeVendorSocialMedia,
+} = require('../../helper/social-media-handle');
 
 const vendorTaxDigits = (value) =>
   String(value || '').replace(/\D/g, '').slice(0, 9);
@@ -85,6 +89,7 @@ exports.add = async (req, res, next) => {
         isEventCoordinator = false,
         eventCoordinatorCompanyName,
         eventCoordinatorCompanyAddress,
+        socialMedia,
         eventCoordinatorEin,
         eventCoordinatorTaxIdType,
         eventCoordinatorTaxId,
@@ -169,6 +174,7 @@ exports.add = async (req, res, next) => {
       ? {
           eventCoordinatorCompanyName,
           eventCoordinatorCompanyAddress: eventCoordinatorCompanyAddress || null,
+          socialMedia: normalizeCoordinatorSocialMedia(socialMedia),
           ...buildCoordinatorAddressUpdate(req.body),
           eventCoordinatorAddressLine1:
             eventCoordinatorAddressLine1 || eventCoordinatorCompanyAddress || null,
@@ -184,6 +190,7 @@ exports.add = async (req, res, next) => {
       : {
           eventCoordinatorCompanyName: null,
           eventCoordinatorCompanyAddress: null,
+          socialMedia: normalizeCoordinatorSocialMedia(),
           eventCoordinatorEin: null,
           eventCoordinatorTaxIdType: null,
           eventCoordinatorTaxIdEncrypted: null,
@@ -398,7 +405,7 @@ exports.addVendor = async (req, res, next) => {
 	      Object.assign(fc, vendorTaxFields);
 	      fc.infoType = foodTruck.infoType;
 	      fc.planId = selectedPlan?._id || null;
-	      fc.socialMedia = foodTruck.socialMedia || [];
+	      fc.socialMedia = normalizeVendorSocialMedia(foodTruck.socialMedia);
 
       await fc.save();
     } else {
@@ -408,7 +415,7 @@ exports.addVendor = async (req, res, next) => {
 	        planId: selectedPlan?._id || null,
 	        ...vendorTaxFields,
 	        infoType: foodTruck.infoType,
-        socialMedia: foodTruck.socialMedia || [],
+        socialMedia: normalizeVendorSocialMedia(foodTruck.socialMedia),
       });
     }
     }

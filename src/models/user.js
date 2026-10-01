@@ -98,6 +98,16 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    socialMedia: {
+      type: mongoose.Schema.Types.Mixed,
+      default: () => ({
+        instagram: null,
+        facebook: null,
+        x: null,
+        threads: null,
+        tiktok: null,
+      }),
+    },
     eventCoordinatorEin: {
       type: String,
       default: null,

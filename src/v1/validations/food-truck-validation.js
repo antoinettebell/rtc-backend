@@ -203,23 +203,21 @@ module.exports = {
         Joi.valid(null)
       ),
       infoType: Joi.string().valid('truck', 'caterer').trim(),
-      socialMedia: Joi.array().items(
+      socialMedia: Joi.alternatives().try(
         Joi.object({
-          mediaType: Joi.string()
-            .valid(
-              'FACEBOOK',
-              'INSTAGRAM',
-              'TWITTER',
-              'LINKEDIN',
-              'TIKTOK',
-              'YOUTUBE',
-              'SNAPCHAT',
-              'PINTEREST',
-              'REDDIT',
-              'WEB'
-            ),
-          mediaUrl: Joi.string(),
-        }).min(0).allow(null),
+          instagram: Joi.string().trim().pattern(/^@?[A-Za-z0-9._]{1,30}$/).allow(null, ''),
+          facebook: Joi.string().trim().pattern(/^@?[A-Za-z0-9._-]{1,75}$/).allow(null, ''),
+          x: Joi.string().trim().pattern(/^@?[A-Za-z0-9_]{1,15}$/).allow(null, ''),
+          threads: Joi.string().trim().pattern(/^@?[A-Za-z0-9._]{1,30}$/).allow(null, ''),
+          tiktok: Joi.string().trim().pattern(/^@?[A-Za-z0-9._]{1,24}$/).allow(null, ''),
+        }),
+        Joi.array().items(Joi.object({
+          mediaType: Joi.string().valid(
+            'FACEBOOK', 'INSTAGRAM', 'TWITTER', 'X', 'THREADS', 'TIKTOK',
+            'LINKEDIN', 'YOUTUBE', 'SNAPCHAT', 'PINTEREST', 'REDDIT', 'WEB'
+          ),
+          mediaUrl: Joi.string().trim(),
+        }))
       ),
       locations: Joi.array().items(
         Joi.object({

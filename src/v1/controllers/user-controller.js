@@ -29,6 +29,7 @@ const {
 } = require('../../helper/bank-detail-payment-method');
 const CustomNotification = require('../../helper/custom-notification');
 const { hydrateEventVendorUser } = require('../../helper/event-vendor-user-hydration');
+const { normalizeCoordinatorSocialMedia } = require('../../helper/social-media-handle');
 
 const getPushTokenOwner = (user) =>
   user.userType === 'EMPLOYEE'
@@ -370,6 +371,7 @@ exports.update = async (req, res, next) => {
         isEventCoordinator,
         eventCoordinatorCompanyName,
         eventCoordinatorCompanyAddress,
+        socialMedia,
         eventCoordinatorEin,
         eventCoordinatorTaxIdType,
         eventCoordinatorTaxId,
@@ -446,6 +448,9 @@ exports.update = async (req, res, next) => {
         existRecord.eventCoordinatorCompanyName = eventCoordinatorCompanyName;
         existRecord.eventCoordinatorCompanyAddress =
           eventCoordinatorCompanyAddress || null;
+        if (Object.prototype.hasOwnProperty.call(req.body, 'socialMedia')) {
+          existRecord.socialMedia = normalizeCoordinatorSocialMedia(socialMedia);
+        }
         if (eventCoordinatorTaxId || eventCoordinatorEin) {
           Object.assign(
             existRecord,

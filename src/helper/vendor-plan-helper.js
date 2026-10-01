@@ -271,7 +271,9 @@ const assertWalkUpPosPaymentMethodAllowed = (plan, paymentMethod) => {
 const assertSocialMediaLinksAllowed = (plan, socialMedia = []) => {
   const capabilities = getVendorPlanCapabilities(plan);
   const maxLinks = Number(capabilities.maxSocialMediaLinks || 0);
-  const linkCount = Array.isArray(socialMedia) ? socialMedia.length : 0;
+  const linkCount = Array.isArray(socialMedia)
+    ? socialMedia.length
+    : Object.values(socialMedia || {}).filter(Boolean).length;
 
   if (linkCount > maxLinks) {
     throw buildCapabilityError(

@@ -47,6 +47,7 @@ const {
   primaryTruckUnitId,
   isMenuTreeAvailableForTruck,
 } = require('../../helper/menu-truck-unit-scope');
+const { normalizeVendorSocialMedia } = require('../../helper/social-media-handle');
 
 // Customer ordering must receive the requirements of items nested inside
 // combos and BOGO/BOGOHO rewards, not only their display fields.
@@ -1333,8 +1334,9 @@ exports.update = async (req, res, next) => {
     // }
     if (socialMedia !== undefined) {
       const plan = await getPlanForFoodTruck(item, planId || null);
-      assertSocialMediaLinksAllowed(plan, socialMedia);
-      item.socialMedia = socialMedia;
+      const normalizedSocialMedia = normalizeVendorSocialMedia(socialMedia);
+      assertSocialMediaLinksAllowed(plan, normalizedSocialMedia);
+      item.socialMedia = normalizedSocialMedia;
     }
 
     if (logo) {

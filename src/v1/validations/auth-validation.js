@@ -33,6 +33,13 @@ module.exports = {
         otherwise: Joi.string().trim().allow(null, ''),
       }),
       eventCoordinatorCompanyAddress: Joi.string().trim().allow(null, ''),
+      socialMedia: Joi.object({
+        instagram: Joi.string().trim().pattern(/^@?[A-Za-z0-9._]{1,30}$/).allow(null, ''),
+        facebook: Joi.string().trim().pattern(/^@?[A-Za-z0-9._-]{1,75}$/).allow(null, ''),
+        x: Joi.string().trim().pattern(/^@?[A-Za-z0-9_]{1,15}$/).allow(null, ''),
+        threads: Joi.string().trim().pattern(/^@?[A-Za-z0-9._]{1,30}$/).allow(null, ''),
+        tiktok: Joi.string().trim().pattern(/^@?[A-Za-z0-9._]{1,24}$/).allow(null, ''),
+      }).optional(),
       eventCoordinatorEin: Joi.when('isEventCoordinator', {
         is: true,
         then: Joi.string().trim().allow(null, ''),
@@ -86,24 +93,21 @@ module.exports = {
         facebookLink: Joi.string(),
         instagramLink: Joi.string(),
         infoType: Joi.string().valid('truck', 'caterer').required().trim(),
-        socialMedia: Joi.array().items(
+        socialMedia: Joi.alternatives().try(
           Joi.object({
-            mediaType: Joi.string()
-              .valid(
-                'FACEBOOK',
-                'INSTAGRAM',
-                'TWITTER',
-                'LINKEDIN',
-                'TIKTOK',
-                'YOUTUBE',
-                'SNAPCHAT',
-                'PINTEREST',
-                'REDDIT',
-                'WEB'
-              )
-              .required(),
-            mediaUrl: Joi.string().required(),
-          })
+            instagram: Joi.string().trim().pattern(/^@?[A-Za-z0-9._]{1,30}$/).allow(null, ''),
+            facebook: Joi.string().trim().pattern(/^@?[A-Za-z0-9._-]{1,75}$/).allow(null, ''),
+            x: Joi.string().trim().pattern(/^@?[A-Za-z0-9_]{1,15}$/).allow(null, ''),
+            threads: Joi.string().trim().pattern(/^@?[A-Za-z0-9._]{1,30}$/).allow(null, ''),
+            tiktok: Joi.string().trim().pattern(/^@?[A-Za-z0-9._]{1,24}$/).allow(null, ''),
+          }),
+          Joi.array().items(Joi.object({
+            mediaType: Joi.string().valid(
+              'FACEBOOK', 'INSTAGRAM', 'TWITTER', 'X', 'THREADS', 'TIKTOK',
+              'LINKEDIN', 'YOUTUBE', 'SNAPCHAT', 'PINTEREST', 'REDDIT', 'WEB'
+            ).required(),
+            mediaUrl: Joi.string().trim().required(),
+          }))
         ),
       }).when('vendorSubtype', {
         is: 'FOOD_VENDOR',

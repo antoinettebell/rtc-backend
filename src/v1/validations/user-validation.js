@@ -34,6 +34,13 @@ module.exports = {
         otherwise: Joi.string().trim().allow(null, ''),
       }),
       eventCoordinatorCompanyAddress: Joi.string().trim().allow(null, ''),
+      socialMedia: Joi.object({
+        instagram: Joi.string().trim().pattern(/^@?[A-Za-z0-9._]{1,30}$/).allow(null, ''),
+        facebook: Joi.string().trim().pattern(/^@?[A-Za-z0-9._-]{1,75}$/).allow(null, ''),
+        x: Joi.string().trim().pattern(/^@?[A-Za-z0-9_]{1,15}$/).allow(null, ''),
+        threads: Joi.string().trim().pattern(/^@?[A-Za-z0-9._]{1,30}$/).allow(null, ''),
+        tiktok: Joi.string().trim().pattern(/^@?[A-Za-z0-9._]{1,24}$/).allow(null, ''),
+      }).optional(),
       eventCoordinatorEin: Joi.when('isEventCoordinator', {
         is: true,
         then: Joi.string().trim().allow(null, ''),
