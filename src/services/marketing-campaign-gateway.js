@@ -41,6 +41,7 @@ const campaignListItem = (value = {}) => ({
   videoUrl: value.videoUrl ?? null,
   approvalStatus: value.approvalStatus ?? null,
   generationStatus: value.generationStatus ?? null,
+  regenerationStatus: value.regenerationStatus ?? null,
   regenerationCount: Number(value.regenerationCount) || 0,
 });
 
@@ -76,6 +77,24 @@ const eligibleVendor = (value = {}) => ({
     name: unit?.name ?? null,
     isPrimary: unit?.isPrimary === true,
   })).filter((unit) => unit.truckUnitId && unit.name) : [],
+  generationBlocked: value.generationBlocked === true,
+});
+
+const eligibleAppFeature = (value = {}) => ({
+  featureKey: value.featureKey ?? null,
+  featureName: value.featureName ?? null,
+  audience: value.audience ?? null,
+  generationBlocked: value.generationBlocked === true,
+});
+
+const eligibleEvent = (value = {}) => ({
+  eventId: value.eventId ?? null,
+  eventName: value.eventName ?? null,
+  eventDate: value.eventDate ?? null,
+  city: value.city ?? null,
+  state: value.state ?? null,
+  ticketMode: value.ticketMode ?? null,
+  imageMode: value.imageMode ?? null,
   generationBlocked: value.generationBlocked === true,
 });
 
@@ -174,11 +193,47 @@ class MarketingCampaignGateway {
     return (Array.isArray(data?.vendors) ? data.vendors : []).map(eligibleVendor);
   }
 
+  async listEligibleAppFeatures() {
+    const data = await this.request('/admin/app-features/eligible');
+    return (Array.isArray(data?.features) ? data.features : []).map(eligibleAppFeature);
+  }
+
+  async listEligibleEvents() {
+    const data = await this.request('/admin/events/eligible');
+    return (Array.isArray(data?.events) ? data.events : []).map(eligibleEvent);
+  }
+
   async generateVendorSpotlights(requestId, vendorSelections) {
     const data = await this.request('/admin/campaigns/generate', {
       method: 'POST', body: {
         requestId: requireCampaignId(requestId),
         vendorSelections: requireVendorSelections(vendorSelections),
+      },
+    });
+    return (Array.isArray(data?.results) ? data.results : []).map((result) => ({
+      action: result?.action ?? null,
+      campaign: result?.campaign ? campaignListItem(result.campaign) : null,
+    }));
+  }
+
+  async generateAppFeatures(requestId, featureKeys) {
+    const data = await this.request('/admin/campaigns/generate-app-features', {
+      method: 'POST', body: {
+        requestId: requireCampaignId(requestId),
+        featureKeys: requireVendorIds(featureKeys),
+      },
+    });
+    return (Array.isArray(data?.results) ? data.results : []).map((result) => ({
+      action: result?.action ?? null,
+      campaign: result?.campaign ? campaignListItem(result.campaign) : null,
+    }));
+  }
+
+  async generateEvents(requestId, eventIds) {
+    const data = await this.request('/admin/campaigns/generate-events', {
+      method: 'POST', body: {
+        requestId: requireCampaignId(requestId),
+        eventIds: requireVendorIds(eventIds),
       },
     });
     return (Array.isArray(data?.results) ? data.results : []).map((result) => ({
@@ -207,10 +262,11 @@ class MarketingCampaignGateway {
     const data = await this.request(`/admin/campaigns/${encodeURIComponent(id)}/regenerate`, {
       method: 'POST', body: { reason: cleanReason(reason) },
     });
-    const campaign = data?.result?.campaign ?? data?.campaign;
     return {
       action: data?.result?.action ?? data?.action ?? null,
-      campaign: campaign ? campaignListItem(campaign) : null,
+      campaignId: data?.result?.campaignId ?? id,
+      jobId: data?.result?.jobId ?? null,
+      status: data?.result?.status ?? null,
     };
   }
 }
@@ -222,4 +278,6 @@ module.exports = {
   campaignListItem,
   campaignDetail,
   eligibleVendor,
+  eligibleAppFeature,
+  eligibleEvent,
 };

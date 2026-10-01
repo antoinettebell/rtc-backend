@@ -73,19 +73,50 @@ test('sanitizes upstream failures without retaining bodies or credentials', asyn
   );
 });
 
-test('regeneration keeps the same campaign identity', async () => {
+test('regeneration returns the queued job identity and status', async () => {
   const calls = [];
   const gateway = new MarketingCampaignGateway({
     baseUrl: 'https://marketing.internal', serviceKey: 'secret',
     fetchImpl: async (url, options) => {
       calls.push({ url, options });
-      return response({ result: { action: 'PROCESSING', campaign: { campaignId: 'campaign-1' } } });
+      return response({ result: {
+        action: 'QUEUED', campaignId: 'campaign-1', jobId: 'job-1', status: 'QUEUED',
+      } });
     },
   });
   const result = await gateway.regenerateCampaign('campaign-1', 'Try a new collage');
-  assert.equal(result.campaign.campaignId, 'campaign-1');
+  assert.deepEqual(result, {
+    action: 'QUEUED', campaignId: 'campaign-1', jobId: 'job-1', status: 'QUEUED',
+  });
   assert.equal(calls.length, 1);
   assert.equal(JSON.parse(calls[0].options.body).reason, 'Try a new collage');
+});
+
+test('forwards categorized app feature and public event initial generation', async () => {
+  const calls = [];
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://marketing.internal', serviceKey: 'secret',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response({ results: [{
+        action: 'QUEUED', campaign: {
+          campaignId: url.includes('app-features') ? 'feature-1' : 'event-1',
+          campaignType: url.includes('app-features') ? 'APP_FEATURE' : 'EVENT_PROMOTION',
+          regenerationStatus: 'QUEUED',
+        },
+      }] });
+    },
+  });
+  const features = await gateway.generateAppFeatures('request-1', ['customer-feature']);
+  const events = await gateway.generateEvents('request-2', ['event-123']);
+  assert.equal(features[0].campaign.regenerationStatus, 'QUEUED');
+  assert.equal(events[0].campaign.campaignType, 'EVENT_PROMOTION');
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    requestId: 'request-1', featureKeys: ['customer-feature'],
+  });
+  assert.deepEqual(JSON.parse(calls[1].options.body), {
+    requestId: 'request-2', eventIds: ['event-123'],
+  });
 });
 
 test('approval forwards only the authenticated admin identifier', async () => {
@@ -143,5 +174,29 @@ test('eligible vendor listing projects only checkbox-safe fields', async () => {
   assert.deepEqual(await gateway.listEligibleVendors(), [{
     vendorId: 'vendor-1', businessName: 'Vendor', generationBlocked: false,
     truckUnits: [{ truckUnitId: 'truck-1', name: 'Main Truck', isPrimary: true }],
+  }]);
+});
+
+test('eligible app feature and event listings expose only selection-safe fields', async () => {
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://marketing.internal', serviceKey: 'secret',
+    fetchImpl: async (url) => url.includes('app-features')
+      ? response({ features: [{
+        featureKey: 'customer-feature', featureName: 'Feature', audience: 'CUSTOMER',
+        generationBlocked: false, approvedFacts: ['private-to-gateway'],
+      }] })
+      : response({ events: [{
+        eventId: 'event-1', eventName: 'Public Event', eventDate: '2026-10-20',
+        city: 'Columbia', state: 'SC', ticketMode: 'NON_TICKETED',
+        imageMode: 'EVENT_DETAILS_MODE', generationBlocked: false,
+        sourceEvent: { private: true },
+      }] }),
+  });
+  assert.deepEqual(await gateway.listEligibleAppFeatures(), [{
+    featureKey: 'customer-feature', featureName: 'Feature', audience: 'CUSTOMER', generationBlocked: false,
+  }]);
+  assert.deepEqual(await gateway.listEligibleEvents(), [{
+    eventId: 'event-1', eventName: 'Public Event', eventDate: '2026-10-20', city: 'Columbia',
+    state: 'SC', ticketMode: 'NON_TICKETED', imageMode: 'EVENT_DETAILS_MODE', generationBlocked: false,
   }]);
 });

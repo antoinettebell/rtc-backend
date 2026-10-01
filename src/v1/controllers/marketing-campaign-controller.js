@@ -25,11 +25,37 @@ const createMarketingCampaignController = (service = gateway) => ({
       return res.data({ vendors: await service.listEligibleVendors() });
     } catch (error) { return safeFailure(res, error); }
   },
+  listEligibleAppFeatures: async (req, res) => {
+    try {
+      return res.data({ features: await service.listEligibleAppFeatures() });
+    } catch (error) { return safeFailure(res, error); }
+  },
+  listEligibleEvents: async (req, res) => {
+    try {
+      return res.data({ events: await service.listEligibleEvents() });
+    } catch (error) { return safeFailure(res, error); }
+  },
   generate: async (req, res) => {
     try {
       return res.data({ results: await service.generateVendorSpotlights(
         req.body?.requestId,
         req.body?.vendorSelections ?? req.body?.vendorIds,
+      ) });
+    } catch (error) { return safeFailure(res, error); }
+  },
+  generateAppFeatures: async (req, res) => {
+    try {
+      return res.data({ results: await service.generateAppFeatures(
+        req.body?.requestId,
+        req.body?.featureKeys,
+      ) });
+    } catch (error) { return safeFailure(res, error); }
+  },
+  generateEvents: async (req, res) => {
+    try {
+      return res.data({ results: await service.generateEvents(
+        req.body?.requestId,
+        req.body?.eventIds,
       ) });
     } catch (error) { return safeFailure(res, error); }
   },
