@@ -26,12 +26,18 @@ test('uses the internal control API and forwards no admin JWT or provider data',
       calls.push({ url, options });
       return response({ campaigns: [{
         campaignId: 'campaign-1', businessName: 'Vendor', providerPayload: { secret: true },
+        regenerationStatus: 'RETRY_SCHEDULED', nextRetryAt: '2026-10-04T12:00:00.000Z',
+        regenerationFailure: { code: 'OPENAI_RATE_LIMITED', stage: 'generation', rawBody: 'secret' },
       }] });
     },
   });
   const campaigns = await gateway.listPendingCampaigns();
   assert.equal(campaigns.length, 1);
   assert.equal('providerPayload' in campaigns[0], false);
+  assert.deepEqual(campaigns[0].regenerationFailure, {
+    code: 'OPENAI_RATE_LIMITED', stage: 'generation',
+  });
+  assert.equal(campaigns[0].nextRetryAt, '2026-10-04T12:00:00.000Z');
   assert.equal(calls[0].url, 'https://marketing.internal/admin/campaigns/pending');
   assert.equal(calls[0].options.headers['x-rtc-service-key'], 'service-secret');
   assert.equal('authorization' in calls[0].options.headers, false);

@@ -28,6 +28,14 @@ const requireCampaignId = (value) => {
   return value;
 };
 
+const safeGenerationFailure = (value) => {
+  const code = typeof value?.code === 'string' && /^[A-Z][A-Z0-9_]{0,99}$/.test(value.code)
+    ? value.code : null;
+  const stage = typeof value?.stage === 'string' && /^[A-Za-z][A-Za-z0-9 -]{0,49}$/.test(value.stage)
+    ? value.stage : null;
+  return code ? { code, stage } : null;
+};
+
 const campaignListItem = (value = {}) => ({
   campaignId: value.campaignId ?? null,
   vendorId: value.vendorId ?? null,
@@ -42,6 +50,8 @@ const campaignListItem = (value = {}) => ({
   approvalStatus: value.approvalStatus ?? null,
   generationStatus: value.generationStatus ?? null,
   regenerationStatus: value.regenerationStatus ?? null,
+  regenerationFailure: safeGenerationFailure(value.regenerationFailure),
+  nextRetryAt: value.nextRetryAt ?? null,
   regenerationCount: Number(value.regenerationCount) || 0,
 });
 
