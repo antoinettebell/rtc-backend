@@ -84,6 +84,30 @@ const createMarketingCampaignController = (service = gateway) => ({
       ) });
     } catch (error) { return safeFailure(res, error); }
   },
+  listSocialContent: async (req, res) => {
+    try {
+      return res.data({ content: await service.listSocialContent({
+        brandCode: req.query?.brand,
+        lifecycleStatus: req.query?.status,
+      }) });
+    } catch (error) { return safeFailure(res, error); }
+  },
+  requestSocialContentDecision: async (req, res) => {
+    try { return res.status(202).data({ content: await service.requestSocialContentDecision(req.body?.brandCode) }); }
+    catch (error) { return safeFailure(res, error); }
+  },
+  completeSocialContentVerification: async (req, res) => {
+    try { return res.data({ content: await service.completeSocialContentVerification(req.params.contentId) }); }
+    catch (error) { return safeFailure(res, error); }
+  },
+  approveSocialContent: async (req, res) => {
+    try { return res.data({ content: await service.approveSocialContent(req.params.contentId, String(req.user?._id || req.user?.id || '')) }); }
+    catch (error) { return safeFailure(res, error); }
+  },
+  rejectSocialContent: async (req, res) => {
+    try { return res.data({ content: await service.rejectSocialContent(req.params.contentId, String(req.user?._id || req.user?.id || '')) }); }
+    catch (error) { return safeFailure(res, error); }
+  },
 });
 
 module.exports = createMarketingCampaignController();

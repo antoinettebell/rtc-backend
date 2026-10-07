@@ -1,5 +1,6 @@
 const SAFE_CAMPAIGN_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/;
 const SAFE_REASON = /^[\p{L}\p{N} .,_'-]{0,500}$/u;
+const SOCIAL_CONTENT_BRANDS = new Set(['RTC', 'SBE']);
 const DEFAULT_TIMEOUT_MS = 60000;
 const MIN_TIMEOUT_MS = 1000;
 const MAX_TIMEOUT_MS = 120000;
@@ -11,6 +12,10 @@ const normalizeTimeoutMs = (value) => {
     ? parsed
     : DEFAULT_TIMEOUT_MS;
 };
+
+// Existing Admin traffic targets the Creative Engine under /api/marketing-control.
+// SMA is a sibling route on the same Azure Function host under /api/sma.
+const socialMediaBaseUrl = (baseUrl) => String(baseUrl || '').replace(/\/marketing-control$/, '');
 
 class MarketingCampaignGatewayError extends Error {
   constructor(code, status = 502) {
@@ -142,6 +147,14 @@ const cleanReason = (value) => {
   return reason;
 };
 
+const requireSocialContentBrand = (value) => {
+  const brandCode = String(value || '').trim().toUpperCase();
+  if (!SOCIAL_CONTENT_BRANDS.has(brandCode)) {
+    throw new MarketingCampaignGatewayError('SMA_UNKNOWN_BRAND', 400);
+  }
+  return brandCode;
+};
+
 class MarketingCampaignGateway {
   constructor({
     baseUrl = process.env.MARKETING_CONTROL_API_URL,
@@ -155,14 +168,14 @@ class MarketingCampaignGateway {
     this.timeoutMs = normalizeTimeoutMs(timeoutMs);
   }
 
-  async request(path, { method = 'GET', body } = {}) {
-    if (!this.baseUrl || !this.serviceKey || typeof this.fetchImpl !== 'function') {
+  async request(path, { method = 'GET', body, baseUrl = this.baseUrl } = {}) {
+    if (!baseUrl || !this.serviceKey || typeof this.fetchImpl !== 'function') {
       throw new MarketingCampaignGatewayError('MARKETING_CONTROL_UNAVAILABLE', 503);
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      const response = await this.fetchImpl(`${baseUrl}${path}`, {
         method,
         headers: {
           accept: 'application/json',
@@ -287,12 +300,51 @@ class MarketingCampaignGateway {
       status: data?.result?.status ?? null,
     };
   }
+
+  async listSocialContent({ brandCode, lifecycleStatus } = {}) {
+    const query = new URLSearchParams();
+    if (brandCode) query.set('brand', requireSocialContentBrand(brandCode));
+    if (lifecycleStatus) query.set('status', String(lifecycleStatus).trim().slice(0, 80));
+    const suffix = query.size ? `?${query.toString()}` : '';
+    const data = await this.request(`/sma/content${suffix}`, { baseUrl: socialMediaBaseUrl(this.baseUrl) });
+    return Array.isArray(data?.content) ? data.content : [];
+  }
+
+  async requestSocialContentDecision(brandCode) {
+    const data = await this.request('/sma/content/request-decision', {
+      method: 'POST', body: { brandCode: requireSocialContentBrand(brandCode) }, baseUrl: socialMediaBaseUrl(this.baseUrl),
+    });
+    return data?.content ?? null;
+  }
+
+  async completeSocialContentVerification(contentId) {
+    const id = requireCampaignId(contentId);
+    const data = await this.request(`/sma/content/${encodeURIComponent(id)}/verification-complete`, { method: 'POST', baseUrl: socialMediaBaseUrl(this.baseUrl) });
+    return data?.content ?? null;
+  }
+
+  async approveSocialContent(contentId, approvedBy) {
+    const id = requireCampaignId(contentId);
+    const data = await this.request(`/sma/content/${encodeURIComponent(id)}/approve`, {
+      method: 'POST', body: { approvedBy: requireCampaignId(String(approvedBy || '')) }, baseUrl: socialMediaBaseUrl(this.baseUrl),
+    });
+    return data?.content ?? null;
+  }
+
+  async rejectSocialContent(contentId, rejectedBy) {
+    const id = requireCampaignId(contentId);
+    const data = await this.request(`/sma/content/${encodeURIComponent(id)}/reject`, {
+      method: 'POST', body: { rejectedBy: requireCampaignId(String(rejectedBy || '')) }, baseUrl: socialMediaBaseUrl(this.baseUrl),
+    });
+    return data?.content ?? null;
+  }
 }
 
 module.exports = {
   MarketingCampaignGateway,
   MarketingCampaignGatewayError,
   normalizeTimeoutMs,
+  socialMediaBaseUrl,
   campaignListItem,
   campaignDetail,
   eligibleVendor,

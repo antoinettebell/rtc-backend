@@ -4,6 +4,7 @@ const test = require('node:test');
 const {
   MarketingCampaignGateway,
   normalizeTimeoutMs,
+  socialMediaBaseUrl,
 } = require('./marketing-campaign-gateway');
 
 function response(data, { ok = true, status = 200 } = {}) {
@@ -16,6 +17,29 @@ test('uses a bounded regeneration-safe gateway timeout', () => {
   assert.equal(normalizeTimeoutMs('999'), 60000);
   assert.equal(normalizeTimeoutMs('120001'), 60000);
   assert.equal(normalizeTimeoutMs('invalid'), 60000);
+});
+
+test('derives the sibling SMA Azure route from the existing Creative Engine base URL', () => {
+  assert.equal(
+    socialMediaBaseUrl('https://function.example/api/marketing-control'),
+    'https://function.example/api',
+  );
+});
+
+test('uses the SMA endpoint on the existing Azure Function host and forwards no admin JWT', async () => {
+  const calls = [];
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://function.example/api/marketing-control', serviceKey: 'service-secret',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response({ content: [{ contentId: 'sma-content-123', lifecycleStatus: 'READY_FOR_APPROVAL' }] });
+    },
+  });
+  const content = await gateway.listSocialContent({ brandCode: 'RTC' });
+  assert.equal(content[0].contentId, 'sma-content-123');
+  assert.equal(calls[0].url, 'https://function.example/api/sma/content?brand=RTC');
+  assert.equal(calls[0].options.headers['x-rtc-service-key'], 'service-secret');
+  assert.equal('authorization' in calls[0].options.headers, false);
 });
 
 test('uses the internal control API and forwards no admin JWT or provider data', async () => {

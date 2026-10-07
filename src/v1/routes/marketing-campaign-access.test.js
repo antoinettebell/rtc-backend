@@ -92,3 +92,29 @@ test('discard controller forwards only the selected campaign identifier', async 
   assert.deepEqual(calls, ['campaign-1']);
   assert.equal(body.campaign.campaignId, 'campaign-1');
 });
+
+test('social content controller forwards only the requested brand and authenticated reviewer', async () => {
+  const calls = [];
+  const controller = createMarketingCampaignController({
+    async requestSocialContentDecision(brandCode) {
+      calls.push(['request', brandCode]);
+      return { contentId: 'sma-content-123', lifecycleStatus: 'READY_FOR_APPROVAL' };
+    },
+    async approveSocialContent(contentId, approvedBy) {
+      calls.push(['approve', contentId, approvedBy]);
+      return { contentId, lifecycleStatus: 'APPROVED' };
+    },
+  });
+  let created;
+  const createdResponse = {
+    status(value) { created = value; return this; },
+    data(value) { return value; },
+  };
+  await controller.requestSocialContentDecision({ body: { brandCode: 'RTC', ignored: 'private' } }, createdResponse);
+  await controller.approveSocialContent({ params: { contentId: 'sma-content-123' }, user: { _id: 'admin-1' } }, { data(value) { return value; } });
+  assert.equal(created, 202);
+  assert.deepEqual(calls, [
+    ['request', 'RTC'],
+    ['approve', 'sma-content-123', 'admin-1'],
+  ]);
+});
