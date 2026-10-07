@@ -103,6 +103,30 @@ test('sanitizes upstream failures without retaining bodies or credentials', asyn
   );
 });
 
+test('preserves only allowlisted safe SMA errors and their upstream status', async () => {
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://function.example/api/marketing-control', serviceKey: 'secret',
+    fetchImpl: async () => response({ error: { code: 'SMA_AUDIENCE_OBJECTIVE_MISMATCH', providerBody: 'never expose' } }, { ok: false, status: 400 }),
+  });
+  await assert.rejects(
+    () => gateway.requestSocialContentDecision('RTC'),
+    (error) => error.code === 'SMA_AUDIENCE_OBJECTIVE_MISMATCH' && error.status === 400 &&
+      !JSON.stringify(error).includes('providerBody')
+  );
+});
+
+test('keeps arbitrary upstream failure payloads behind the generic gateway boundary', async () => {
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://function.example/api/marketing-control', serviceKey: 'secret',
+    fetchImpl: async () => response({ error: { code: 'UNTRUSTED_PROVIDER_FAILURE', message: 'private detail' } }, { ok: false, status: 500 }),
+  });
+  await assert.rejects(
+    () => gateway.requestSocialContentDecision('RTC'),
+    (error) => error.code === 'MARKETING_CONTROL_REQUEST_FAILED' && error.status === 502 &&
+      !JSON.stringify(error).includes('UNTRUSTED_PROVIDER_FAILURE')
+  );
+});
+
 test('regeneration returns the queued job identity and status', async () => {
   const calls = [];
   const gateway = new MarketingCampaignGateway({

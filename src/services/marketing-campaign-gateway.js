@@ -41,6 +41,14 @@ const safeGenerationFailure = (value) => {
   return code ? { code, stage } : null;
 };
 
+// The SMA Function already emits a deliberately allowlisted, safe error code.
+// Preserve only those codes for the Admin review surface; every other upstream
+// response stays behind the existing generic gateway failure boundary.
+const safeSmaFailureCode = (value) => {
+  const code = value?.data?.error?.code ?? value?.body?.data?.error?.code ?? value?.error?.code;
+  return typeof code === 'string' && /^(?:SMA|OPENAI)_[A-Z0-9_]{1,94}$/.test(code) ? code : null;
+};
+
 const campaignListItem = (value = {}) => ({
   campaignId: value.campaignId ?? null,
   vendorId: value.vendorId ?? null,
@@ -186,6 +194,9 @@ class MarketingCampaignGateway {
         signal: controller.signal,
       });
       if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const code = safeSmaFailureCode(payload);
+        if (code) throw new MarketingCampaignGatewayError(code, response.status);
         throw new MarketingCampaignGatewayError(
           response.status === 404 ? 'CAMPAIGN_NOT_FOUND' : 'MARKETING_CONTROL_REQUEST_FAILED',
           response.status === 404 ? 404 : 502
