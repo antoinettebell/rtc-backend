@@ -275,6 +275,13 @@ module.exports = {
       amount: Joi.number().required(),
     }),
   },
+  customerSupportIssue: {
+    body: Joi.object({
+      issueType: Joi.string()
+        .valid('FOOD_NOT_DELIVERED', 'FOOD_QUALITY', 'OTHER')
+        .required(),
+    }),
+  },
   posRefund: {
     body: Joi.object({
       reason: Joi.string().trim().allow('', null),

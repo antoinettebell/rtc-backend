@@ -43,6 +43,9 @@ exports.MenuItemModel = require('./menu-item');
 /** Define order model */
 exports.OrderModel = require('./order');
 
+/** Define customer order support issue model */
+exports.CustomerOrderSupportIssueModel = require('./customer-order-support-issue');
+
 /** Define order-counter model */
 exports.OrderCounterModel = require('./order-counter');
 

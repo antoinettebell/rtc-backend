@@ -53,7 +53,14 @@ const {
   roundCurrency,
 } = require('../../helper/order-bogo-pricing-helper');
 const VendorComplianceService = require('../services/vendor-compliance-service');
-const { OrderModel, TapToPayPaymentAttemptModel } = require('../../models');
+const { OrderModel, TapToPayPaymentAttemptModel, CustomerOrderSupportIssueModel } = require('../../models');
+const {
+  SUPPORT_PHONE_NUMBER,
+  ROLLING_WINDOW_MS,
+  getRefundDecision,
+  buildSupportSmsBody,
+  isWithinRefundRequestWindow,
+} = require('../../helper/customer-order-support-helper');
 const {
   isMenuTreeAvailableForTruck,
 } = require('../../helper/menu-truck-unit-scope');
@@ -2979,6 +2986,199 @@ exports.refundPayment = async (req, res, next) => {
     );
   } catch (err) {
     next(err);
+  }
+};
+
+/**
+ * Customer-facing order help path.  The client never supplies a refund amount
+ * or transaction identifier: both are derived from the owned order here.
+ */
+exports.submitCustomerSupportIssue = async (req, res, next) => {
+  try {
+    const { id: orderId } = req.params;
+    const { issueType } = req.body;
+    const order = await Service.getById(orderId);
+
+    if (!order) {
+      return res.error(new Error('Order not found'), 404);
+    }
+    if (String(order.userId) !== String(req.user?._id)) {
+      return res.error(new Error('You can only request help for your own orders.'), 403);
+    }
+
+    const existingIssue = await CustomerOrderSupportIssueModel.findOne({ order_id: order._id });
+    if (existingIssue) {
+      return res.error(new Error('Help has already been requested for this order.'), 409);
+    }
+
+    const customer = req.user || {};
+    const sendSupportEscalation = async (outcome) => {
+      const smsResult = await SmsHelper.sendSms({
+        to: SUPPORT_PHONE_NUMBER,
+        body: buildSupportSmsBody({ order, customer, issueType, outcome }),
+        metadata: { event: 'customer_order_support_escalation', orderId: String(order._id), issueType, outcome },
+      });
+      return smsResult;
+    };
+
+    if (issueType === 'OTHER') {
+      const issue = await CustomerOrderSupportIssueModel.create({
+        order_id: order._id,
+        user_id: req.user._id,
+        issue_type: issueType,
+        outcome: 'ESCALATED',
+      });
+      await sendSupportEscalation('ESCALATED');
+      issue.support_notified_at = new Date();
+      await issue.save();
+      return res.data(
+        { outcome: 'ESCALATED', message: 'Support will be in touch to help with this order.' },
+        'Order support request sent successfully'
+      );
+    }
+
+    if (!isWithinRefundRequestWindow(order)) {
+      const issue = await CustomerOrderSupportIssueModel.create({
+        order_id: order._id,
+        user_id: req.user._id,
+        issue_type: issueType,
+        outcome: 'ESCALATED',
+      });
+      await sendSupportEscalation('REFUND_WINDOW_EXPIRED');
+      issue.support_notified_at = new Date();
+      await issue.save();
+      return res.data(
+        {
+          outcome: 'ESCALATED',
+          message: 'Refund requests must be made within two hours of delivery or pickup. Support will be in touch to help with this order.',
+        },
+        'Order support request sent successfully'
+      );
+    }
+
+    const since = new Date(Date.now() - ROLLING_WINDOW_MS);
+    const priorIssueCount = await CustomerOrderSupportIssueModel.countDocuments({
+      user_id: req.user._id,
+      issue_type: { $in: ['FOOD_NOT_DELIVERED', 'FOOD_QUALITY'] },
+      createdAt: { $gte: since },
+      outcome: 'AUTO_REFUND',
+    });
+    const decision = getRefundDecision(priorIssueCount);
+
+    if (decision.outcome === 'ESCALATED') {
+      const issue = await CustomerOrderSupportIssueModel.create({
+        order_id: order._id,
+        user_id: req.user._id,
+        issue_type: issueType,
+        outcome: 'ESCALATED',
+      });
+      await sendSupportEscalation('REFUND_LIMIT_REACHED');
+      issue.support_notified_at = new Date();
+      await issue.save();
+      return res.data({ outcome: 'ESCALATED', message: decision.message }, 'Order support request sent successfully');
+    }
+
+    const transactionId = String(order.transactionId || order.transaction_id || order.paymentTransactionId || '');
+    const refundableAmount = Number((toMoney(order.total) * (decision.percentage / 100)).toFixed(2));
+    if (
+      order.paymentStatus === 'REFUNDED' ||
+      order.refundStatus === 'SUCCESS' ||
+      !['APPLE_PAY', 'GOOGLE_PAY'].includes(order.paymentMethod) ||
+      !transactionId ||
+      refundableAmount <= 0
+    ) {
+      const issue = await CustomerOrderSupportIssueModel.create({
+        order_id: order._id,
+        user_id: req.user._id,
+        issue_type: issueType,
+        outcome: 'ESCALATED',
+      });
+      await sendSupportEscalation('MANUAL_REFUND_REVIEW');
+      issue.support_notified_at = new Date();
+      await issue.save();
+      return res.data(
+        { outcome: 'ESCALATED', message: 'Support will be in touch to help with this order.' },
+        'Order support request sent successfully'
+      );
+    }
+
+    let issue;
+    try {
+      issue = await CustomerOrderSupportIssueModel.create({
+        order_id: order._id,
+        user_id: req.user._id,
+        issue_type: issueType,
+        outcome: 'AUTO_REFUND',
+        refund_percentage: decision.percentage,
+        refund_amount: refundableAmount,
+      });
+    } catch (error) {
+      if (error?.code === 11000) {
+        return res.error(new Error('Help has already been requested for this order.'), 409);
+      }
+      throw error;
+    }
+
+    let refund;
+    try {
+      refund = await CyberSourceRefundHelper.processRefund({
+        transactionId,
+        amount: refundableAmount,
+        paymentMethod: order.paymentMethod,
+      });
+    } catch (error) {
+      issue.outcome = 'REFUND_FAILED';
+      await issue.save();
+      await sendSupportEscalation('AUTOMATIC_REFUND_FAILED');
+      return res.error(new Error('Your request has been sent to Support for review.'), 502);
+    }
+
+    try {
+      await PaymentsLogService.create({
+        userId: req.user._id,
+        orderId: order._id,
+        type: 'REFUND',
+        mode: refund?.mode || null,
+        amount: refundableAmount,
+        paymentMethod: order.paymentMethod,
+        requestPayload: { source: 'CUSTOMER_ORDER_SUPPORT', issueType, refundPercentage: decision.percentage },
+        responsePayload: { success: Boolean(refund?.success), status: refund?.message || null },
+        transactionId,
+        uniqueId: refund?.refundTransactionId || null,
+        response_type: 'REFUND',
+        success: Boolean(refund?.success),
+        errorMessage: refund?.success ? null : refund?.message || 'Refund/void failed',
+      });
+    } catch (logError) {
+      console.error('Customer support refund payment log failed', { orderId: String(order._id), issueType, message: logError.message });
+    }
+    if (!refund.success) {
+      issue.outcome = 'REFUND_FAILED';
+      await issue.save();
+      await sendSupportEscalation('AUTOMATIC_REFUND_FAILED');
+      return res.error(new Error('Your request has been sent to Support for review.'), 502);
+    }
+
+    order.paymentStatus = 'REFUNDED';
+    order.refundTransactionId = refund.refundTransactionId || refund?.fullResponse?.transId || null;
+    order.refundDateTime = new Date();
+    order.refundStatus = 'SUCCESS';
+    order.refundReason = issueType === 'FOOD_NOT_DELIVERED' ? 'Food did not arrive' : 'Food was uncooked or stale';
+    order.refundMode = refund.mode === 'void' ? 'VOID' : 'REFUND';
+    order.refundErrorMessage = null;
+    await order.save();
+
+    issue.refund_transaction_id = order.refundTransactionId;
+    await issue.save();
+    return res.data(
+      { outcome: 'REFUND_ISSUED', refundPercentage: decision.percentage, refundAmount: refundableAmount, message: decision.message },
+      'Order support request processed successfully'
+    );
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.error(new Error('Help has already been requested for this order.'), 409);
+    }
+    return next(error);
   }
 };
 

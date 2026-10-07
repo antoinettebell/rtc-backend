@@ -104,6 +104,13 @@ router.post(
 );
 
 router.post(
+  '/:id/support-issue',
+  allowedTo(['CUSTOMER']),
+  validate(Validation.customerSupportIssue),
+  Controller.submitCustomerSupportIssue
+);
+
+router.post(
   '/:id/refund',
   allowedTo(['VENDOR']),
   validate(Validation.posRefund),
