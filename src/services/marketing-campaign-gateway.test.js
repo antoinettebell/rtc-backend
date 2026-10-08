@@ -50,14 +50,17 @@ test('uses SMA-only final-creative endpoints and never forwards provider data', 
       calls.push({ url, options });
       return response(options.method === 'POST'
         ? { content: { contentId: 'sma-content-123', creativeProduction: { status: 'QUEUED' } } }
-        : { previewUrl: 'https://temporary.example/final.png' });
+        : { previewUrl: 'https://temporary.example/final.png', previewUrls: ['https://temporary.example/final.png', 'https://temporary.example/final-2.png', 'https://temporary.example/final-3.png'] });
     },
   });
   await gateway.regenerateSocialContentCreative('sma-content-123');
   assert.equal(calls[0].url, 'https://function.example/api/sma/content/sma-content-123/creative/retry');
   assert.deepEqual(JSON.parse(calls[0].options.body), { confirmed: true });
   assert.equal('authorization' in calls[0].options.headers, false);
-  assert.equal(await gateway.getSocialContentCreativePreview('sma-content-123'), 'https://temporary.example/final.png');
+  assert.deepEqual(await gateway.getSocialContentCreativePreview('sma-content-123'), {
+    previewUrl: 'https://temporary.example/final.png',
+    previewUrls: ['https://temporary.example/final.png', 'https://temporary.example/final-2.png', 'https://temporary.example/final-3.png'],
+  });
   assert.equal(calls[1].url, 'https://function.example/api/sma/content/sma-content-123/creative/preview');
 });
 

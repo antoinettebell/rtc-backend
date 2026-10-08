@@ -113,7 +113,7 @@ const createMarketingCampaignController = (service = gateway) => ({
     catch (error) { return safeFailure(res, error); }
   },
   getSocialContentCreativePreview: async (req, res) => {
-    try { return res.data({ previewUrl: await service.getSocialContentCreativePreview(req.params.contentId) }); }
+    try { return res.data(await service.getSocialContentCreativePreview(req.params.contentId)); }
     catch (error) { return safeFailure(res, error); }
   },
   approveSocialContent: async (req, res) => {

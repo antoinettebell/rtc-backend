@@ -366,7 +366,9 @@ class MarketingCampaignGateway {
   async getSocialContentCreativePreview(contentId) {
     const id = requireCampaignId(contentId);
     const data = await this.request(`/sma/content/${encodeURIComponent(id)}/creative/preview`, { baseUrl: socialMediaBaseUrl(this.baseUrl) });
-    return data?.previewUrl ?? null;
+    const previewUrls = (Array.isArray(data?.previewUrls) ? data.previewUrls : [data?.previewUrl])
+      .filter((value) => typeof value === 'string' && value);
+    return { previewUrl: previewUrls[0] ?? null, previewUrls };
   }
 
   async approveSocialContent(contentId, approvedBy) {
