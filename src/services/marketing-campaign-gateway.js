@@ -49,6 +49,16 @@ const safeSmaFailureCode = (value) => {
   return typeof code === 'string' && /^(?:SMA|OPENAI)_[A-Z0-9_]{1,94}$/.test(code) ? code : null;
 };
 
+// The Marketing Function's Growth Engine controller emits safe categories.
+// Preserve only those categories through the internal gateway so Admin can
+// report a failed request without receiving messages, provider bodies, or
+// credentials.
+const SAFE_GROWTH_FAILURE_CODE = /^(?:APP_FEATURE|CAMPAIGN|COMPOSITION|CONFIGURATION|CREATOMATE|EVENT|FAL|FORBIDDEN|INELIGIBLE|INVALID|MUSIC|NO_EVENT|OPENAI|OUTPUT|PROMPT|RENDER|REQUEST|SCENE|SCENARIO|SCHEDULE)_[A-Z0-9_]{1,94}$|^GENERATION_FAILED$/;
+const safeGrowthFailureCode = (value) => {
+  const code = value?.data?.error?.code ?? value?.body?.data?.error?.code ?? value?.error?.code;
+  return typeof code === 'string' && SAFE_GROWTH_FAILURE_CODE.test(code) ? code : null;
+};
+
 const campaignListItem = (value = {}) => ({
   campaignId: value.campaignId ?? null,
   vendorId: value.vendorId ?? null,
@@ -202,7 +212,7 @@ class MarketingCampaignGateway {
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
-        const code = safeSmaFailureCode(payload);
+        const code = safeSmaFailureCode(payload) ?? safeGrowthFailureCode(payload);
         if (code) throw new MarketingCampaignGatewayError(code, response.status);
         throw new MarketingCampaignGatewayError(
           response.status === 404 ? 'CAMPAIGN_NOT_FOUND' : 'MARKETING_CONTROL_REQUEST_FAILED',

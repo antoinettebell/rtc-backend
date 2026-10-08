@@ -164,6 +164,18 @@ test('keeps arbitrary upstream failure payloads behind the generic gateway bound
   );
 });
 
+test('preserves only a safe Growth Engine failure code for Admin diagnostics', async () => {
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://marketing.internal', serviceKey: 'service-secret',
+    fetchImpl: async () => response({ error: { code: 'INVALID_TRUCK_UNIT_SELECTION', message: 'private source detail' } }, { ok: false, status: 400 }),
+  });
+  await assert.rejects(
+    () => gateway.generateVendorSpotlights('manual-request-1', [{ vendorId: 'vendor-1', truckUnitIds: ['truck-1'] }]),
+    (error) => error.code === 'INVALID_TRUCK_UNIT_SELECTION' && error.status === 400 &&
+      !JSON.stringify(error).includes('private source detail')
+  );
+});
+
 test('regeneration returns the queued job identity and status', async () => {
   const calls = [];
   const gateway = new MarketingCampaignGateway({
