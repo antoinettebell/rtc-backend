@@ -20,7 +20,11 @@ router.post('/campaigns/:campaignId/regenerate', adminOnly, Controller.regenerat
 // Social Media Automation content shares the Admin marketing review surface, but never schedules or publishes here.
 router.get('/social-content', adminOnly, Controller.listSocialContent);
 router.post('/social-content/request-decision', adminOnly, Controller.requestSocialContentDecision);
+router.get('/social-content/:contentId', adminOnly, Controller.getSocialContent);
 router.post('/social-content/:contentId/verification-complete', adminOnly, Controller.completeSocialContentVerification);
+router.post('/social-content/:contentId/creative/generate', adminOnly, Controller.generateSocialContentCreative);
+router.post('/social-content/:contentId/creative/regenerate', adminOnly, Controller.regenerateSocialContentCreative);
+router.get('/social-content/:contentId/creative/preview', adminOnly, Controller.getSocialContentCreativePreview);
 router.post('/social-content/:contentId/approve', adminOnly, Controller.approveSocialContent);
 router.post('/social-content/:contentId/reject', adminOnly, Controller.rejectSocialContent);
 

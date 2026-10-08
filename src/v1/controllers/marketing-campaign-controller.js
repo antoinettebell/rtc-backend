@@ -100,6 +100,22 @@ const createMarketingCampaignController = (service = gateway) => ({
     try { return res.data({ content: await service.completeSocialContentVerification(req.params.contentId) }); }
     catch (error) { return safeFailure(res, error); }
   },
+  getSocialContent: async (req, res) => {
+    try { return res.data({ content: await service.getSocialContent(req.params.contentId) }); }
+    catch (error) { return safeFailure(res, error); }
+  },
+  generateSocialContentCreative: async (req, res) => {
+    try { return res.status(202).data({ content: await service.generateSocialContentCreative(req.params.contentId) }); }
+    catch (error) { return safeFailure(res, error); }
+  },
+  regenerateSocialContentCreative: async (req, res) => {
+    try { return res.status(202).data({ content: await service.regenerateSocialContentCreative(req.params.contentId) }); }
+    catch (error) { return safeFailure(res, error); }
+  },
+  getSocialContentCreativePreview: async (req, res) => {
+    try { return res.data({ previewUrl: await service.getSocialContentCreativePreview(req.params.contentId) }); }
+    catch (error) { return safeFailure(res, error); }
+  },
   approveSocialContent: async (req, res) => {
     try { return res.data({ content: await service.approveSocialContent(req.params.contentId, String(req.user?._id || req.user?.id || '')) }); }
     catch (error) { return safeFailure(res, error); }

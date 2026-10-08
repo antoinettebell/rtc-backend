@@ -341,6 +341,34 @@ class MarketingCampaignGateway {
     return data?.content ?? null;
   }
 
+  async getSocialContent(contentId) {
+    const id = requireCampaignId(contentId);
+    const data = await this.request(`/sma/content/${encodeURIComponent(id)}`, { baseUrl: socialMediaBaseUrl(this.baseUrl) });
+    return data?.content ?? null;
+  }
+
+  async generateSocialContentCreative(contentId) {
+    const id = requireCampaignId(contentId);
+    const data = await this.request(`/sma/content/${encodeURIComponent(id)}/creative/generate`, {
+      method: 'POST', baseUrl: socialMediaBaseUrl(this.baseUrl),
+    });
+    return data?.content ?? null;
+  }
+
+  async regenerateSocialContentCreative(contentId) {
+    const id = requireCampaignId(contentId);
+    const data = await this.request(`/sma/content/${encodeURIComponent(id)}/creative/retry`, {
+      method: 'POST', body: { confirmed: true }, baseUrl: socialMediaBaseUrl(this.baseUrl),
+    });
+    return data?.content ?? null;
+  }
+
+  async getSocialContentCreativePreview(contentId) {
+    const id = requireCampaignId(contentId);
+    const data = await this.request(`/sma/content/${encodeURIComponent(id)}/creative/preview`, { baseUrl: socialMediaBaseUrl(this.baseUrl) });
+    return data?.previewUrl ?? null;
+  }
+
   async approveSocialContent(contentId, approvedBy) {
     const id = requireCampaignId(contentId);
     const data = await this.request(`/sma/content/${encodeURIComponent(id)}/approve`, {

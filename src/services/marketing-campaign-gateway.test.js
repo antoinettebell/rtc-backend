@@ -42,6 +42,25 @@ test('uses the SMA endpoint on the existing Azure Function host and forwards no 
   assert.equal('authorization' in calls[0].options.headers, false);
 });
 
+test('uses SMA-only final-creative endpoints and never forwards provider data', async () => {
+  const calls = [];
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://function.example/api/marketing-control', serviceKey: 'service-secret',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response(options.method === 'POST'
+        ? { content: { contentId: 'sma-content-123', creativeProduction: { status: 'QUEUED' } } }
+        : { previewUrl: 'https://temporary.example/final.png' });
+    },
+  });
+  await gateway.regenerateSocialContentCreative('sma-content-123');
+  assert.equal(calls[0].url, 'https://function.example/api/sma/content/sma-content-123/creative/retry');
+  assert.deepEqual(JSON.parse(calls[0].options.body), { confirmed: true });
+  assert.equal('authorization' in calls[0].options.headers, false);
+  assert.equal(await gateway.getSocialContentCreativePreview('sma-content-123'), 'https://temporary.example/final.png');
+  assert.equal(calls[1].url, 'https://function.example/api/sma/content/sma-content-123/creative/preview');
+});
+
 test('uses the internal control API and forwards no admin JWT or provider data', async () => {
   const calls = [];
   const gateway = new MarketingCampaignGateway({
