@@ -157,6 +157,18 @@ const eligibleEvent = (value = {}) => ({
   generationBlocked: value.generationBlocked === true,
 });
 
+const scenarioTalkingGenerationJob = (value = {}) => ({
+  jobId: SAFE_CAMPAIGN_ID.test(String(value.jobId || '')) ? value.jobId : null,
+  campaignId: SAFE_CAMPAIGN_ID.test(String(value.campaignId || '')) ? value.campaignId : null,
+  featureKey: SAFE_CAMPAIGN_ID.test(String(value.featureKey || '')) ? value.featureKey : null,
+  creativeMode: value.creativeMode === 'SCENARIO_TALKING' ? value.creativeMode : null,
+  status: ['QUEUED', 'PROCESSING', 'WAITING_FOR_RENDER', 'FAILED'].includes(value.status) ? value.status : null,
+  stage: ['QUEUED', 'PREPARING_CONTENT', 'OPERATOR_VOICE', 'OPERATOR_ANIMATION', 'GUIDE_VOICE', 'GUIDE_ANIMATION', 'PROOF_NARRATION', 'CTA_NARRATION', 'RENDERING', 'FAILED'].includes(value.stage) ? value.stage : null,
+  failureCode: typeof value.failureCode === 'string' && SAFE_GROWTH_FAILURE_CODE.test(value.failureCode) ? value.failureCode : null,
+  createdAt: value.createdAt ?? null,
+  updatedAt: value.updatedAt ?? null,
+});
+
 const requireVendorIds = (values) => {
   if (!Array.isArray(values) || values.length === 0 || values.length > 100) {
     throw new MarketingCampaignGatewayError('INVALID_VENDOR_SELECTION', 400);
@@ -258,6 +270,12 @@ class MarketingCampaignGateway {
     return (Array.isArray(data?.campaigns) ? data.campaigns : []).map(campaignListItem);
   }
 
+  async listScenarioTalkingGenerationJobs() {
+    const data = await this.request('/admin/campaigns/generation-jobs');
+    return (Array.isArray(data?.jobs) ? data.jobs : []).map(scenarioTalkingGenerationJob)
+      .filter((job) => job.jobId && job.campaignId && job.status && job.stage);
+  }
+
   async listEligibleVendors() {
     const data = await this.request('/admin/vendors/eligible');
     return (Array.isArray(data?.vendors) ? data.vendors : []).map(eligibleVendor);
@@ -296,6 +314,10 @@ class MarketingCampaignGateway {
     return (Array.isArray(data?.results) ? data.results : []).map((result) => ({
       action: result?.action ?? null,
       campaign: result?.campaign ? campaignListItem(result.campaign) : null,
+      jobId: SAFE_CAMPAIGN_ID.test(String(result?.jobId || '')) ? result.jobId : null,
+      creativeMode: result?.creativeMode === 'SCENARIO_TALKING'
+        ? 'SCENARIO_TALKING'
+        : (result?.creativeMode === 'STANDARD_FEATURE' ? 'STANDARD_FEATURE' : null),
     }));
   }
 
@@ -427,4 +449,5 @@ module.exports = {
   eligibleVendor,
   eligibleAppFeature,
   eligibleEvent,
+  scenarioTalkingGenerationJob,
 };
