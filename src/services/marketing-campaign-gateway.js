@@ -276,6 +276,22 @@ class MarketingCampaignGateway {
       .filter((job) => job.jobId && job.campaignId && job.status && job.stage);
   }
 
+  async discardFailedScenarioTalkingGenerationJob(jobId) {
+    const id = requireCampaignId(jobId);
+    const data = await this.request(`/admin/campaigns/generation-jobs/${encodeURIComponent(id)}/discard`, { method: 'POST' });
+    return scenarioTalkingGenerationJob(data?.job);
+  }
+
+  async retryFailedScenarioTalkingGenerationJob(jobId) {
+    const id = requireCampaignId(jobId);
+    const data = await this.request(`/admin/campaigns/generation-jobs/${encodeURIComponent(id)}/regenerate`, { method: 'POST' });
+    return {
+      action: data?.result?.action ?? null,
+      jobId: SAFE_CAMPAIGN_ID.test(String(data?.result?.job?.jobId || data?.result?.jobId || ''))
+        ? (data.result.job?.jobId ?? data.result.jobId) : null,
+    };
+  }
+
   async listEligibleVendors() {
     const data = await this.request('/admin/vendors/eligible');
     return (Array.isArray(data?.vendors) ? data.vendors : []).map(eligibleVendor);

@@ -113,6 +113,25 @@ test('projects only safe Talking People generation status fields', async () => {
   assert.doesNotMatch(JSON.stringify(jobs), /provider|checkpoint|private/);
 });
 
+test('uses explicit Talking People discard and regenerate controls', async () => {
+  const calls = [];
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://marketing.internal', serviceKey: 'service-secret',
+    fetchImpl: async (url, options) => {
+      calls.push([url, options.method]);
+      return response(url.endsWith('/discard')
+        ? { job: { jobId: 'job-1', campaignId: 'scenario-talking-12345678', featureKey: 'food-vendor-operations-dashboard', creativeMode: 'SCENARIO_TALKING', status: 'FAILED', stage: 'FAILED' } }
+        : { result: { action: 'QUEUED', jobId: 'job-2' } });
+    },
+  });
+  assert.equal((await gateway.discardFailedScenarioTalkingGenerationJob('job-1')).jobId, 'job-1');
+  assert.deepEqual(await gateway.retryFailedScenarioTalkingGenerationJob('job-1'), { action: 'QUEUED', jobId: 'job-2' });
+  assert.deepEqual(calls, [
+    ['https://marketing.internal/admin/campaigns/generation-jobs/job-1/discard', 'POST'],
+    ['https://marketing.internal/admin/campaigns/generation-jobs/job-1/regenerate', 'POST'],
+  ]);
+});
+
 test('projects only safe campaign details', async () => {
   const gateway = new MarketingCampaignGateway({
     baseUrl: 'https://marketing.internal', serviceKey: 'secret',

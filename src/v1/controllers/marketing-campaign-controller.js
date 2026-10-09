@@ -25,6 +25,16 @@ const createMarketingCampaignController = (service = gateway) => ({
       return res.data({ jobs: await service.listScenarioTalkingGenerationJobs() });
     } catch (error) { return safeFailure(res, error); }
   },
+  discardGenerationJob: async (req, res) => {
+    try {
+      return res.data({ job: await service.discardFailedScenarioTalkingGenerationJob(req.params.jobId) });
+    } catch (error) { return safeFailure(res, error); }
+  },
+  retryGenerationJob: async (req, res) => {
+    try {
+      return res.data({ result: await service.retryFailedScenarioTalkingGenerationJob(req.params.jobId) });
+    } catch (error) { return safeFailure(res, error); }
+  },
   listEligibleVendors: async (req, res) => {
     try {
       return res.data({ vendors: await service.listEligibleVendors() });
