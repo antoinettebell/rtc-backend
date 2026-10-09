@@ -1,6 +1,7 @@
 const SAFE_CAMPAIGN_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/;
 const SAFE_REASON = /^[\p{L}\p{N} .,_'-]{0,500}$/u;
 const SOCIAL_CONTENT_BRANDS = new Set(['RTC', 'SBE']);
+const SOCIAL_CONTENT_CREATIVE_FORMATS = new Set(['IMAGE_POST', 'CAROUSEL', 'SHORT_VIDEO']);
 const DEFAULT_TIMEOUT_MS = 60000;
 const MIN_TIMEOUT_MS = 1000;
 const MAX_TIMEOUT_MS = 120000;
@@ -29,6 +30,13 @@ class MarketingCampaignGatewayError extends Error {
 const requireCampaignId = (value) => {
   if (typeof value !== 'string' || !SAFE_CAMPAIGN_ID.test(value)) {
     throw new MarketingCampaignGatewayError('INVALID_CAMPAIGN_ID', 400);
+  }
+  return value;
+};
+
+const requireSocialContentFormat = (value) => {
+  if (typeof value !== 'string' || !SOCIAL_CONTENT_CREATIVE_FORMATS.has(value)) {
+    throw new MarketingCampaignGatewayError('INVALID_SOCIAL_CONTENT_FORMAT', 400);
   }
   return value;
 };
@@ -395,9 +403,9 @@ class MarketingCampaignGateway {
     return Array.isArray(data?.content) ? data.content : [];
   }
 
-  async requestSocialContentDecision(brandCode) {
+  async requestSocialContentDecision(brandCode, format) {
     const data = await this.request('/sma/content/request-decision', {
-      method: 'POST', body: { brandCode: requireSocialContentBrand(brandCode) }, baseUrl: socialMediaBaseUrl(this.baseUrl),
+      method: 'POST', body: { brandCode: requireSocialContentBrand(brandCode), format: requireSocialContentFormat(format) }, baseUrl: socialMediaBaseUrl(this.baseUrl),
     });
     return data?.content ?? null;
   }

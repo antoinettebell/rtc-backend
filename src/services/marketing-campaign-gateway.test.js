@@ -64,6 +64,20 @@ test('uses SMA-only final-creative endpoints and never forwards provider data', 
   assert.equal(calls[1].url, 'https://function.example/api/sma/content/sma-content-123/creative/preview');
 });
 
+test('forwards only an allowlisted admin-selected SMA creative format', async () => {
+  const calls = [];
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://function.example/api/marketing-control', serviceKey: 'service-secret',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return response({ content: { contentId: 'sma-content-123' } });
+    },
+  });
+  await gateway.requestSocialContentDecision('RTC', 'CAROUSEL');
+  assert.deepEqual(JSON.parse(calls[0].options.body), { brandCode: 'RTC', format: 'CAROUSEL' });
+  await assert.rejects(() => gateway.requestSocialContentDecision('RTC', 'TEXT_ONLY'), (error) => error.code === 'INVALID_SOCIAL_CONTENT_FORMAT' && error.status === 400);
+});
+
 test('uses the internal control API and forwards no admin JWT or provider data', async () => {
   const calls = [];
   const gateway = new MarketingCampaignGateway({
@@ -189,7 +203,7 @@ test('preserves only allowlisted safe SMA errors and their upstream status', asy
     fetchImpl: async () => response({ error: { code: 'SMA_AUDIENCE_OBJECTIVE_MISMATCH', providerBody: 'never expose' } }, { ok: false, status: 400 }),
   });
   await assert.rejects(
-    () => gateway.requestSocialContentDecision('RTC'),
+    () => gateway.requestSocialContentDecision('RTC', 'IMAGE_POST'),
     (error) => error.code === 'SMA_AUDIENCE_OBJECTIVE_MISMATCH' && error.status === 400 &&
       !JSON.stringify(error).includes('providerBody')
   );
@@ -201,7 +215,7 @@ test('keeps arbitrary upstream failure payloads behind the generic gateway bound
     fetchImpl: async () => response({ error: { code: 'UNTRUSTED_PROVIDER_FAILURE', message: 'private detail' } }, { ok: false, status: 500 }),
   });
   await assert.rejects(
-    () => gateway.requestSocialContentDecision('RTC'),
+    () => gateway.requestSocialContentDecision('RTC', 'IMAGE_POST'),
     (error) => error.code === 'MARKETING_CONTROL_REQUEST_FAILED' && error.status === 502 &&
       !JSON.stringify(error).includes('UNTRUSTED_PROVIDER_FAILURE')
   );
