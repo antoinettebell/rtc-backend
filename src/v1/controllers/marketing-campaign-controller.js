@@ -47,7 +47,9 @@ const createMarketingCampaignController = (service = gateway) => ({
     try {
       return res.data({ results: await service.generateAppFeatures(
         req.body?.requestId,
-        req.body?.featureKeys,
+        req.body?.featureSelections ?? (Array.isArray(req.body?.featureKeys)
+          ? req.body.featureKeys.map((featureKey) => ({ featureKey, creativeMode: 'STANDARD_FEATURE' }))
+          : req.body?.featureSelections),
       ) });
     } catch (error) { return safeFailure(res, error); }
   },

@@ -61,18 +61,18 @@ test('eligible-vendor controller returns only the gateway vendor list', async ()
 test('initial campaign controllers forward only identifiers and selections', async () => {
   const calls = [];
   const controller = createMarketingCampaignController({
-    async generateAppFeatures(requestId, keys) { calls.push(['features', requestId, keys]); return []; },
+    async generateAppFeatures(requestId, selections) { calls.push(['features', requestId, selections]); return []; },
     async generateEvents(requestId, ids) { calls.push(['events', requestId, ids]); return []; },
   });
   const res = { data(value) { return value; } };
   await controller.generateAppFeatures({
-    body: { requestId: 'request-1', featureKeys: ['feature-1'], ignored: 'private' },
+    body: { requestId: 'request-1', featureSelections: [{ featureKey: 'feature-1', creativeMode: 'SCENARIO_TALKING' }], ignored: 'private' },
   }, res);
   await controller.generateEvents({
     body: { requestId: 'request-2', eventIds: ['event-1'], ignored: 'private' },
   }, res);
   assert.deepEqual(calls, [
-    ['features', 'request-1', ['feature-1']],
+    ['features', 'request-1', [{ featureKey: 'feature-1', creativeMode: 'SCENARIO_TALKING' }]],
     ['events', 'request-2', ['event-1']],
   ]);
 });

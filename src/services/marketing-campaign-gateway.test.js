@@ -210,12 +210,12 @@ test('forwards categorized app feature and public event initial generation', asy
       }] });
     },
   });
-  const features = await gateway.generateAppFeatures('request-1', ['customer-feature']);
+  const features = await gateway.generateAppFeatures('request-1', [{ featureKey: 'customer-feature', creativeMode: 'STANDARD_FEATURE' }]);
   const events = await gateway.generateEvents('request-2', ['event-123']);
   assert.equal(features[0].campaign.regenerationStatus, 'QUEUED');
   assert.equal(events[0].campaign.campaignType, 'EVENT_PROMOTION');
   assert.deepEqual(JSON.parse(calls[0].options.body), {
-    requestId: 'request-1', featureKeys: ['customer-feature'],
+    requestId: 'request-1', featureSelections: [{ featureKey: 'customer-feature', creativeMode: 'STANDARD_FEATURE' }],
   });
   assert.deepEqual(JSON.parse(calls[1].options.body), {
     requestId: 'request-2', eventIds: ['event-123'],
@@ -302,7 +302,7 @@ test('eligible app feature and event listings expose only selection-safe fields'
     fetchImpl: async (url) => url.includes('app-features')
       ? response({ features: [{
         featureKey: 'customer-feature', featureName: 'Feature', audience: 'CUSTOMER',
-        generationBlocked: false, approvedFacts: ['private-to-gateway'],
+        generationBlocked: false, creativeModes: ['STANDARD_FEATURE', 'SCENARIO_TALKING', 'PRIVATE'], approvedFacts: ['private-to-gateway'],
       }] })
       : response({ events: [{
         eventId: 'event-1', eventName: 'Public Event', eventDate: '2026-10-20',
@@ -312,7 +312,8 @@ test('eligible app feature and event listings expose only selection-safe fields'
       }] }),
   });
   assert.deepEqual(await gateway.listEligibleAppFeatures(), [{
-    featureKey: 'customer-feature', featureName: 'Feature', audience: 'CUSTOMER', generationBlocked: false,
+    featureKey: 'customer-feature', featureName: 'Feature', audience: 'CUSTOMER',
+    creativeModes: ['STANDARD_FEATURE', 'SCENARIO_TALKING'], generationBlocked: false,
   }]);
   assert.deepEqual(await gateway.listEligibleEvents(), [{
     eventId: 'event-1', eventName: 'Public Event', eventDate: '2026-10-20', city: 'Columbia',

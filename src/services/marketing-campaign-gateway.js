@@ -33,6 +33,22 @@ const requireCampaignId = (value) => {
   return value;
 };
 
+const requireAppFeatureSelections = (values) => {
+  if (!Array.isArray(values) || values.length < 1 || values.length > 100) {
+    throw new MarketingCampaignGatewayError('INVALID_CAMPAIGN_SELECTION', 400);
+  }
+  const seen = new Set();
+  return values.map((value) => {
+    const featureKey = requireCampaignId(String(value?.featureKey || ''));
+    const creativeMode = String(value?.creativeMode || 'STANDARD_FEATURE');
+    if (!['STANDARD_FEATURE', 'SCENARIO_TALKING'].includes(creativeMode) || seen.has(`${featureKey}:${creativeMode}`)) {
+      throw new MarketingCampaignGatewayError('INVALID_CAMPAIGN_SELECTION', 400);
+    }
+    seen.add(`${featureKey}:${creativeMode}`);
+    return { featureKey, creativeMode };
+  });
+};
+
 const safeGenerationFailure = (value) => {
   const code = typeof value?.code === 'string' && /^[A-Z][A-Z0-9_]{0,99}$/.test(value.code)
     ? value.code : null;
@@ -124,6 +140,9 @@ const eligibleAppFeature = (value = {}) => ({
   featureKey: value.featureKey ?? null,
   featureName: value.featureName ?? null,
   audience: value.audience ?? null,
+  creativeModes: Array.isArray(value.creativeModes)
+    ? value.creativeModes.filter((mode) => ['STANDARD_FEATURE', 'SCENARIO_TALKING'].includes(mode))
+    : ['STANDARD_FEATURE'],
   generationBlocked: value.generationBlocked === true,
 });
 
@@ -267,11 +286,11 @@ class MarketingCampaignGateway {
     }));
   }
 
-  async generateAppFeatures(requestId, featureKeys) {
+  async generateAppFeatures(requestId, featureSelections) {
     const data = await this.request('/admin/campaigns/generate-app-features', {
       method: 'POST', body: {
         requestId: requireCampaignId(requestId),
-        featureKeys: requireVendorIds(featureKeys),
+        featureSelections: requireAppFeatureSelections(featureSelections),
       },
     });
     return (Array.isArray(data?.results) ? data.results : []).map((result) => ({
