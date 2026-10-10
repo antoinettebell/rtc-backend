@@ -103,30 +103,6 @@ test('uses the internal control API and forwards no admin JWT or provider data',
   assert.equal('authorization' in calls[0].options.headers, false);
 });
 
-test('projects only safe Talking People generation status fields', async () => {
-  const calls = [];
-  const gateway = new MarketingCampaignGateway({
-    baseUrl: 'https://marketing.internal', serviceKey: 'service-secret',
-    fetchImpl: async (url) => {
-      calls.push(url);
-      return response({ jobs: [{
-        jobId: 'job-1', campaignId: 'scenario-talking-12345678', featureKey: 'food-vendor-operations-dashboard',
-        creativeMode: 'SCENARIO_TALKING', status: 'PROCESSING', stage: 'GUIDE_ANIMATION',
-        failureCode: null, createdAt: '2026-10-08T20:00:00.000Z', updatedAt: '2026-10-08T20:01:00.000Z',
-        providerAudit: [{ requestId: 'private-provider-id' }], checkpoint: { script: 'private' },
-      }] });
-    },
-  });
-  const jobs = await gateway.listScenarioTalkingGenerationJobs();
-  assert.deepEqual(jobs, [{
-    jobId: 'job-1', campaignId: 'scenario-talking-12345678', featureKey: 'food-vendor-operations-dashboard',
-    creativeMode: 'SCENARIO_TALKING', status: 'PROCESSING', stage: 'GUIDE_ANIMATION', failureCode: null,
-    createdAt: '2026-10-08T20:00:00.000Z', updatedAt: '2026-10-08T20:01:00.000Z',
-  }]);
-  assert.equal(calls[0], 'https://marketing.internal/admin/campaigns/generation-jobs');
-  assert.doesNotMatch(JSON.stringify(jobs), /provider|checkpoint|private/);
-});
-
 test('projects only safe campaign details', async () => {
   const gateway = new MarketingCampaignGateway({
     baseUrl: 'https://marketing.internal', serviceKey: 'secret',
