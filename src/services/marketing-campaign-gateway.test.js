@@ -125,21 +125,6 @@ test('projects only safe campaign details', async () => {
   assert.equal('rawProviderResponse' in detail, false);
 });
 
-test('preserves the APP_FEATURE Scenario Talking discriminator and approved review metadata', async () => {
-  const gateway = new MarketingCampaignGateway({
-    baseUrl: 'https://marketing.internal', serviceKey: 'secret',
-    fetchImpl: async () => response({ campaign: {
-      campaignId: 'scenario-talking-12345678', campaignType: 'APP_FEATURE', creativeMode: 'SCENARIO_TALKING',
-      scenarioTalking: { dialogue: { operator: 'Payments, staff, schedules—too many apps!', guide: 'Run your truck with Round Da’ Corner.' }, templateId: 'template-1', screenshotKey: 'approved.png', media: { operator: { videoKey: 'private.mp4' } }, providerPayload: { secret: true } },
-    } }),
-  });
-  const detail = await gateway.getCampaignDetails('scenario-talking-12345678');
-  assert.equal(detail.campaignType, 'APP_FEATURE');
-  assert.equal(detail.creativeMode, 'SCENARIO_TALKING');
-  assert.equal(detail.scenarioTalking.dialogue.guide, 'Run your truck with Round Da’ Corner.');
-  assert.equal('providerPayload' in detail.scenarioTalking, false);
-});
-
 test('sanitizes upstream failures without retaining bodies or credentials', async () => {
   const gateway = new MarketingCampaignGateway({
     baseUrl: 'https://marketing.internal', serviceKey: 'secret',

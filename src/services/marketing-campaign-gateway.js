@@ -71,7 +71,6 @@ const campaignListItem = (value = {}) => ({
   vendorId: value.vendorId ?? null,
   businessName: value.businessName ?? null,
   campaignType: value.campaignType ?? null,
-  creativeMode: value.creativeMode ?? null,
   reason: value.reason ?? null,
   createdAt: value.createdAt ?? null,
   generatedAt: value.generatedAt ?? value.updatedAt ?? null,
@@ -107,12 +106,6 @@ const campaignDetail = (value = {}) => ({
     mode: value.visualVariation.mode ?? 'BASELINE',
     animationVariantId: value.visualVariation.animationVariantId ?? 'STATIC_STACK',
     imageRotation: Number(value.visualVariation.imageRotation) || 0,
-  } : null,
-  scenarioTalking: value.creativeMode === 'SCENARIO_TALKING' ? {
-    dialogue: value.scenarioTalking?.dialogue ?? null,
-    templateId: value.scenarioTalking?.templateId ?? null,
-    screenshotKey: value.scenarioTalking?.screenshotKey ?? null,
-    media: value.scenarioTalking?.media ?? null,
   } : null,
 });
 
