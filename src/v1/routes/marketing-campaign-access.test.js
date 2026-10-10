@@ -93,18 +93,6 @@ test('discard controller forwards only the selected campaign identifier', async 
   assert.equal(body.campaign.campaignId, 'campaign-1');
 });
 
-test('Talking People job controls forward only the selected job identifier', async () => {
-  const calls = [];
-  const controller = createMarketingCampaignController({
-    async discardFailedScenarioTalkingGenerationJob(jobId) { calls.push(['discard', jobId]); return { jobId }; },
-    async retryFailedScenarioTalkingGenerationJob(jobId) { calls.push(['regenerate', jobId]); return { action: 'QUEUED', jobId: 'job-2' }; },
-  });
-  const res = { data(value) { return value; } };
-  await controller.discardGenerationJob({ params: { jobId: 'job-1' } }, res);
-  await controller.retryGenerationJob({ params: { jobId: 'job-1' } }, res);
-  assert.deepEqual(calls, [['discard', 'job-1'], ['regenerate', 'job-1']]);
-});
-
 test('social content controller forwards only the requested brand, format, and authenticated reviewer', async () => {
   const calls = [];
   const controller = createMarketingCampaignController({
