@@ -316,6 +316,14 @@ class MarketingCampaignGateway {
     return campaignListItem(data?.campaign);
   }
 
+  async deleteApprovedCampaign(campaignId) {
+    const id = requireCampaignId(campaignId);
+    const data = await this.request(`/admin/campaigns/${encodeURIComponent(id)}/approved`, {
+      method: 'DELETE',
+    });
+    return campaignListItem(data?.campaign);
+  }
+
   async regenerateCampaign(campaignId, reason) {
     const id = requireCampaignId(campaignId);
     const data = await this.request(`/admin/campaigns/${encodeURIComponent(id)}/regenerate`, {
@@ -393,6 +401,14 @@ class MarketingCampaignGateway {
     const id = requireCampaignId(contentId);
     const data = await this.request(`/sma/content/${encodeURIComponent(id)}/reject`, {
       method: 'POST', body: { rejectedBy: requireCampaignId(String(rejectedBy || '')) }, baseUrl: socialMediaBaseUrl(this.baseUrl),
+    });
+    return data?.content ?? null;
+  }
+
+  async deleteApprovedSocialContent(contentId) {
+    const id = requireCampaignId(contentId);
+    const data = await this.request(`/sma/content/${encodeURIComponent(id)}/approved`, {
+      method: 'DELETE', baseUrl: socialMediaBaseUrl(this.baseUrl),
     });
     return data?.content ?? null;
   }
