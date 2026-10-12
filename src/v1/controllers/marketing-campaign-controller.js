@@ -82,6 +82,10 @@ const createMarketingCampaignController = (service = gateway) => ({
       return res.data({ campaign: await service.deleteApprovedCampaign(req.params.campaignId) });
     } catch (error) { return safeFailure(res, error); }
   },
+  requeue: async (req, res) => {
+    try { return res.data({ campaign: await service.requeueCampaign(req.params.campaignId) }); }
+    catch (error) { return safeFailure(res, error); }
+  },
   regenerate: async (req, res) => {
     try {
       return res.data({ result: await service.regenerateCampaign(
@@ -131,6 +135,10 @@ const createMarketingCampaignController = (service = gateway) => ({
   },
   deleteApprovedSocialContent: async (req, res) => {
     try { return res.data({ content: await service.deleteApprovedSocialContent(req.params.contentId) }); }
+    catch (error) { return safeFailure(res, error); }
+  },
+  requeueSocialContent: async (req, res) => {
+    try { return res.data({ content: await service.requeueSocialContent(req.params.contentId) }); }
     catch (error) { return safeFailure(res, error); }
   },
 });

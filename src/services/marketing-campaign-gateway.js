@@ -324,6 +324,12 @@ class MarketingCampaignGateway {
     return campaignListItem(data?.campaign);
   }
 
+  async requeueCampaign(campaignId) {
+    const id = requireCampaignId(campaignId);
+    const data = await this.request(`/admin/campaigns/${encodeURIComponent(id)}/requeue`, { method: 'POST' });
+    return campaignListItem(data?.campaign);
+  }
+
   async regenerateCampaign(campaignId, reason) {
     const id = requireCampaignId(campaignId);
     const data = await this.request(`/admin/campaigns/${encodeURIComponent(id)}/regenerate`, {
@@ -378,6 +384,12 @@ class MarketingCampaignGateway {
     const data = await this.request(`/sma/content/${encodeURIComponent(id)}/creative/retry`, {
       method: 'POST', body: { confirmed: true }, baseUrl: socialMediaBaseUrl(this.baseUrl),
     });
+    return data?.content ?? null;
+  }
+
+  async requeueSocialContent(contentId) {
+    const id = requireCampaignId(contentId);
+    const data = await this.request(`/sma/content/${encodeURIComponent(id)}/requeue`, { method: 'POST', baseUrl: socialMediaBaseUrl(this.baseUrl) });
     return data?.content ?? null;
   }
 
