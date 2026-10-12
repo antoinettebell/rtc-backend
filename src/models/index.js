@@ -146,6 +146,9 @@ exports.MarketplaceVendorAgreementModel = require('./marketplace-vendor-agreemen
 /** Define vendor compliance document model */
 exports.VendorComplianceDocumentModel = require('./vendor-compliance-document');
 
+/** Pending embedded DocuSign W-9 signing sessions. */
+exports.VendorComplianceW9EnvelopeModel = require('./vendor-compliance-w9-envelope');
+
 /** Define vendor compliance audit model */
 exports.VendorComplianceAuditModel = require('./vendor-compliance-audit');
 

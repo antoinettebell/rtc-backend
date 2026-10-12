@@ -14,7 +14,9 @@ const {
 } = require('../../helper/vendor-compliance-config');
 const { enqueueComplianceOcr } = require('../../helper/vendor-compliance-ocr-helper');
 const CustomNotification = require('../../helper/custom-notification');
-const { getSignedObjectUrl, removeObject } = require('../../helper/aws');
+const { getSignedObjectUrl, removeObject, addObjectFromBufferWithKey } = require('../../helper/aws');
+const EncryptionService = require('../../helper/encryption');
+const { FoodTruckModel } = require('../../models');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -230,7 +232,18 @@ const getCurrentDocuments = async (foodTruckId) =>
 
 const selectLatestByType = (documents = []) =>
   documents.reduce((acc, document) => {
-    if (!acc[document.document_type]) {
+    const current = acc[document.document_type];
+    if (!current) {
+      acc[document.document_type] = document;
+      return acc;
+    }
+    // A replacement W-9 must not interrupt an already verified certification
+    // while DocuSign completion and OCR validation are still pending.
+    if (
+      document.document_type === 'W9' &&
+      current.review_status !== 'verified' &&
+      document.review_status === 'verified'
+    ) {
       acc[document.document_type] = document;
     }
     return acc;
@@ -867,6 +880,46 @@ const uploadComplianceDocument = async ({
   );
 };
 
+const createSignedW9Document = async ({ foodTruck, user, envelopeId, pdfBuffer }) => {
+  const requirement = getComplianceRequirement('W9');
+  const { url, key } = await addObjectFromBufferWithKey(
+    { buffer: pdfBuffer, originalname: `signed-w9-${envelopeId}.pdf`, mimetype: 'application/pdf' },
+    `vendor-compliance/${foodTruck._id}/W9`
+  );
+  const existingCount = await VendorComplianceDocumentService.getCount({
+    food_truck_id: foodTruck._id,
+    document_type: 'W9',
+  });
+  const document = await VendorComplianceDocumentService.create({
+    food_truck_id: foodTruck._id,
+    vendor_user_id: foodTruck.userId,
+    document_type: 'W9',
+    version: Number(existingCount || 0) + 1,
+    title: 'Signed W-9',
+    file_url: url,
+    file_key: key,
+    original_name: 'signed-w9.pdf',
+    mime_type: 'application/pdf',
+    size_bytes: pdfBuffer.length,
+    extracted_fields: { docusign_envelope_id: envelopeId },
+    uploaded_by_user_id: user._id,
+    review_status: 'pending_review',
+  });
+  const ocrResult = await enqueueComplianceOcr({ document, requirement });
+  Object.assign(document, ocrResult);
+  await document.save();
+  await VendorComplianceAuditService.create({
+    document_id: document.document_id,
+    food_truck_id: foodTruck._id,
+    vendor_user_id: foodTruck.userId,
+    action: 'DOCUSIGN_W9_COMPLETED',
+    actor_user_id: user._id,
+    actor_user_type: user.userType,
+    metadata: { document_type: 'W9', envelope_id: envelopeId },
+  });
+  return document;
+};
+
 const syncLegacyFoodTruckDocuments = async ({ foodTruckId = null } = {}) => {
   const query = foodTruckId ? { _id: foodTruckId } : {};
   const foodTrucks = await FoodTruckService.getByData(query);
@@ -1233,6 +1286,45 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     }
   }
 
+  if (document.document_type === 'W9') {
+    const extractedTaxId = getFirstFieldValue(normalizedExtractedFields, [
+      'ein', 'ssn', 'tax_id', 'tax_identifier', 'taxpayer_identification_number',
+    ]);
+    const extractedDigits = taxDigits(extractedTaxId);
+    const foodTruck = await FoodTruckModel.findById(document.food_truck_id)
+      .select('+tax_identifier_encrypted tax_identifier_type')
+      .exec();
+    const profileDigits = taxDigits(
+      EncryptionService.decrypt(foodTruck?.tax_identifier_encrypted)
+    );
+    const identifierMatches =
+      extractedDigits.length === 9 &&
+      profileDigits.length === 9 &&
+      extractedDigits === profileDigits;
+    // Never retain a raw EIN/SSN in OCR metadata. The encrypted profile is
+    // the system of record; only the verification outcome is persisted here.
+    ['ein', 'ssn', 'tax_id', 'tax_identifier', 'taxpayer_identification_number']
+      .forEach((key) => delete normalizedExtractedFields[key]);
+    normalizedExtractedFields.tax_identifier_match = identifierMatches;
+    normalizedExtractedFields.tax_identifier_type = foodTruck?.tax_identifier_type || null;
+    if (identifierMatches && String(ocrStatus || 'completed') === 'completed') {
+      document.review_status = 'verified';
+      document.reviewed_by_user_id = null;
+      document.reviewed_at = new Date();
+      await retainOrDeleteExistingDocument({
+        foodTruckId: document.food_truck_id,
+        documentType: 'W9',
+        actorUserId: document.uploaded_by_user_id,
+        replacedByDocumentId: document.document_id,
+        reason: 'Replaced by verified DocuSign W-9',
+      });
+    } else {
+      document.review_status = 'pending_review';
+      document.ocr_status = 'manual_review';
+      document.ocr_error_message = 'OCR could not confirm that the W-9 EIN or SSN matches the vendor profile.';
+    }
+  }
+
   if (document.ocr_status !== 'manual_review') {
     document.ocr_status = ocrStatus || 'completed';
   }
@@ -1438,6 +1530,7 @@ module.exports = {
   getSanitationGradeMap,
   getSanitationGradeFromFields,
   uploadComplianceDocument,
+  createSignedW9Document,
   reconcileActiveComplianceDocuments,
   syncLegacyFoodTruckDocuments,
   submitComplianceDocumentsForOcr,

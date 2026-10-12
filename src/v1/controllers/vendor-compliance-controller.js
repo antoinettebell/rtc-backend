@@ -7,7 +7,8 @@ const {
 } = require('../services');
 const VendorComplianceService = require('../services/vendor-compliance-service');
 const MailHelper = require('../../helper/mail-helper');
-const { FoodTruckModel, UserModel } = require('../../models');
+const { FoodTruckModel, UserModel, VendorComplianceW9EnvelopeModel } = require('../../models');
+const DocuSignHelper = require('../../helper/docusign-helper');
 const {
   getComplianceRequirements,
   normalizeComplianceDocumentType,
@@ -253,6 +254,90 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
       { complianceDocumentList: documents, compliance: summary },
       'Compliance documents submitted for OCR'
     );
+  } catch (e) {
+    return handleError(e, next);
+  }
+};
+
+exports.startW9Signing = async (req, res, next) => {
+  try {
+    const foodTruck = await getVendorFoodTruck(req.user, req.params.foodTruckId);
+    if (!foodTruck.tax_identifier_masked || !foodTruck.tax_identifier_type) {
+      const error = new Error('Add a verified EIN or SSN to the vendor profile before signing a W-9.');
+      error.code = 409;
+      throw error;
+    }
+    const vendorName = [req.user.firstName, req.user.lastName].filter(Boolean).join(' ').trim() || foodTruck.name;
+    const envelope = await DocuSignHelper.createVendorComplianceW9Envelope({
+      vendorName,
+      vendorEmail: req.user.email,
+      vendorUserId: req.user._id,
+    });
+    const envelopeId = String(envelope?.envelopeId || envelope?.envelope_id || '').trim();
+    if (!envelopeId) throw new Error('DocuSign did not create a W-9 signing session.');
+    const recipients = await DocuSignHelper.getEnvelopeRecipients(envelopeId);
+    const signer = (recipients?.signers || []).find(
+      (item) => String(item?.clientUserId || '') === String(req.user._id)
+    );
+    if (!signer?.recipientId) throw new Error('DocuSign did not return the W-9 signer.');
+    const view = await DocuSignHelper.createRecipientView({
+      envelopeId,
+      signerName: vendorName,
+      signerEmail: req.user.email,
+      vendorUserId: req.user._id,
+      recipientId: signer.recipientId,
+    });
+    await VendorComplianceW9EnvelopeModel.create({
+      food_truck_id: foodTruck._id,
+      vendor_user_id: req.user._id,
+      envelope_id: envelopeId,
+    });
+    return res.data({ envelope_id: envelopeId, signing_url: view?.url }, 'W-9 signing started');
+  } catch (e) {
+    return handleError(e, next);
+  }
+};
+
+exports.completeW9Signing = async (req, res, next) => {
+  try {
+    const foodTruck = await getVendorFoodTruck(req.user, req.params.foodTruckId);
+    const envelopeId = String(req.body?.envelope_id || '').trim();
+    const session = await VendorComplianceW9EnvelopeModel.findOne({
+      food_truck_id: foodTruck._id,
+      vendor_user_id: req.user._id,
+      envelope_id: envelopeId,
+    });
+    if (!session) {
+      const error = new Error('W-9 signing session not found.');
+      error.code = 404;
+      throw error;
+    }
+    if (session.compliance_document_id) {
+      const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
+      return res.data({ compliance: summary, pending_ocr: true }, 'W-9 is already awaiting verification');
+    }
+    const envelope = await DocuSignHelper.getEnvelopeStatus(envelopeId);
+    const status = String(envelope?.status || '').toLowerCase();
+    if (status !== 'completed') {
+      session.status = status === 'declined' ? 'DECLINED' : status === 'voided' ? 'VOIDED' : 'SENT';
+      await session.save();
+      const error = new Error('DocuSign has not confirmed the completed W-9 signature.');
+      error.code = 409;
+      throw error;
+    }
+    const pdfBuffer = await DocuSignHelper.downloadEnvelopeDocuments(envelopeId);
+    const document = await VendorComplianceService.createSignedW9Document({
+      foodTruck,
+      user: req.user,
+      envelopeId,
+      pdfBuffer,
+    });
+    session.status = 'SIGNED';
+    session.compliance_document_id = document.document_id;
+    session.completed_at = new Date();
+    await session.save();
+    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
+    return res.data({ complianceDocument: document, compliance: summary, pending_ocr: true }, 'Signed W-9 received and submitted for verification');
   } catch (e) {
     return handleError(e, next);
   }

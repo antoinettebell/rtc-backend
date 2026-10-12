@@ -50,6 +50,13 @@ const assertTemplateSigningConfigured = () => {
   }
 };
 
+const assertW9SigningConfigured = () => {
+  assertConfigured();
+  if (!docusign.w9TemplateId || !docusign.w9SignerRole || !docusign.returnUrl) {
+    throw new Error('DocuSign W-9 signing is not configured.');
+  }
+};
+
 const docusignFetch = async (url, options = {}) => {
   const response = await fetch(url, options);
   const contentType = response.headers.get('content-type') || '';
@@ -221,6 +228,34 @@ exports.createVendorMarketplaceSigningEnvelope = async ({
   });
 };
 
+exports.createVendorComplianceW9Envelope = async ({ vendorName, vendorEmail, vendorUserId }) => {
+  assertW9SigningConfigured();
+  const accessToken = await exports.getAccessToken();
+  const templateRecipientsUrl = `${docusign.basePath}/v2.1/accounts/${docusign.accountId}/templates/${docusign.w9TemplateId}/recipients?include_tabs=true`;
+  const templateRecipients = await docusignFetch(templateRecipientsUrl, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+  });
+  const signerRole = resolveTemplateSignerRole(templateRecipients, docusign.w9SignerRole);
+  const url = `${docusign.basePath}/v2.1/accounts/${docusign.accountId}/envelopes`;
+  return docusignFetch(url, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      emailSubject: 'Action Required: Sign Your W-9',
+      templateId: docusign.w9TemplateId,
+      templateRoles: [{
+        email: vendorEmail,
+        name: vendorName,
+        roleName: signerRole,
+        recipientId: VENDOR_SIGNER_RECIPIENT_ID,
+        clientUserId: String(vendorUserId),
+      }],
+      status: 'sent',
+    }),
+  });
+};
+
 exports.getEnvelopeDocuments = async (envelopeId) => {
   const accessToken = await exports.getAccessToken();
   const url = `${docusign.basePath}/v2.1/accounts/${docusign.accountId}/envelopes/${envelopeId}/documents`;
@@ -258,7 +293,7 @@ exports.createRecipientView = async ({
   clientUserId = vendorUserId,
   returnUrl,
 }) => {
-  assertTemplateSigningConfigured();
+  assertConfigured();
   const accessToken = await exports.getAccessToken();
   const url = `${docusign.basePath}/v2.1/accounts/${docusign.accountId}/envelopes/${envelopeId}/views/recipient`;
 

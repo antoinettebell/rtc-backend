@@ -82,6 +82,8 @@ module.exports = {
         'VendorSigner',
       governanceTemplateId: process.env.DOCUSIGN_GOVERNANCE_TEMPLATE_ID,
       ndaTemplateId: process.env.DOCUSIGN_NDA_TEMPLATE_ID,
+      w9TemplateId: process.env.DOCUSIGN_W9_TEMPLATE_ID,
+      w9SignerRole: process.env.DOCUSIGN_W9_SIGNER_ROLE || 'Vendor',
       governanceVersion: process.env.DOCUSIGN_GOVERNANCE_VERSION || '1.0',
       ndaVersion: process.env.DOCUSIGN_NDA_VERSION || '1.0',
       developerAlertEmail:

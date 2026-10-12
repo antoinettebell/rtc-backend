@@ -31,6 +31,18 @@ router.post(
   Controller.submitDocumentsForOcr
 );
 
+router.post(
+  '/food-truck/:foodTruckId/w9/signing',
+  allowedTo(['SUPER_ADMIN', 'VENDOR']),
+  Controller.startW9Signing
+);
+
+router.post(
+  '/food-truck/:foodTruckId/w9/complete',
+  allowedTo(['SUPER_ADMIN', 'VENDOR']),
+  Controller.completeW9Signing
+);
+
 router.get(
   '/food-truck/:foodTruckId/history',
   allowedTo(['SUPER_ADMIN', 'VENDOR']),
