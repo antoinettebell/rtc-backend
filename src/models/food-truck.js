@@ -431,6 +431,36 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    legal_business_name: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    dba: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    legal_business_type: {
+      type: String,
+      enum: ['SOLE_PROPRIETOR', 'LLC', 'CORPORATION', 'PARTNERSHIP', null],
+      default: null,
+    },
+    taxed_as_s_corporation: {
+      type: Boolean,
+      default: false,
+    },
+    business_registration_state: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+    },
+    compliance_verification_cycle: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
     featured: {
       type: Boolean,
       default: false,

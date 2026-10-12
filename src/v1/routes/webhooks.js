@@ -18,6 +18,11 @@ router.post(
   WebhookController.vendorComplianceOcrResult
 );
 
+router.post(
+  '/vendor-compliance/providers/result',
+  WebhookController.vendorComplianceProviderResult
+);
+
 /** [POST] /api/v1/webhooks/vendor-compliance/maintenance */
 router.post(
   '/vendor-compliance/maintenance',

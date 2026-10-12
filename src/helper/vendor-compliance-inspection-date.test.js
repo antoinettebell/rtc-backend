@@ -12,20 +12,10 @@ assert.ok(getComplianceRequirement('BUSINESS_LICENSE').ocrFields.includes('issue
 assert.ok(getComplianceRequirement('COI').ocrFields.includes('issue_date'));
 assert.ok(getComplianceRequirement('LIQUOR_LICENSE').ocrFields.includes('issue_date'));
 
-const equallyWeightedRequirements = [
-  'BUSINESS_LICENSE',
-  'COI',
-  'LIQUOR_LICENSE',
-  'EIN',
-  'W9',
-].map((type) => getComplianceRequirement(type));
-assert.equal(equallyWeightedRequirements.length, 5);
-assert.ok(
-  equallyWeightedRequirements.every(
-    (requirement) => requirement.scoreWeight === equallyWeightedRequirements[0].scoreWeight
-  ),
-  'The five scored compliance documents must contribute equally to the score'
-);
+assert.equal(getComplianceRequirement('COI').required, false);
+assert.equal(getComplianceRequirement('COI').scoreWeight, 0);
+assert.equal(getComplianceRequirement('LIQUOR_LICENSE').scoreWeight, 0);
+assert.equal(getComplianceRequirement('SSN_CARD').scoreWeight, 0);
 assert.equal(
   sanitationRequirement.scoreWeight,
   0,
@@ -88,13 +78,13 @@ assert.match(
 );
 assert.match(
   serviceSource,
-  /Math\.round\(\(score \/ totalScoreWeight\) \* 100\)/,
-  'Compliance score must normalize the five equal document weights to 100 percent'
+  /weight: 25/,
+  'Core compliance components must each contribute 25 percent'
 );
 assert.match(
   serviceSource,
-  /const profileTaxIdentifierVerified = isEinDocument[\s\S]*status = 'verified';[\s\S]*score \+= requirement\.scoreWeight/,
-  'A securely stored profile EIN or SSN must satisfy the tax identifier score requirement'
+  /getTaxProofType\(foodTruck\)/,
+  'Tax proof must be selected dynamically from the encrypted-profile tax ID type'
 );
 assert.match(
   serviceSource,

@@ -37,6 +37,9 @@ const mSchema = mongoose.Schema(
       default: 1,
       min: 1,
     },
+    // Tracks profile-change revalidation without storing sensitive identity data.
+    revalidation_cycle: { type: Number, default: 1, min: 1, index: true },
+    revalidation_attempt: { type: Number, default: 0, min: 0 },
     title: {
       type: String,
       default: null,

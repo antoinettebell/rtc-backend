@@ -3,6 +3,7 @@ const { docusign } = require('../../config');
 const { FoodTruckModel, UserModel, VendorEmployeeModel, EmployeeSessionModel } = require('../../models');
 const CustomNotification = require('../../helper/custom-notification');
 const VendorComplianceService = require('../services/vendor-compliance-service');
+const ProviderVerification = require('../../helper/vendor-compliance-provider-helper');
 const EmployeeSessionService = require('../services/employee-session-service');
 const {
   DEFAULT_VENDOR_SCHEDULE_TIME_ZONE,
@@ -533,6 +534,30 @@ exports.vendorComplianceOcrResult = async (req, res) => {
       success: false,
       message: error.message || 'Compliance OCR result failed',
     });
+  }
+};
+
+exports.vendorComplianceProviderResult = async (req, res) => {
+  if (!authorizeBackendWebhook(req, res)) return;
+  try {
+    const allowedStatuses = new Set([
+      'PENDING', 'PASSED', 'FAILED', 'MANUAL_REVIEW', 'RETRYABLE_ERROR',
+    ]);
+    if (!allowedStatuses.has(String(req.body?.status || '').toUpperCase())) {
+      return res.status(400).json({ success: false, message: 'Unsupported provider verification status' });
+    }
+    const result = await ProviderVerification.applyProviderResult({
+      provider: req.body?.provider,
+      providerReference: req.body?.provider_reference,
+      status: req.body?.status,
+      safeResultCode: req.body?.safe_result_code,
+      safeReason: req.body?.safe_reason,
+      webhookEventReference: req.body?.webhook_event_reference,
+    });
+    if (!result) return res.status(404).json({ success: false, message: 'Verification record not found' });
+    return res.data({ verification: result }, 'Provider verification result processed');
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Provider verification result failed' });
   }
 };
 

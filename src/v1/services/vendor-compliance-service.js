@@ -16,7 +16,10 @@ const { enqueueComplianceOcr } = require('../../helper/vendor-compliance-ocr-hel
 const CustomNotification = require('../../helper/custom-notification');
 const { getSignedObjectUrl, removeObject, addObjectFromBufferWithKey } = require('../../helper/aws');
 const EncryptionService = require('../../helper/encryption');
-const { FoodTruckModel } = require('../../models');
+const {
+  FoodTruckModel,
+  VendorComplianceProviderVerificationModel,
+} = require('../../models');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -91,6 +94,21 @@ const getOcrIssueDate = (fields = {}) =>
   ]);
 
 const taxDigits = (value) => String(value || '').replace(/\D/g, '');
+const normalizeName = (value) => String(value || '')
+  .toLowerCase()
+  .replace(/&/g, ' and ')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim()
+  .replace(/\s+/g, ' ');
+const profileBusinessNames = (foodTruck = {}) => new Set(
+  [foodTruck.legal_business_name, foodTruck.dba, foodTruck.name]
+    .map(normalizeName)
+    .filter(Boolean)
+);
+const nameMatchesProfile = (foodTruck, value) => {
+  const normalized = normalizeName(value);
+  return !!normalized && profileBusinessNames(foodTruck).has(normalized);
+};
 
 const hasValidTaxIdentifier = (value) => taxDigits(value).length === 9;
 const hasMaskedTaxIdentifier = (value) => {
@@ -100,6 +118,14 @@ const hasMaskedTaxIdentifier = (value) => {
 const hasEncryptedTaxIdentifier = (foodTruck, type) =>
   String(foodTruck?.tax_identifier_type || '').toUpperCase() === type &&
   !!foodTruck?.tax_identifier_masked;
+
+const getTaxProofType = (foodTruck = {}) =>
+  String(foodTruck.tax_identifier_type || '').toUpperCase() === 'SSN'
+    ? 'SSN_CARD'
+    : 'EIN';
+
+const getVerificationCycle = (foodTruck = {}) =>
+  Math.max(1, Number(foodTruck.compliance_verification_cycle || 1));
 
 const SANITATION_GRADE_FIELDS = [
   'sanitation_grade',
@@ -423,11 +449,12 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
       : null;
     const verified = isVerifiedActiveDocument(document, now);
     const expired = days_until_expiration !== null && days_until_expiration < 0;
-    const isOptionalDocument = !requirement.required;
-    const isEinDocument = requirement.type === 'EIN';
-    const profileTaxIdentifierVerified = isEinDocument && (
-      taxIdRequirementType === 'SSN' ? hasSsnOnProfile : hasEinOnProfile
+    const isTaxProof = ['EIN', 'SSN_CARD'].includes(requirement.type);
+    const isOptionalDocument = !requirement.required && !(
+      isTaxProof && requirement.type === getTaxProofType(foodTruck)
     );
+    const isEinDocument = requirement.type === 'EIN';
+    const profileTaxIdentifierVerified = false;
     let status = 'missing';
 
     if (profileTaxIdentifierVerified) {
@@ -436,8 +463,8 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     } else if (verified) {
       status = 'verified';
       score += requirement.scoreWeight;
-    } else if (document?.review_status === 'pending_review') {
-      status = 'pending_review';
+    } else if (['pending_review', 'manual_review', 'revalidation_needed'].includes(document?.review_status)) {
+      status = document.review_status;
       pendingRequirements.push(requirement.type);
     } else if (document?.review_status === 'rejected') {
       status = 'rejected';
@@ -452,7 +479,6 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
 
     if (
       !isOptionalDocument &&
-      !(isEinDocument && taxIdRequirementType === 'SSN') &&
       (!document || !verified)
     ) {
       missingRequirements.push(requirement.type);
@@ -485,22 +511,43 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     missingRequirements.push('EIN_PROFILE');
   }
 
-  score = totalScoreWeight
-    ? Math.min(100, Math.round((score / totalScoreWeight) * 100))
-    : 0;
-  const baseEligible =
-    grandfathered ||
-    (missingRequirements.length === 0 && rejectedRequirements.length === 0);
-  const eligible = baseEligible && !sanitationGradeBlocked;
+  const externalProvider = selectedTaxIdentifierType === 'SSN' ? 'COMPLYCUBE' : 'COBALT';
+  const requiredExternalChecks = selectedTaxIdentifierType === 'SSN'
+    ? ['SSN']
+    : ['TIN', 'SOS'];
+  const externalRecords = await VendorComplianceProviderVerificationModel.find({
+    food_truck_id: foodTruck._id,
+    verification_cycle: getVerificationCycle(foodTruck),
+    provider: externalProvider,
+    check_type: { $in: requiredExternalChecks },
+  }).lean();
+  const externalByType = Object.fromEntries(
+    (externalRecords || []).map((record) => [record.check_type, record])
+  );
+  const externalPassed = requiredExternalChecks.every(
+    (checkType) => externalByType[checkType]?.status === 'PASSED'
+  );
+  const businessLicenseVerified = isVerifiedActiveDocument(latestByType.BUSINESS_LICENSE, now);
+  const w9Verified = isVerifiedActiveDocument(latestByType.W9, now);
+  const taxProofVerified = isVerifiedActiveDocument(latestByType[getTaxProofType(foodTruck)], now);
+  const coreComponents = [
+    { type: 'BUSINESS_LICENSE', label: 'Business License / Permit', verified: businessLicenseVerified },
+    { type: 'W9', label: 'Completed W-9', verified: w9Verified },
+    { type: getTaxProofType(foodTruck), label: 'Tax-ID Proof', verified: taxProofVerified },
+    { type: 'EXTERNAL_VERIFICATION', label: 'External Verification', verified: externalPassed },
+  ];
+  score = coreComponents.reduce((total, component) => total + (component.verified ? 25 : 0), 0);
+  coreComponents.filter((component) => !component.verified).forEach((component) => {
+    if (!missingRequirements.includes(component.type)) missingRequirements.push(component.type);
+  });
+  const coreCompliant = score === 100 && rejectedRequirements.length === 0 && pendingRequirements.length === 0;
+  const hasValidCoi = isVerifiedActiveDocument(latestByType.COI, now);
+  const eligible = coreCompliant;
   const hasPendingReview = pendingRequirements.length > 0;
   const scoreBand = getScoreBand({ score, eligible, hasPendingReview });
   const complianceMessage = eligible
-    ? grandfathered
-      ? 'Vendor is grandfathered under current compliance requirements.'
-      : 'Vendor compliance is eligible.'
-    : sanitationGradeBlocked
-    ? 'Please work on increasing your Sanitation Score and resubmit your Rating.'
-    : `Vendor compliance must be completed before bidding or accepting orders. Contact support at ${SUPPORT_PHONE_NUMBER}.`;
+    ? 'Vendor core compliance is complete.'
+    : `Vendor compliance must be completed. Contact support at ${SUPPORT_PHONE_NUMBER} if you need help.`;
 
   return {
     food_truck_id: foodTruck._id,
@@ -510,12 +557,20 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     score_color_hex: scoreBand.hex,
     score_label: scoreBand.label,
     eligible,
+    core_compliant: coreCompliant,
+    event_eligible: coreCompliant && hasValidCoi,
+    external_verification: {
+      provider: externalProvider,
+      status: externalPassed ? 'PASSED' : (externalRecords[0]?.status || 'NOT_STARTED'),
+      checks: externalRecords,
+    },
+    core_components: coreComponents.map((component) => ({ ...component, weight: 25 })),
     sanitation_grade: sanitationGrade,
     sanitation_grade_eligible: sanitationGradeEligible,
     sanitation_grade_blocked: sanitationGradeBlocked,
     grandfathered,
     grandfather_cutoff_date: GRANDFATHER_CUTOFF_DATE,
-    can_bid: eligible,
+    can_bid: coreCompliant && hasValidCoi,
     can_open_accepting_orders: eligible,
     support_phone_number: SUPPORT_PHONE_NUMBER,
     message: complianceMessage,
@@ -542,6 +597,132 @@ const assertEligible = async (foodTruckOrId, actionLabel = 'continue') => {
     );
   }
   return summary;
+};
+
+const getDocumentBusinessName = (document = {}) =>
+  getFirstFieldValue(document.extracted_fields || {}, [
+    'legal_business_name',
+    'business_name',
+    'taxpayer_name',
+    'name',
+    'insured_name',
+  ]);
+
+// Tax identifiers are deliberately never retained in OCR metadata. A tax-ID
+// edit therefore requires a fresh W-9/tax-proof scan, while a name-only edit
+// preserves documents whose OCR-captured name remains valid.
+const beginProfileRevalidation = async ({ foodTruck, actor = null, previousIdentity = {} }) => {
+  const currentIdentity = {
+    legal_business_name: foodTruck.legal_business_name || foodTruck.name || null,
+    dba: foodTruck.dba || null,
+    tax_identifier_type: foodTruck.tax_identifier_type || null,
+    tax_identifier_masked: foodTruck.tax_identifier_masked || null,
+  };
+  const taxChanged = previousIdentity.tax_identifier_type !== currentIdentity.tax_identifier_type ||
+    previousIdentity.tax_identifier_masked !== currentIdentity.tax_identifier_masked;
+  const nameChanged = previousIdentity.legal_business_name !== currentIdentity.legal_business_name ||
+    previousIdentity.dba !== currentIdentity.dba;
+  if (!taxChanged && !nameChanged) return { affected: [] };
+
+  const documents = await VendorComplianceDocumentService.getByData(
+    {
+      food_truck_id: foodTruck._id,
+      review_status: 'verified',
+      archived_at: null,
+      document_type: { $in: ['BUSINESS_LICENSE', 'W9', 'EIN', 'SSN_CARD'] },
+    },
+    { sort: { created_at: -1 } }
+  );
+  const affected = [];
+  const taxProofType = getTaxProofType(foodTruck);
+  const revalidationCycle = getVerificationCycle(foodTruck) + 1;
+  for (const document of documents) {
+    const affectsTax = ['W9', taxProofType].includes(document.document_type);
+    const capturedName = getDocumentBusinessName(document);
+    const nameStillMatches = !capturedName || nameMatchesProfile(foodTruck, capturedName);
+    if ((taxChanged && affectsTax) || (nameChanged && !nameStillMatches)) {
+      document.review_status = 'revalidation_needed';
+      document.ocr_status = 'revalidation_needed';
+      document.revalidation_cycle = revalidationCycle;
+      document.revalidation_attempt = 0;
+      document.ocr_error_message = 'Profile information changed. Upload a replacement document to revalidate it.';
+      document.reviewed_at = null;
+      document.reviewed_by_user_id = null;
+      await document.save();
+      await updateLinkedFoodTruckDocumentComplianceStatus(document);
+      affected.push(document.document_type);
+    }
+  }
+  if (!affected.length) return { affected };
+
+  foodTruck.compliance_verification_cycle = revalidationCycle;
+  await foodTruck.save();
+  await VendorComplianceProviderVerificationModel.updateMany(
+    { food_truck_id: foodTruck._id, status: { $in: ['NOT_STARTED', 'PENDING', 'PASSED', 'RETRYABLE_ERROR'] } },
+    { $set: { status: 'SUPERSEDED', completed_at: new Date() } }
+  );
+  await VendorComplianceAuditService.create({
+    food_truck_id: foodTruck._id,
+    vendor_user_id: foodTruck.userId,
+    actor_user_id: actor?._id || null,
+    actor_user_type: actor?.userType || null,
+    action: 'PROFILE_REVALIDATION_REQUIRED',
+    notes: 'Profile correction requires replacement compliance evidence.',
+    metadata: { affected_document_types: [...new Set(affected)] },
+  });
+  return { affected: [...new Set(affected)] };
+};
+
+// Provider calls are deliberately deferred until the three internal core
+// documents have passed their own OCR comparisons. This is idempotent: the
+// adapter reuses the active record for the current verification cycle.
+const startExternalVerificationWhenInternalChecksPass = async (foodTruckId) => {
+  const foodTruck = await FoodTruckModel.findById(foodTruckId)
+    .select('+tax_identifier_encrypted tax_identifier_type tax_identifier_masked legal_business_name dba name business_registration_state compliance_verification_cycle userId')
+    .exec();
+  if (!foodTruck) return null;
+
+  const taxProofType = getTaxProofType(foodTruck);
+  const documents = await getCurrentDocuments(foodTruck._id);
+  const latestByType = {};
+  for (const document of documents || []) {
+    if (!latestByType[document.document_type]) latestByType[document.document_type] = document;
+  }
+  const internalChecksPass = ['BUSINESS_LICENSE', 'W9', taxProofType]
+    .every((documentType) => isVerifiedActiveDocument(latestByType[documentType]));
+  if (!internalChecksPass) return null;
+
+  const ProviderHelper = require('../../helper/vendor-compliance-provider-helper');
+  if (!ProviderHelper.enabled()) return null;
+  try {
+    return String(foodTruck.tax_identifier_type || '').toUpperCase() === 'SSN'
+      ? await ProviderHelper.startComplyCubeSsnCheck(foodTruck)
+      : await ProviderHelper.startCobaltEinChecks(foodTruck);
+  } catch (error) {
+    const provider = String(foodTruck.tax_identifier_type || '').toUpperCase() === 'SSN'
+      ? 'COMPLYCUBE'
+      : 'COBALT';
+    const checkTypes = provider === 'COMPLYCUBE' ? ['SSN'] : ['TIN', 'SOS'];
+    await Promise.all(checkTypes.map((checkType) =>
+      VendorComplianceProviderVerificationModel.findOneAndUpdate(
+        {
+          food_truck_id: foodTruck._id,
+          verification_cycle: getVerificationCycle(foodTruck),
+          provider,
+          check_type: checkType,
+        },
+        {
+          $set: {
+            vendor_user_id: foodTruck.userId,
+            status: 'RETRYABLE_ERROR',
+            safe_reason: 'Provider verification could not be started. Retry is required.',
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      )
+    ));
+    return null;
+  }
 };
 
 const isDocumentAttachedToMarketplace = async (document) => {
@@ -807,8 +988,15 @@ const uploadComplianceDocument = async ({
     food_truck_id: foodTruck._id,
     document_type: documentType,
   });
+  const revalidationAttempt = await VendorComplianceDocumentService.getCount({
+    food_truck_id: foodTruck._id,
+    document_type: documentType,
+    revalidation_cycle: getVerificationCycle(foodTruck),
+    ocr_status: 'revalidation_needed',
+  });
 
   const isSanitationGrade = documentType === 'HEALTH_PERMIT';
+  const automatedCoreDocument = ['BUSINESS_LICENSE', 'W9', 'EIN', 'SSN_CARD'].includes(documentType);
   const adminRequestedPendingReview =
     user.userType === 'SUPER_ADMIN' && body.review_status === 'pending_review';
   const vendorEnteredIssueDate = asDate(body.issue_date);
@@ -820,6 +1008,8 @@ const uploadComplianceDocument = async ({
     vendor_user_id: foodTruck.userId,
     document_type: documentType,
     version: Number(existingCount || 0) + 1,
+    revalidation_cycle: getVerificationCycle(foodTruck),
+    revalidation_attempt: Number(revalidationAttempt || 0),
     title: body.title || requirement.label,
     file_url: fileUrl,
     file_key: fileKey,
@@ -833,18 +1023,18 @@ const uploadComplianceDocument = async ({
     extracted_fields: {},
     uploaded_by_user_id: user._id,
     review_status:
-      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview
+      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview && !automatedCoreDocument
         ? 'verified'
         : 'pending_review',
     reviewed_by_user_id:
-      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview
+      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview && !automatedCoreDocument
         ? user._id
         : null,
     reviewed_at:
-      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview
+      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview && !automatedCoreDocument
         ? new Date()
         : null,
-    ocr_status: user.userType === 'SUPER_ADMIN' ? 'not_configured' : undefined,
+    ocr_status: user.userType === 'SUPER_ADMIN' && !automatedCoreDocument ? 'not_configured' : undefined,
   });
 
   const manualSanitationGrade = getManualSanitationGrade(body);
@@ -890,11 +1080,19 @@ const createSignedW9Document = async ({ foodTruck, user, envelopeId, pdfBuffer }
     food_truck_id: foodTruck._id,
     document_type: 'W9',
   });
+  const revalidationAttempt = await VendorComplianceDocumentService.getCount({
+    food_truck_id: foodTruck._id,
+    document_type: 'W9',
+    revalidation_cycle: getVerificationCycle(foodTruck),
+    ocr_status: 'revalidation_needed',
+  });
   const document = await VendorComplianceDocumentService.create({
     food_truck_id: foodTruck._id,
     vendor_user_id: foodTruck.userId,
     document_type: 'W9',
     version: Number(existingCount || 0) + 1,
+    revalidation_cycle: getVerificationCycle(foodTruck),
+    revalidation_attempt: Number(revalidationAttempt || 0),
     title: 'Signed W-9',
     file_url: url,
     file_key: key,
@@ -1020,6 +1218,7 @@ const syncLegacyFoodTruckDocuments = async ({ foodTruckId = null } = {}) => {
         vendor_user_id: foodTruck.userId,
         document_type: documentType,
         version: Number(existingCount || 0) + 1,
+        revalidation_cycle: getVerificationCycle(foodTruck),
         title: legacyDocument.title || requirement.label,
         file_url: legacyDocument.file_url,
         file_key: legacyDocument.file_key || null,
@@ -1131,6 +1330,16 @@ const reviewComplianceDocument = async ({
 
   if (document.archived_at || document.review_status === 'archived') {
     throw buildComplianceError('Archived compliance documents are read-only', 409);
+  }
+
+  if (
+    reviewStatus === 'verified' &&
+    ['BUSINESS_LICENSE', 'W9', 'EIN', 'SSN_CARD'].includes(document.document_type)
+  ) {
+    throw buildComplianceError(
+      'This core compliance document is verified only by the automated OCR and profile-matching workflow.',
+      409
+    );
   }
 
   if (reviewStatus === 'rejected') {
@@ -1272,6 +1481,7 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     ...(document.extracted_fields || {}),
     ...(extractedFields || {}),
   };
+  let automaticValidationFailure = null;
   let hasSanitationGrade = false;
   if (document.document_type === 'HEALTH_PERMIT') {
     const sanitationGrade = getSanitationGradeFromFields(normalizedExtractedFields);
@@ -1286,14 +1496,21 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     }
   }
 
-  if (document.document_type === 'W9') {
+  const requiresIdentityValidation = ['BUSINESS_LICENSE', 'W9', 'EIN', 'SSN_CARD']
+    .includes(document.document_type);
+  const foodTruck = requiresIdentityValidation
+    ? await FoodTruckModel.findById(document.food_truck_id)
+      .select('+tax_identifier_encrypted tax_identifier_type tax_identifier_masked legal_business_name dba name compliance_verification_cycle')
+      .exec()
+    : null;
+  const selectedTaxProofType = getTaxProofType(foodTruck || {});
+  const isSelectedTaxProof = document.document_type === selectedTaxProofType;
+
+  if (document.document_type === 'W9' || isSelectedTaxProof) {
     const extractedTaxId = getFirstFieldValue(normalizedExtractedFields, [
       'ein', 'ssn', 'tax_id', 'tax_identifier', 'taxpayer_identification_number',
     ]);
     const extractedDigits = taxDigits(extractedTaxId);
-    const foodTruck = await FoodTruckModel.findById(document.food_truck_id)
-      .select('+tax_identifier_encrypted tax_identifier_type')
-      .exec();
     const profileDigits = taxDigits(
       EncryptionService.decrypt(foodTruck?.tax_identifier_encrypted)
     );
@@ -1307,22 +1524,38 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
       .forEach((key) => delete normalizedExtractedFields[key]);
     normalizedExtractedFields.tax_identifier_match = identifierMatches;
     normalizedExtractedFields.tax_identifier_type = foodTruck?.tax_identifier_type || null;
-    if (identifierMatches && String(ocrStatus || 'completed') === 'completed') {
-      document.review_status = 'verified';
-      document.reviewed_by_user_id = null;
-      document.reviewed_at = new Date();
-      await retainOrDeleteExistingDocument({
-        foodTruckId: document.food_truck_id,
-        documentType: 'W9',
-        actorUserId: document.uploaded_by_user_id,
-        replacedByDocumentId: document.document_id,
-        reason: 'Replaced by verified DocuSign W-9',
-      });
-    } else {
-      document.review_status = 'pending_review';
-      document.ocr_status = 'manual_review';
-      document.ocr_error_message = 'OCR could not confirm that the W-9 EIN or SSN matches the vendor profile.';
+    if (!identifierMatches) {
+      automaticValidationFailure = document.document_type === 'W9'
+        ? 'OCR could not confirm that the W-9 EIN or SSN matches the vendor profile.'
+        : 'OCR could not confirm that the tax-ID proof matches the vendor profile.';
     }
+  }
+
+  if (['BUSINESS_LICENSE', 'W9'].includes(document.document_type)) {
+    const extractedBusinessName = getDocumentBusinessName({ extracted_fields: normalizedExtractedFields });
+    normalizedExtractedFields.legal_business_name_match = nameMatchesProfile(foodTruck, extractedBusinessName);
+    if (!normalizedExtractedFields.legal_business_name_match) {
+      automaticValidationFailure = document.document_type === 'W9'
+        ? 'OCR could not confirm that the W-9 legal business name matches the vendor profile.'
+        : 'OCR could not confirm that the business license name matches the vendor profile.';
+    }
+  } else if (document.document_type === 'EIN') {
+    const extractedBusinessName = getDocumentBusinessName({ extracted_fields: normalizedExtractedFields });
+    if (extractedBusinessName) {
+      normalizedExtractedFields.legal_business_name_match = nameMatchesProfile(foodTruck, extractedBusinessName);
+      if (!normalizedExtractedFields.legal_business_name_match) {
+        automaticValidationFailure = 'OCR could not confirm that the EIN document business name matches the vendor profile.';
+      }
+    }
+  }
+
+  if (automaticValidationFailure) {
+    const afterRevalidation = Number(document.revalidation_attempt || 0) > 0;
+    document.review_status = 'manual_review';
+    document.ocr_status = 'manual_review';
+    document.ocr_error_message = afterRevalidation
+      ? `${automaticValidationFailure} This replacement requires manual review.`
+      : automaticValidationFailure;
   }
 
   if (document.ocr_status !== 'manual_review') {
@@ -1384,14 +1617,14 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   }
 
   if (expirationMismatch || missingOcrExpiration) {
-    document.review_status = 'pending_review';
+    document.review_status = 'manual_review';
     document.ocr_status = 'manual_review';
     document.ocr_error_message = expirationMismatch
       ? 'OCR expiration date does not match the vendor-entered expiration date.'
       : 'OCR could not confirm the vendor-entered expiration date.';
   }
   if (issueDateMismatch || missingOcrIssueDate) {
-    document.review_status = 'pending_review';
+    document.review_status = 'manual_review';
     document.ocr_status = 'manual_review';
     document.ocr_error_message = issueDateMismatch
       ? isSanitationGrade
@@ -1410,8 +1643,25 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     document.reviewed_by_user_id = null;
     document.reviewed_at = new Date();
   }
+  const coreIdentityDocument = ['BUSINESS_LICENSE', 'W9', selectedTaxProofType]
+    .includes(document.document_type);
+  const datesValidated = !expirationMismatch && !missingOcrExpiration &&
+    !issueDateMismatch && !missingOcrIssueDate;
+  if (
+    coreIdentityDocument &&
+    !automaticValidationFailure &&
+    datesValidated &&
+    document.ocr_status === 'completed'
+  ) {
+    document.review_status = 'verified';
+    document.reviewed_by_user_id = null;
+    document.reviewed_at = new Date();
+  }
   await document.save();
   await updateLinkedFoodTruckDocumentComplianceStatus(document);
+  if (coreIdentityDocument && document.review_status === 'verified') {
+    await startExternalVerificationWhenInternalChecksPass(document.food_truck_id);
+  }
   return document;
 };
 
@@ -1520,13 +1770,16 @@ const sendExpirationReminders = async () => {
 const runComplianceMaintenance = async () => {
   const reminders_sent = await sendExpirationReminders();
   const archived_count = await archiveExpiredDocuments();
-  return { reminders_sent, archived_count };
+  const ProviderHelper = require('../../helper/vendor-compliance-provider-helper');
+  const cobalt_sos_checks_polled = await ProviderHelper.pollPendingCobaltSosChecks();
+  return { reminders_sent, archived_count, cobalt_sos_checks_polled };
 };
 
 module.exports = {
   REMINDER_DAYS,
   calculateComplianceSummary,
   assertEligible,
+  beginProfileRevalidation,
   getSanitationGradeMap,
   getSanitationGradeFromFields,
   uploadComplianceDocument,

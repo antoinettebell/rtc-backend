@@ -148,6 +148,7 @@ exports.VendorComplianceDocumentModel = require('./vendor-compliance-document');
 
 /** Pending embedded DocuSign W-9 signing sessions. */
 exports.VendorComplianceW9EnvelopeModel = require('./vendor-compliance-w9-envelope');
+exports.VendorComplianceProviderVerificationModel = require('./vendor-compliance-provider-verification');
 
 /** Define vendor compliance audit model */
 exports.VendorComplianceAuditModel = require('./vendor-compliance-audit');

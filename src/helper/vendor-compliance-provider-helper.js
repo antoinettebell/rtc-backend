@@ -1,0 +1,206 @@
+const axios = require('axios');
+const crypto = require('crypto');
+const { FoodTruckModel, UserModel, VendorComplianceProviderVerificationModel } = require('../models');
+const EncryptionService = require('./encryption');
+
+const enabled = () => String(process.env.COMPLIANCE_EXTERNAL_VERIFICATION_ENABLED || 'false').toLowerCase() === 'true';
+const fingerprint = (value) => crypto.createHmac('sha256', process.env.COMPLIANCE_FINGERPRINT_SECRET || process.env.ENCRYPTION_SECRET_KEY || 'disabled')
+  .update(value).digest('hex');
+const safeReason = (value) => String(value || '').slice(0, 300);
+const normalizeComplyCube = (check = {}) => {
+  const outcome = String(check?.result?.outcome || check?.outcome || '').toLowerCase();
+  const status = String(check?.status || '').toLowerCase();
+  if (status === 'complete' && outcome === 'clear') return 'PASSED';
+  if (status === 'complete' && outcome === 'attention') return 'MANUAL_REVIEW';
+  if (['failed', 'rejected'].includes(status)) return 'FAILED';
+  return 'PENDING';
+};
+const normalizeCobaltTin = (result = {}) => {
+  const status = String(result.status || '').toLowerCase();
+  if (status === 'tin matched') return 'PASSED';
+  if (status === 'did not match') return 'FAILED';
+  if (status === 'in review') return 'MANUAL_REVIEW';
+  if (String(result.irsServiceStatus || '').toUpperCase().includes('OUTAGE')) return 'RETRYABLE_ERROR';
+  return 'PENDING';
+};
+const normalizeName = (value) => String(value || '')
+  .toLowerCase()
+  .replace(/&/g, ' and ')
+  .replace(/[^a-z0-9]+/g, ' ')
+  .trim()
+  .replace(/\s+/g, ' ');
+const normalizeState = (value) => String(value || '').toLowerCase().replace(/[^a-z]/g, '');
+const normalizeCobaltSos = (result = {}, foodTruck = {}) => {
+  if (result.retryId) return 'PENDING';
+  const expectedNames = new Set(
+    [foodTruck.legal_business_name, foodTruck.dba, foodTruck.name]
+      .map(normalizeName)
+      .filter(Boolean)
+  );
+  const expectedState = normalizeState(foodTruck.business_registration_state);
+  const match = (result.results || []).find((candidate) => {
+    const candidateName = normalizeName(candidate?.title || candidate?.businessName || candidate?.name);
+    const candidateState = normalizeState(candidate?.stateOfSosRegistration || candidate?.state || candidate?.stateOfFormation);
+    const active = /active|good standing/i.test(String(candidate?.status || ''));
+    // The request itself is state-scoped. Some states return a full state name
+    // while the profile stores the two-letter code, so only reject an explicit
+    // conflicting abbreviation here.
+    return expectedNames.has(candidateName) && active && (
+      !expectedState || !candidateState || candidateState.length > 2 || candidateState === expectedState
+    );
+  });
+  if (match) return 'PASSED';
+  if (Array.isArray(result.results) && result.results.length) return 'FAILED';
+  if (/failed|invalid|not found/i.test(String(result.status || result.message || ''))) return 'FAILED';
+  return 'MANUAL_REVIEW';
+};
+
+const upsert = async ({ foodTruck, provider, checkType, values }) =>
+  VendorComplianceProviderVerificationModel.findOneAndUpdate(
+    { food_truck_id: foodTruck._id, verification_cycle: Math.max(1, Number(foodTruck.compliance_verification_cycle || 1)), provider, check_type: checkType },
+    { $set: { vendor_user_id: foodTruck.userId, ...values } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+
+const currentRecord = ({ foodTruck, provider, checkType }) =>
+  VendorComplianceProviderVerificationModel.findOne({
+    food_truck_id: foodTruck._id,
+    verification_cycle: Math.max(1, Number(foodTruck.compliance_verification_cycle || 1)),
+    provider,
+    check_type: checkType,
+  }).exec();
+
+const activeOrTerminalRecord = (record) =>
+  record && ['PENDING', 'PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(record.status);
+
+const startComplyCubeSsnCheck = async (foodTruck) => {
+  if (!enabled() || !process.env.COMPLYCUBE_API_KEY) return null;
+  const existing = await currentRecord({ foodTruck, provider: 'COMPLYCUBE', checkType: 'SSN' });
+  if (activeOrTerminalRecord(existing)) return existing;
+  const user = await UserModel.findById(foodTruck.userId).lean();
+  const ssn = EncryptionService.decrypt(foodTruck.tax_identifier_encrypted);
+  if (!ssn || !user?.firstName || !user?.lastName) throw new Error('SSN verification profile is incomplete');
+  const previous = await VendorComplianceProviderVerificationModel.findOne({
+    food_truck_id: foodTruck._id,
+    provider: 'COMPLYCUBE',
+    check_type: 'SSN',
+    provider_client_reference: { $ne: null },
+  }).sort({ created_at: -1 }).lean();
+  const clientPayload = {
+    type: 'person', externalId: `rtc-vendor-${foodTruck._id}`,
+    personDetails: { firstName: user.firstName, lastName: user.lastName, ssn },
+  };
+  const requestOptions = { headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000 };
+  const clientResponse = previous?.provider_client_reference
+    ? await axios.patch(`https://api.complycube.com/v1/clients/${previous.provider_client_reference}`, clientPayload, requestOptions)
+    : await axios.post('https://api.complycube.com/v1/clients', clientPayload, requestOptions);
+  const clientId = clientResponse.data?.id || previous?.provider_client_reference;
+  const checkResponse = await axios.post('https://api.complycube.com/v1/checks', {
+    clientId, type: 'ssn_check',
+  }, { headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000 });
+  const check = checkResponse.data || {};
+  return upsert({ foodTruck, provider: 'COMPLYCUBE', checkType: 'SSN', values: {
+    status: normalizeComplyCube(check), provider_reference: check.id || null, provider_client_reference: clientId || null,
+    request_fingerprint: fingerprint(`SSN:${foodTruck.tax_identifier_masked}`), submitted_at: new Date(),
+  } });
+};
+
+const startCobaltEinChecks = async (foodTruck) => {
+  if (!enabled() || !process.env.COBALT_API_KEY) return [];
+  if (String(process.env.COBALT_ALLOW_EIN_QUERY_TRANSMISSION || 'false').toLowerCase() !== 'true') {
+    throw new Error('Cobalt EIN query transmission requires explicit authorization');
+  }
+  const [existingTin, existingSos] = await Promise.all([
+    currentRecord({ foodTruck, provider: 'COBALT', checkType: 'TIN' }),
+    currentRecord({ foodTruck, provider: 'COBALT', checkType: 'SOS' }),
+  ]);
+  if (activeOrTerminalRecord(existingTin) && activeOrTerminalRecord(existingSos)) {
+    return [existingTin, existingSos];
+  }
+  const tin = EncryptionService.decrypt(foodTruck.tax_identifier_encrypted);
+  const businessName = foodTruck.legal_business_name || foodTruck.name;
+  if (!tin || !businessName || !foodTruck.business_registration_state || !foodTruck.legal_business_type) {
+    throw new Error('EIN verification profile is incomplete');
+  }
+  const headers = { Accept: 'application/json', 'x-api-key': process.env.COBALT_API_KEY };
+  const tinResponse = await axios.get('https://apigateway.cobaltintelligence.com/tinVerification', {
+    params: { tin, businessName }, headers, timeout: 20000,
+  });
+  const tinResult = tinResponse.data || {};
+  const tinRecord = await upsert({ foodTruck, provider: 'COBALT', checkType: 'TIN', values: {
+    status: normalizeCobaltTin(tinResult), request_fingerprint: fingerprint(`EIN:${foodTruck.tax_identifier_masked}`),
+    safe_result_code: tinResult.irsCode === undefined ? null : String(tinResult.irsCode), safe_reason: safeReason(tinResult.irsReason), submitted_at: new Date(),
+  } });
+  const sosResponse = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
+    params: { searchQuery: businessName, state: foodTruck.business_registration_state, liveData: true }, headers, timeout: 35000,
+  });
+  const sos = sosResponse.data || {};
+  const sosStatus = normalizeCobaltSos(sos, foodTruck);
+  const sosRecord = await upsert({ foodTruck, provider: 'COBALT', checkType: 'SOS', values: {
+    status: sosStatus, provider_reference: sos.retryId || sos.requestId || null,
+    safe_reason: sosStatus === 'PENDING'
+      ? 'Secretary of State search pending.'
+      : sosStatus === 'PASSED'
+        ? 'Secretary of State record matched the legal business profile.'
+        : 'Secretary of State result did not satisfy the legal business profile check.',
+    submitted_at: new Date(),
+  } });
+  return [tinRecord, sosRecord];
+};
+
+const pollPendingCobaltSosChecks = async () => {
+  if (!enabled() || !process.env.COBALT_API_KEY) return 0;
+  if (String(process.env.COBALT_ALLOW_EIN_QUERY_TRANSMISSION || 'false').toLowerCase() !== 'true') return 0;
+  const pending = await VendorComplianceProviderVerificationModel.find({
+    provider: 'COBALT', check_type: 'SOS', status: 'PENDING', provider_reference: { $ne: null },
+  }).limit(50).exec();
+  let processed = 0;
+  for (const record of pending) {
+    try {
+      const foodTruck = await FoodTruckModel.findById(record.food_truck_id)
+        .select('legal_business_name dba name business_registration_state')
+        .lean();
+      if (!foodTruck) continue;
+      const response = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
+        params: { retryId: record.provider_reference },
+        headers: { Accept: 'application/json', 'x-api-key': process.env.COBALT_API_KEY },
+        timeout: 35000,
+      });
+      const result = response.data || {};
+      record.status = normalizeCobaltSos(result, foodTruck);
+      record.provider_reference = result.retryId || record.provider_reference;
+      record.retry_count = Number(record.retry_count || 0) + 1;
+      record.safe_reason = record.status === 'PENDING'
+        ? 'Secretary of State search is still pending.'
+        : record.status === 'PASSED'
+          ? 'Secretary of State record matched the legal business profile.'
+          : 'Secretary of State result did not satisfy the legal business profile check.';
+      if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(record.status)) record.completed_at = new Date();
+      await record.save();
+      processed += 1;
+    } catch (_) {
+      // The retry record remains pending; do not persist provider error bodies.
+    }
+  }
+  return processed;
+};
+
+const applyProviderResult = async ({ provider, providerReference, status, safeResultCode = null, safeReason = null, webhookEventReference = null }) => {
+  const record = await VendorComplianceProviderVerificationModel.findOne({
+    provider: String(provider || '').toUpperCase(),
+    provider_reference: providerReference,
+  });
+  if (!record) return null;
+  if (webhookEventReference && record.webhook_event_reference === webhookEventReference) return record;
+  const terminal = ['PASSED', 'FAILED', 'MANUAL_REVIEW'];
+  if (terminal.includes(record.status) && record.status !== status) return record;
+  record.status = status;
+  record.safe_result_code = safeResultCode || record.safe_result_code;
+  record.safe_reason = safeReason || record.safe_reason;
+  record.webhook_event_reference = webhookEventReference || record.webhook_event_reference;
+  if (terminal.includes(status)) record.completed_at = new Date();
+  await record.save();
+  return record;
+};
+
+module.exports = { enabled, normalizeComplyCube, normalizeCobaltTin, normalizeCobaltSos, startComplyCubeSsnCheck, startCobaltEinChecks, pollPendingCobaltSosChecks, applyProviderResult };

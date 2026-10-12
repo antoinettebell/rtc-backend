@@ -1388,10 +1388,8 @@ const hasVerifiedProfileRequirementDocument = async (foodTruckId, label) => {
 const hasSatisfiedLiquorLicenseRequirement = async ({
   event,
   foodTruckId,
-  liquorLicenseConfirmed,
 }) => {
   if (!event?.alcohol_required) return true;
-  if (liquorLicenseConfirmed) return true;
   return hasVerifiedProfileRequirementDocument(foodTruckId, 'Liquor License');
 };
 
@@ -6469,11 +6467,10 @@ exports.submitBid = async (req, res, next) => {
     const liquorLicenseSatisfied = await hasSatisfiedLiquorLicenseRequirement({
       event,
       foodTruckId: foodTruck._id,
-      liquorLicenseConfirmed: req.body.liquor_license_confirmed,
     });
     if (requestedStatus !== 'DRAFT' && !liquorLicenseSatisfied) {
       throw buildError(
-        'Liquor license confirmation is required for this event',
+        'A verified, unexpired liquor license is required for this event.',
         400
       );
     }
@@ -7187,11 +7184,10 @@ exports.submitApplication = async (req, res, next) => {
     const liquorLicenseSatisfied = await hasSatisfiedLiquorLicenseRequirement({
       event,
       foodTruckId: foodTruck._id,
-      liquorLicenseConfirmed: req.body.liquor_license_confirmed,
     });
     if (requestedStatus !== 'DRAFT' && !liquorLicenseSatisfied) {
       throw buildError(
-        'Liquor license confirmation is required for this event',
+        'A verified, unexpired liquor license is required for this event.',
         400
       );
     }

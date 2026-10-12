@@ -29,8 +29,8 @@ const DOCUMENT_TYPES = {
   COI: {
     type: 'COI',
     label: 'Certificate of Insurance',
-    required: true,
-    scoreWeight: 1,
+    required: false,
+    scoreWeight: 0,
     ocrFields: [
       'policy_number',
       'insured_name',
@@ -44,7 +44,7 @@ const DOCUMENT_TYPES = {
     type: 'LIQUOR_LICENSE',
     label: 'Liquor License',
     required: false,
-    scoreWeight: 1,
+    scoreWeight: 0,
     ocrFields: [
       'license_number',
       'business_name',
@@ -57,8 +57,15 @@ const DOCUMENT_TYPES = {
     type: 'EIN',
     label: 'EIN',
     required: false,
-    scoreWeight: 1,
+    scoreWeight: 0,
     ocrFields: ['ein', 'business_name', 'issuing_authority'],
+  },
+  SSN_CARD: {
+    type: 'SSN_CARD',
+    label: 'Social Security Card',
+    required: false,
+    scoreWeight: 0,
+    ocrFields: ['ssn', 'name'],
   },
   W9: {
     type: 'W9',
@@ -88,6 +95,8 @@ const DOCUMENT_TYPE_ALIASES = {
   ALCOHOL_LICENSE: 'LIQUOR_LICENSE',
   EIN: 'EIN',
   TAX_ID: 'EIN',
+  SSN_CARD: 'SSN_CARD',
+  SOCIAL_SECURITY_CARD: 'SSN_CARD',
   W9: 'W9',
   W_9: 'W9',
   FORM_W9: 'W9',
@@ -101,14 +110,17 @@ const OCR_STATUSES = [
   'completed',
   'failed',
   'manual_review',
+  'revalidation_needed',
 ];
 
 const REVIEW_STATUSES = [
   'pending_review',
+  'manual_review',
   'verified',
   'rejected',
   'expired',
   'archived',
+  'revalidation_needed',
 ];
 
 const REMINDER_DAYS = [90, 60, 30, 10];

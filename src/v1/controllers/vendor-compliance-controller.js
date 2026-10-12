@@ -7,7 +7,12 @@ const {
 } = require('../services');
 const VendorComplianceService = require('../services/vendor-compliance-service');
 const MailHelper = require('../../helper/mail-helper');
-const { FoodTruckModel, UserModel, VendorComplianceW9EnvelopeModel } = require('../../models');
+const {
+  FoodTruckModel,
+  UserModel,
+  VendorComplianceW9EnvelopeModel,
+  VendorComplianceProviderVerificationModel,
+} = require('../../models');
 const DocuSignHelper = require('../../helper/docusign-helper');
 const {
   getComplianceRequirements,
@@ -352,7 +357,7 @@ exports.history = async (req, res, next) => {
         ? { document_type: normalizeComplianceDocumentType(req.query.document_type) }
         : {}),
     };
-    const [documents, audits] = await Promise.all([
+    const [documents, audits, providerVerifications] = await Promise.all([
       VendorComplianceDocumentService.getByData(query, {
         sort: { created_at: -1 },
         lean: true,
@@ -361,10 +366,18 @@ exports.history = async (req, res, next) => {
         { food_truck_id: foodTruck._id },
         { sort: { created_at: -1 }, lean: true }
       ),
+      VendorComplianceProviderVerificationModel.find(
+        { food_truck_id: foodTruck._id },
+        { provider_reference: 0, provider_client_reference: 0, request_fingerprint: 0, webhook_event_reference: 0 }
+      ).sort({ created_at: -1 }).lean(),
     ]);
 
     return res.data(
-      { complianceDocumentList: documents, complianceAuditList: audits },
+      {
+        complianceDocumentList: documents,
+        complianceAuditList: audits,
+        providerVerificationList: providerVerifications,
+      },
       'Compliance history'
     );
   } catch (e) {

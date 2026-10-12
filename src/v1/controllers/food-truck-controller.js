@@ -1288,6 +1288,11 @@ exports.update = async (req, res, next) => {
         ein,
         // snn,
         ssn,
+	        legal_business_name,
+	        dba,
+	        legal_business_type,
+	        taxed_as_s_corporation,
+	        business_registration_state,
 	        addOns,
 	        documents,
 	        availabilityChangeDay,
@@ -1320,9 +1325,37 @@ exports.update = async (req, res, next) => {
       item.tap_to_pay_serial_number = tap_to_pay_serial_number || null;
     }
 
+    const priorComplianceIdentity = {
+      legal_business_name: item.legal_business_name || item.name || null,
+      dba: item.dba || null,
+      tax_identifier_type: item.tax_identifier_type || null,
+      tax_identifier_masked: item.tax_identifier_masked || null,
+    };
+
     if (name) {
       item.name = name;
       ensureDefaultTruckUnits(item);
+    }
+
+    if (legal_business_name !== undefined) {
+      item.legal_business_name = legal_business_name || null;
+    } else if (!item.legal_business_name && name) {
+      // Preserve the legacy truck name as the initial legal-name value until
+      // the vendor explicitly corrects it in the profile.
+      item.legal_business_name = name;
+    }
+    if (dba !== undefined) item.dba = dba || null;
+    if (legal_business_type !== undefined) {
+      item.legal_business_type = legal_business_type || null;
+    }
+    if (taxed_as_s_corporation !== undefined) {
+      const allowed = ['LLC', 'CORPORATION'].includes(
+        legal_business_type || item.legal_business_type
+      );
+      item.taxed_as_s_corporation = allowed && taxed_as_s_corporation === true;
+    }
+    if (business_registration_state !== undefined) {
+      item.business_registration_state = business_registration_state || null;
     }
 
     // if (facebookLink) {
@@ -1434,6 +1467,19 @@ exports.update = async (req, res, next) => {
     }
 
     await item.save();
+
+    const complianceIdentityChanged =
+      priorComplianceIdentity.legal_business_name !== (item.legal_business_name || item.name || null) ||
+      priorComplianceIdentity.dba !== (item.dba || null) ||
+      priorComplianceIdentity.tax_identifier_type !== (item.tax_identifier_type || null) ||
+      priorComplianceIdentity.tax_identifier_masked !== (item.tax_identifier_masked || null);
+    if (complianceIdentityChanged) {
+      await VendorComplianceService.beginProfileRevalidation({
+        foodTruck: item,
+        actor: user,
+        previousIdentity: priorComplianceIdentity,
+      });
+    }
 
     // To return populated data
     let latest = await Service.getByData(
