@@ -119,6 +119,11 @@ const getOcrIssueDate = (fields = {}) =>
   ]);
 
 const taxDigits = (value) => String(value || '').replace(/\D/g, '');
+const getTaxIdentifierOcrOutcome = ({ extractedDigits, profileDigits }) => {
+  if (String(extractedDigits || '').length !== 9) return 'NOT_DETECTED';
+  if (String(profileDigits || '').length !== 9) return 'PROFILE_UNAVAILABLE';
+  return extractedDigits === profileDigits ? 'MATCHED' : 'MISMATCH';
+};
 const normalizeName = (value) => String(value || '')
   .toLowerCase()
   .replace(/&/g, ' and ')
@@ -1578,20 +1583,30 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     const profileDigits = taxDigits(
       EncryptionService.decrypt(foodTruck?.tax_identifier_encrypted)
     );
-    const identifierMatches =
-      extractedDigits.length === 9 &&
-      profileDigits.length === 9 &&
-      extractedDigits === profileDigits;
+    const taxIdentifierOcrOutcome = getTaxIdentifierOcrOutcome({
+      extractedDigits,
+      profileDigits,
+    });
+    const identifierMatches = taxIdentifierOcrOutcome === 'MATCHED';
     // Never retain a raw EIN/SSN in OCR metadata. The encrypted profile is
     // the system of record; only the verification outcome is persisted here.
     ['ein', 'ssn', 'tax_id', 'tax_identifier', 'taxpayer_identification_number']
       .forEach((key) => delete normalizedExtractedFields[key]);
     normalizedExtractedFields.tax_identifier_match = identifierMatches;
     normalizedExtractedFields.tax_identifier_type = foodTruck?.tax_identifier_type || null;
+    normalizedExtractedFields.tax_identifier_ocr_outcome = taxIdentifierOcrOutcome;
     if (!identifierMatches) {
-      automaticValidationFailure = document.document_type === 'W9'
-        ? 'OCR could not confirm that the W-9 EIN or SSN matches the vendor profile.'
-        : 'OCR could not confirm that the tax-ID proof matches the vendor profile.';
+      if (taxIdentifierOcrOutcome === 'NOT_DETECTED') {
+        automaticValidationFailure = document.document_type === 'W9'
+          ? 'OCR could not read a complete nine-digit EIN or SSN from the W-9.'
+          : 'OCR could not read a complete nine-digit tax ID from the proof document.';
+      } else if (taxIdentifierOcrOutcome === 'PROFILE_UNAVAILABLE') {
+        automaticValidationFailure = 'The vendor profile does not contain a usable encrypted tax ID for comparison.';
+      } else {
+        automaticValidationFailure = document.document_type === 'W9'
+          ? 'OCR could not confirm that the W-9 EIN or SSN matches the vendor profile.'
+          : 'OCR could not confirm that the tax-ID proof matches the vendor profile.';
+      }
     }
   }
 
@@ -1848,6 +1863,7 @@ module.exports = {
   beginProfileRevalidation,
   getSanitationGradeMap,
   getSanitationGradeFromFields,
+  getTaxIdentifierOcrOutcome,
   uploadComplianceDocument,
   createSignedW9Document,
   reconcileActiveComplianceDocuments,
