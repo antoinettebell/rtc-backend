@@ -1296,7 +1296,15 @@ const submitComplianceDocumentsForOcr = async ({ foodTruck, user }) => {
     const requirement = getComplianceRequirement(document.document_type);
     if (!requirement) continue;
 
-    if (['queued', 'processing'].includes(document.ocr_status)) {
+    const ocrRequestAgeMs = document.ocr_requested_at
+      ? Date.now() - new Date(document.ocr_requested_at).getTime()
+      : Number.POSITIVE_INFINITY;
+    // A normal OCR request completes through the Function callback quickly.
+    // Permit an explicit user retry for a queue record that has been stuck for
+    // two minutes, while still preventing duplicate active submissions.
+    const staleQueuedRequest =
+      document.ocr_status === 'queued' && ocrRequestAgeMs >= 2 * 60 * 1000;
+    if (['queued', 'processing'].includes(document.ocr_status) && !staleQueuedRequest) {
       submittedDocuments.push(document);
       continue;
     }
