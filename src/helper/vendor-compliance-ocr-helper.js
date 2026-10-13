@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { aws } = require('../config');
 
 const isOcrEnabled = () =>
   String(process.env.COMPLIANCE_OCR_ENABLED || 'false').toLowerCase() === 'true';
@@ -28,6 +29,10 @@ const enqueueComplianceOcr = async ({ document, requirement }) => {
         document_type: document.document_type,
         file_url: document.file_url,
         file_key: document.file_key,
+        // The signed W-9, NDA, and Governance documents all use RTC's
+        // canonical S3 bucket. Send the authoritative bucket rather than
+        // requiring a second compliance-specific bucket configuration.
+        bucket: aws.s3Bucket,
         expected_fields: requirement?.ocrFields || [],
       },
       {
