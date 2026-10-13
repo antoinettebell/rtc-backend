@@ -126,7 +126,9 @@ const normalizeName = (value) => String(value || '')
   .trim()
   .replace(/\s+/g, ' ');
 const profileBusinessNames = (foodTruck = {}) => new Set(
-  [foodTruck.legal_business_name, foodTruck.dba, foodTruck.name]
+  // The Food Truck Name is customer-facing branding, not tax identity. OCR
+  // identity checks must use the profile's compliance fields only.
+  [foodTruck.legal_business_name, foodTruck.dba]
     .map(normalizeName)
     .filter(Boolean)
 );
@@ -297,6 +299,15 @@ const selectLatestByType = (documents = []) =>
     ) {
       acc[document.document_type] = document;
     }
+    return acc;
+  }, {});
+
+// The summary deliberately keeps a verified W-9 visible while a replacement
+// is pending. An explicit OCR retry is different: it must target the newest
+// saved document, including a replacement in revalidation/manual-review.
+const selectNewestByType = (documents = []) =>
+  documents.reduce((acc, document) => {
+    if (!acc[document.document_type]) acc[document.document_type] = document;
     return acc;
   }, {});
 
@@ -649,7 +660,7 @@ const getDocumentBusinessNames = (document = {}) => {
 // preserves documents whose OCR-captured name remains valid.
 const beginProfileRevalidation = async ({ foodTruck, actor = null, previousIdentity = {} }) => {
   const currentIdentity = {
-    legal_business_name: foodTruck.legal_business_name || foodTruck.name || null,
+    legal_business_name: foodTruck.legal_business_name || null,
     dba: foodTruck.dba || null,
     tax_identifier_type: foodTruck.tax_identifier_type || null,
     tax_identifier_masked: foodTruck.tax_identifier_masked || null,
@@ -1300,7 +1311,7 @@ const submitComplianceDocumentsForOcr = async ({ foodTruck, user }) => {
     },
     { sort: { created_at: -1 } }
   );
-  const latestByType = selectLatestByType(documents);
+  const latestByType = selectNewestByType(documents);
   const submittedDocuments = [];
 
   for (const document of Object.values(latestByType)) {
@@ -1320,14 +1331,9 @@ const submitComplianceDocumentsForOcr = async ({ foodTruck, user }) => {
       continue;
     }
 
-    const isPendingReview = document.review_status === 'pending_review';
-    const hasFinishedOcr = ['completed', 'manual_review'].includes(
-      document.ocr_status
-    );
-    if (!isPendingReview || hasFinishedOcr) {
-      continue;
-    }
-
+    // Save & Run OCR is an explicit retry control. Re-submit the current
+    // stored document regardless of a prior completed/revalidation/manual
+    // review outcome; only an active request remains protected above.
     const ocrResult = await enqueueComplianceOcr({ document, requirement });
     Object.assign(document, {
       ...ocrResult,

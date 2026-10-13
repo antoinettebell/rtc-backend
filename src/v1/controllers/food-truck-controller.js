@@ -1326,7 +1326,7 @@ exports.update = async (req, res, next) => {
     }
 
     const priorComplianceIdentity = {
-      legal_business_name: item.legal_business_name || item.name || null,
+      legal_business_name: item.legal_business_name || null,
       dba: item.dba || null,
       tax_identifier_type: item.tax_identifier_type || null,
       tax_identifier_masked: item.tax_identifier_masked || null,
@@ -1339,10 +1339,6 @@ exports.update = async (req, res, next) => {
 
     if (legal_business_name !== undefined) {
       item.legal_business_name = legal_business_name || null;
-    } else if (!item.legal_business_name && name) {
-      // Preserve the legacy truck name as the initial legal-name value until
-      // the vendor explicitly corrects it in the profile.
-      item.legal_business_name = name;
     }
     if (dba !== undefined) item.dba = dba || null;
     if (legal_business_type !== undefined) {
@@ -1469,7 +1465,7 @@ exports.update = async (req, res, next) => {
     await item.save();
 
     const complianceIdentityChanged =
-      priorComplianceIdentity.legal_business_name !== (item.legal_business_name || item.name || null) ||
+      priorComplianceIdentity.legal_business_name !== (item.legal_business_name || null) ||
       priorComplianceIdentity.dba !== (item.dba || null) ||
       priorComplianceIdentity.tax_identifier_type !== (item.tax_identifier_type || null) ||
       priorComplianceIdentity.tax_identifier_masked !== (item.tax_identifier_masked || null);

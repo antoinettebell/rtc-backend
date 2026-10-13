@@ -33,7 +33,7 @@ const normalizeState = (value) => String(value || '').toLowerCase().replace(/[^a
 const normalizeCobaltSos = (result = {}, foodTruck = {}) => {
   if (result.retryId) return 'PENDING';
   const expectedNames = new Set(
-    [foodTruck.legal_business_name, foodTruck.dba, foodTruck.name]
+    [foodTruck.legal_business_name, foodTruck.dba]
       .map(normalizeName)
       .filter(Boolean)
   );
@@ -118,7 +118,7 @@ const startCobaltEinChecks = async (foodTruck) => {
     return [existingTin, existingSos];
   }
   const tin = EncryptionService.decrypt(foodTruck.tax_identifier_encrypted);
-  const businessName = foodTruck.legal_business_name || foodTruck.name;
+  const businessName = foodTruck.legal_business_name;
   if (!tin || !businessName || !foodTruck.business_registration_state || !foodTruck.legal_business_type) {
     throw new Error('EIN verification profile is incomplete');
   }

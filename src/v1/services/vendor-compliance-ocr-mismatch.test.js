@@ -39,8 +39,18 @@ assert.match(
 );
 assert.match(
   serviceSource,
-  /legal_business_name_match = nameMatchesProfile/,
-  'W-9 and business-license names must be checked against the profile business names'
+  /const legalBusinessNameMatches = extractedBusinessNames\.some\(\(value\) =>\s*nameMatchesProfile\(foodTruck, value\)/,
+  'W-9 and business-license OCR names must be checked against every permitted profile business name'
+);
+assert.match(
+  serviceSource,
+  /\[foodTruck\.legal_business_name, foodTruck\.dba\]/,
+  'OCR business-name matching must use Legal Business Name and DBA only'
+);
+assert.doesNotMatch(
+  serviceSource,
+  /\[foodTruck\.legal_business_name, foodTruck\.dba, foodTruck\.name\]/,
+  'Food Truck Name must not be used as a tax-identity comparison value'
 );
 assert.match(
   serviceSource,

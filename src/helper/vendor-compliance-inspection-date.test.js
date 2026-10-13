@@ -93,8 +93,8 @@ assert.match(
 );
 assert.match(
   serviceSource,
-  /const isPendingReview = document\.review_status === 'pending_review';[\s\S]*const hasFinishedOcr = \['completed', 'manual_review'\][\s\S]*if \(!isPendingReview \|\| hasFinishedOcr\) \{[\s\S]*continue;/,
-  'Submitting OCR must not requeue verified, completed, or manual-review documents'
+  /const selectNewestByType =[\s\S]*const latestByType = selectNewestByType\(documents\);[\s\S]*Save & Run OCR is an explicit retry control/,
+  'Save & Run OCR must retry the newest stored document, including revalidation and manual-review outcomes'
 );
 assert.match(
   serviceSource,
