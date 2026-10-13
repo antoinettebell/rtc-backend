@@ -633,6 +633,17 @@ const getDocumentBusinessName = (document = {}) =>
     'insured_name',
   ]);
 
+const getDocumentBusinessNames = (document = {}) => {
+  const fields = document.extracted_fields || {};
+  return [
+    fields.legal_business_name,
+    fields.business_name,
+    fields.taxpayer_name,
+    fields.name,
+    fields.insured_name,
+  ].filter((value) => value !== undefined && value !== null && value !== '');
+};
+
 // Tax identifiers are deliberately never retained in OCR metadata. A tax-ID
 // edit therefore requires a fresh W-9/tax-proof scan, while a name-only edit
 // preserves documents whose OCR-captured name remains valid.
@@ -1539,6 +1550,20 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   const selectedTaxProofType = getTaxProofType(foodTruck || {});
   const isSelectedTaxProof = document.document_type === selectedTaxProofType;
 
+  // Identity-document OCR can include an EIN or SSN in raw text/word output.
+  // Preserve only purpose-built comparison outcomes, never the full OCR body.
+  if (['W9', 'EIN', 'SSN_CARD'].includes(document.document_type)) {
+    [
+      'raw_text',
+      'lines',
+      'words',
+      'text',
+      'ocr_text',
+      'detected_text',
+      'full_text',
+    ].forEach((key) => delete normalizedExtractedFields[key]);
+  }
+
   if (document.document_type === 'W9' || isSelectedTaxProof) {
     const extractedTaxId = getFirstFieldValue(normalizedExtractedFields, [
       'ein', 'ssn', 'tax_id', 'tax_identifier', 'taxpayer_identification_number',
@@ -1565,8 +1590,13 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   }
 
   if (['BUSINESS_LICENSE', 'W9'].includes(document.document_type)) {
-    const extractedBusinessName = getDocumentBusinessName({ extracted_fields: normalizedExtractedFields });
-    normalizedExtractedFields.legal_business_name_match = nameMatchesProfile(foodTruck, extractedBusinessName);
+    const extractedBusinessNames = getDocumentBusinessNames({
+      extracted_fields: normalizedExtractedFields,
+    });
+    const legalBusinessNameMatches = extractedBusinessNames.some((value) =>
+      nameMatchesProfile(foodTruck, value)
+    );
+    normalizedExtractedFields.legal_business_name_match = legalBusinessNameMatches;
     if (!normalizedExtractedFields.legal_business_name_match) {
       automaticValidationFailure = document.document_type === 'W9'
         ? 'OCR could not confirm that the W-9 legal business name matches the vendor profile.'
