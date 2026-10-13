@@ -252,6 +252,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
       await VendorComplianceService.submitComplianceDocumentsForOcr({
         foodTruck,
         user: req.user,
+        documentTypes: req.body?.document_types,
       });
     const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
 

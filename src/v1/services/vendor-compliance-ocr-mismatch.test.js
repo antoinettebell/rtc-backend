@@ -85,5 +85,15 @@ assert.match(
   /applyOcrMismatchOutcome\(\s*document,\s*expirationMismatch/,
   'Expiration mismatches must use the revalidation-first outcome'
 );
+assert.match(
+  serviceSource,
+  /documentTypes = \[\]/,
+  'OCR submission must accept explicit document-type retries'
+);
+assert.match(
+  serviceSource,
+  /!isExplicitDocumentRetry && document\.ocr_status !== 'not_configured'/,
+  'Normal OCR submission must leave unchanged verified/reviewed documents untouched'
+);
 
 console.log('vendor compliance OCR mismatch tests passed');

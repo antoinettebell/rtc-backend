@@ -1307,7 +1307,7 @@ const syncLegacyFoodTruckDocuments = async ({ foodTruckId = null } = {}) => {
   return createdCount;
 };
 
-const submitComplianceDocumentsForOcr = async ({ foodTruck, user }) => {
+const submitComplianceDocumentsForOcr = async ({ foodTruck, user, documentTypes = [] }) => {
   const documents = await VendorComplianceDocumentService.getByData(
     {
       food_truck_id: foodTruck._id,
@@ -1318,10 +1318,26 @@ const submitComplianceDocumentsForOcr = async ({ foodTruck, user }) => {
   );
   const latestByType = selectNewestByType(documents);
   const submittedDocuments = [];
+  const requestedDocumentTypes = new Set(
+    (Array.isArray(documentTypes) ? documentTypes : [])
+      .map(normalizeComplianceDocumentType)
+      .filter((type) => getComplianceRequirement(type))
+  );
+  const isExplicitDocumentRetry = requestedDocumentTypes.size > 0;
 
   for (const document of Object.values(latestByType)) {
     const requirement = getComplianceRequirement(document.document_type);
     if (!requirement) continue;
+    if (isExplicitDocumentRetry && !requestedDocumentTypes.has(document.document_type)) {
+      continue;
+    }
+
+    // The normal save action submits only newly uploaded/failed documents.
+    // A completed or verified document stays untouched unless the vendor
+    // explicitly retries that individual document.
+    if (!isExplicitDocumentRetry && document.ocr_status !== 'not_configured') {
+      continue;
+    }
 
     const ocrRequestAgeMs = document.ocr_requested_at
       ? Date.now() - new Date(document.ocr_requested_at).getTime()
@@ -1336,9 +1352,8 @@ const submitComplianceDocumentsForOcr = async ({ foodTruck, user }) => {
       continue;
     }
 
-    // Save & Run OCR is an explicit retry control. Re-submit the current
-    // stored document regardless of a prior completed/revalidation/manual
-    // review outcome; only an active request remains protected above.
+    // A document-targeted retry may resubmit a completed, revalidation, or
+    // manual-review document. An active request remains protected above.
     const ocrResult = await enqueueComplianceOcr({ document, requirement });
     Object.assign(document, {
       ...ocrResult,
