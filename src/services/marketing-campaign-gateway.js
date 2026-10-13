@@ -48,6 +48,49 @@ const safeGenerationFailure = (value) => {
   return code ? { code, stage } : null;
 };
 
+const safePublishingFailure = (value) => {
+  const code = typeof value?.code === 'string' && /^[A-Z][A-Z0-9_]{0,99}$/.test(value.code)
+    ? value.code : null;
+  const stage = typeof value?.stage === 'string' && /^[A-Za-z][A-Za-z0-9 -]{0,49}$/.test(value.stage)
+    ? value.stage : null;
+  return code ? { code, stage } : null;
+};
+
+const safePublishedLinks = (value) => Array.isArray(value)
+  ? value.filter((item) => typeof item === 'string' && /^https:\/\//.test(item))
+  : [];
+
+const safeDistribution = (value) => !value || typeof value !== 'object' ? null : {
+  status: typeof value.status === 'string' ? value.status : 'NOT_SENT',
+  attemptNumber: Number.isInteger(value.attemptNumber) ? value.attemptNumber : null,
+  claimedAt: value.claimedAt ?? null,
+  queuedAt: value.queuedAt ?? null,
+  updatedAt: value.updatedAt ?? null,
+  publishedAt: value.publishedAt ?? null,
+  metricoolPostId: value.metricoolPostId ?? null,
+  metricoolDestinations: Array.isArray(value.metricoolDestinations)
+    ? value.metricoolDestinations.map((item) => ({
+      kind: item?.kind === 'STORY' ? 'STORY' : 'PRIMARY',
+      postId: item?.postId ?? null,
+      status: typeof item?.status === 'string' ? item.status : null,
+    })) : [],
+  publishedPostLinks: safePublishedLinks(value.publishedPostLinks),
+  error: safePublishingFailure(value.error),
+};
+
+const safePublishingDashboard = (value) => ({
+  attemptCount: Number.isInteger(value?.attemptCount) ? value.attemptCount : 0,
+  attempts: Array.isArray(value?.attempts) ? value.attempts.map((attempt) => ({
+    attemptNumber: Number.isInteger(attempt?.attemptNumber) ? attempt.attemptNumber : null,
+    status: typeof attempt?.status === 'string' ? attempt.status : null,
+    startedAt: attempt?.startedAt ?? null,
+    updatedAt: attempt?.updatedAt ?? null,
+    completedAt: attempt?.completedAt ?? null,
+    error: safePublishingFailure(attempt?.error),
+    publishedPostLinks: safePublishedLinks(attempt?.publishedPostLinks),
+  })) : [],
+});
+
 // The SMA Function already emits a deliberately allowlisted, safe error code.
 // Preserve only those codes for the Admin review surface; every other upstream
 // response stays behind the existing generic gateway failure boundary.
@@ -83,6 +126,8 @@ const campaignListItem = (value = {}) => ({
   regenerationFailure: safeGenerationFailure(value.regenerationFailure),
   nextRetryAt: value.nextRetryAt ?? null,
   regenerationCount: Number(value.regenerationCount) || 0,
+  distribution: safeDistribution(value.distribution),
+  publishingDashboard: safePublishingDashboard(value.publishingDashboard),
 });
 
 const campaignDetail = (value = {}) => ({

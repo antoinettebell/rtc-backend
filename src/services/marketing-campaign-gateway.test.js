@@ -103,6 +103,36 @@ test('uses the internal control API and forwards no admin JWT or provider data',
   assert.equal('authorization' in calls[0].options.headers, false);
 });
 
+test('forwards only safe campaign publishing lifecycle fields to Admin', async () => {
+  const gateway = new MarketingCampaignGateway({
+    baseUrl: 'https://marketing.internal', serviceKey: 'service-secret',
+    fetchImpl: async () => response({ campaigns: [{
+      campaignId: 'campaign-published', businessName: 'Vendor',
+      distribution: {
+        status: 'PUBLISHED', attemptNumber: 2, metricoolPostId: 'post-123',
+        publishedAt: '2026-10-13T01:58:00.000Z',
+        publishedPostLinks: ['https://social.example/post', 'javascript:unsafe'],
+        metricoolDestinations: [{ kind: 'PRIMARY', postId: 'post-123', status: 'PUBLISHED', providerPayload: 'secret' }],
+        error: { code: 'METRICOOL_PROVIDER_PUBLISH_FAILED', rawBody: 'secret' },
+        providerPayload: { token: 'secret' },
+      },
+      publishingDashboard: {
+        attemptCount: 2,
+        attempts: [{ attemptNumber: 2, status: 'PUBLISHED', completedAt: '2026-10-13T01:58:00.000Z', publishedPostLinks: ['https://social.example/post'], providerPayload: 'secret' }],
+      },
+    }] }),
+  });
+  const [campaign] = await gateway.listApprovedCampaigns();
+  assert.equal(campaign.distribution.status, 'PUBLISHED');
+  assert.equal(campaign.distribution.metricoolPostId, 'post-123');
+  assert.deepEqual(campaign.distribution.publishedPostLinks, ['https://social.example/post']);
+  assert.deepEqual(campaign.distribution.metricoolDestinations, [{ kind: 'PRIMARY', postId: 'post-123', status: 'PUBLISHED' }]);
+  assert.equal('providerPayload' in campaign.distribution, false);
+  assert.equal('rawBody' in campaign.distribution.error, false);
+  assert.equal(campaign.publishingDashboard.attempts[0].status, 'PUBLISHED');
+  assert.equal('providerPayload' in campaign.publishingDashboard.attempts[0], false);
+});
+
 test('projects only safe campaign details', async () => {
   const gateway = new MarketingCampaignGateway({
     baseUrl: 'https://marketing.internal', serviceKey: 'secret',
