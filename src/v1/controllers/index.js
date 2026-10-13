@@ -68,6 +68,7 @@ exports.EventVendorController = require('./event-vendor-controller');
 
 /** Define vendor compliance controller */
 exports.VendorComplianceController = require('./vendor-compliance-controller');
+exports.CoordinatorComplianceController = require('./coordinator-compliance-controller');
 
 /** Define webhook controller */
 exports.WebhookController = require('./webhook-controller');

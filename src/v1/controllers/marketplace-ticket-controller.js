@@ -198,6 +198,18 @@ const buildTicketQuote = async ({ event, customerReference, gaQuantity, vipQuant
   const ticketSubtotal = money((gaAmounts?.ticketSubtotal || 0) + (vipAmounts?.ticketSubtotal || 0));
   const customerProcessingFee = money((gaAmounts?.customerProcessingFee || 0) + (vipAmounts?.customerProcessingFee || 0));
   const coordinatorProcessingFee = money((gaAmounts?.coordinatorProcessingFee || 0) + (vipAmounts?.coordinatorProcessingFee || 0));
+  if (ticketSubtotal <= 0 && customerProcessingFee <= 0) {
+    return {
+      ticketSubtotal: 0,
+      customerProcessingFee: 0,
+      coordinatorProcessingFee: 0,
+      salesTax: 0,
+      totalAmount: 0,
+      netCoordinatorPayout: 0,
+      entityUseCode: null,
+      transactionCode: null,
+    };
+  }
   const safeCustomerReference = String(customerReference || 'GUEST').replace(/[^a-zA-Z0-9]/g, '');
   const transactionCode = `RTC-TICKET-${Date.now()}-${safeCustomerReference.slice(-6) || 'GUEST'}`;
   const exemptionApproved = event.tax_exemption_status === 'APPROVED' &&
@@ -349,6 +361,12 @@ exports.checkout = async (req, res, next) => {
       entityUseCode,
       transactionCode,
     } = quote;
+    if (totalAmount <= 0 && req.body.payment_method !== 'FREE') {
+      throw buildError('This free registration must be completed without a payment wallet.', 400);
+    }
+    if (totalAmount > 0 && req.body.payment_method === 'FREE') {
+      throw buildError('A payment method is required for this ticket purchase.', 400);
+    }
     const walletBillingAddress = {
       address1: req.body.billing_address?.line1,
       locality: req.body.billing_address?.city,
@@ -374,12 +392,14 @@ exports.checkout = async (req, res, next) => {
       net_coordinator_payout: netCoordinatorPayout,
       avalara_transaction_code: transactionCode,
       avalara_entity_use_code: entityUseCode,
-      payment_method: req.body.payment_method,
+      payment_method: totalAmount <= 0 ? 'FREE' : req.body.payment_method,
       reservation_expires_at: TicketService.reservationExpiry(),
       status: 'PAYMENT_PROCESSING',
     });
 
-    const charge = req.body.payment_method === 'APPLE_PAY'
+    const charge = totalAmount <= 0
+      ? { success: true, transactionId: null }
+      : req.body.payment_method === 'APPLE_PAY'
       ? await CyberSourceApplePayHelper.chargeApplePay({
           paymentData: req.body.payment_data,
           amount: totalAmount,
@@ -416,7 +436,9 @@ exports.checkout = async (req, res, next) => {
     await order.save();
     await TicketService.confirmReservation(order);
     inventoryReserved = false;
-    const avalaraCommit = await TaxHelper.commitAvalaraTransaction(transactionCode);
+    const avalaraCommit = transactionCode
+      ? await TaxHelper.commitAvalaraTransaction(transactionCode)
+      : { success: true };
     if (!avalaraCommit.success) {
       console.error('Ticket Avalara commit requires reconciliation', {
         ticketOrderId: order.ticket_order_id,

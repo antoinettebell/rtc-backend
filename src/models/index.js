@@ -150,6 +150,9 @@ exports.VendorComplianceDocumentModel = require('./vendor-compliance-document');
 exports.VendorComplianceW9EnvelopeModel = require('./vendor-compliance-w9-envelope');
 exports.VendorComplianceProviderVerificationModel = require('./vendor-compliance-provider-verification');
 
+/** Coordinator W-9 sessions use the vendor DocuSign template but remain isolated. */
+exports.CoordinatorComplianceW9EnvelopeModel = require('./coordinator-compliance-w9-envelope');
+
 /** Define vendor compliance audit model */
 exports.VendorComplianceAuditModel = require('./vendor-compliance-audit');
 

@@ -93,6 +93,8 @@ exports.add = async (req, res, next) => {
         eventCoordinatorEin,
         eventCoordinatorTaxIdType,
         eventCoordinatorTaxId,
+        eventCoordinatorExpectsTicketSales = false,
+        eventCoordinatorExpectsVendorFees = false,
         eventCoordinatorAddressLine1,
         eventCoordinatorAddressLine2,
         eventCoordinatorAddressCity,
@@ -185,6 +187,9 @@ exports.add = async (req, res, next) => {
           eventCoordinatorFormattedAddress:
             eventCoordinatorFormattedAddress || eventCoordinatorCompanyAddress || null,
           eventCoordinatorPlaceId: eventCoordinatorPlaceId || null,
+          eventCoordinatorExpectsTicketSales: Boolean(eventCoordinatorExpectsTicketSales),
+          eventCoordinatorExpectsVendorFees: Boolean(eventCoordinatorExpectsVendorFees),
+          eventCoordinatorPayoutEligibility: 'DISABLED',
           ...coordinatorTaxUpdate,
         }
       : {
@@ -195,6 +200,9 @@ exports.add = async (req, res, next) => {
           eventCoordinatorTaxIdType: null,
           eventCoordinatorTaxIdEncrypted: null,
           eventCoordinatorTaxIdMasked: null,
+          eventCoordinatorExpectsTicketSales: false,
+          eventCoordinatorExpectsVendorFees: false,
+          eventCoordinatorPayoutEligibility: 'DISABLED',
         };
 
     if (user) {

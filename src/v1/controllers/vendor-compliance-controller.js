@@ -291,6 +291,10 @@ exports.startW9Signing = async (req, res, next) => {
       signerEmail: req.user.email,
       vendorUserId: req.user._id,
       recipientId: signer.recipientId,
+      // Match the established marketplace NDA/governance callback. The
+      // configured DOCUSIGN_RETURN_URL remains available for existing web
+      // flows, while embedded vendor W-9 signing must return to the app.
+      returnUrl: 'rounddacornervendor://docusign/return?status=completed',
     });
     await VendorComplianceW9EnvelopeModel.create({
       food_truck_id: foodTruck._id,

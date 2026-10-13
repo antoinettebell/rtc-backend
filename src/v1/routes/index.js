@@ -23,6 +23,7 @@ const meatRoutes = require('./meat');
 const marketplaceRoutes = require('./marketplace');
 const webhookRoutes = require('./webhooks');
 const vendorComplianceRoutes = require('./vendor-compliance');
+const coordinatorComplianceRoutes = require('./coordinator-compliance');
 const operationalComplianceRoutes = require('./operational-compliance');
 const marketingCampaignRoutes = require('./marketing-campaign');
 const authenticate = require('../../middleware/authenticate');
@@ -102,6 +103,9 @@ router.use('/marketplace', marketplaceRoutes);
 
 /** vendor compliance routes */
 router.use('/vendor-compliance', vendorComplianceRoutes);
+
+/** Event coordinator W-9 signing and payout-compliance status. */
+router.use('/coordinator-compliance', coordinatorComplianceRoutes);
 
 /** operational inventory and opening/closing forms */
 router.use('/operational-compliance', operationalComplianceRoutes);

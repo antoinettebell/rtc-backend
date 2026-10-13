@@ -375,6 +375,8 @@ exports.update = async (req, res, next) => {
         eventCoordinatorEin,
         eventCoordinatorTaxIdType,
         eventCoordinatorTaxId,
+        eventCoordinatorExpectsTicketSales,
+        eventCoordinatorExpectsVendorFees,
         eventCoordinatorAddressLine1,
         eventCoordinatorAddressLine2,
         eventCoordinatorAddressCity,
@@ -460,6 +462,12 @@ exports.update = async (req, res, next) => {
             })
           );
         }
+        if (Object.prototype.hasOwnProperty.call(req.body, 'eventCoordinatorExpectsTicketSales')) {
+          existRecord.eventCoordinatorExpectsTicketSales = Boolean(eventCoordinatorExpectsTicketSales);
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, 'eventCoordinatorExpectsVendorFees')) {
+          existRecord.eventCoordinatorExpectsVendorFees = Boolean(eventCoordinatorExpectsVendorFees);
+        }
         Object.assign(
           existRecord,
           buildCoordinatorAddressUpdate(req.body, { partial: true })
@@ -494,7 +502,10 @@ exports.update = async (req, res, next) => {
           eventCoordinatorDirectDepositRoutingNumber ||
           existRecord.eventCoordinatorDirectDepositRoutingNumber ||
           null;
-        const requiresBankDetails = ['ACH', 'CHECK'].includes(paymentPreference);
+        const payoutSetupRequired =
+          existRecord.eventCoordinatorExpectsTicketSales === true ||
+          existRecord.eventCoordinatorExpectsVendorFees === true;
+        const requiresBankDetails = payoutSetupRequired && ['ACH', 'CHECK'].includes(paymentPreference);
         if (requiresBankDetails) {
           if (!effectiveRoutingNumber) {
             const error = new Error('Routing number is required for ACH or check payments.');
@@ -514,7 +525,7 @@ exports.update = async (req, res, next) => {
             error.code = 400;
             throw error;
           }
-        } else if (paymentPreference && !effectiveQrCodeUrl) {
+        } else if (payoutSetupRequired && paymentPreference && !effectiveQrCodeUrl) {
           const error = new Error('A QR code is required for the selected coordinator payment preference.');
           error.code = 400;
           throw error;

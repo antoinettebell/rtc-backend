@@ -76,6 +76,11 @@ module.exports = {
       returnUrl:
         process.env.DOCUSIGN_RETURN_URL ||
         'rounddacornervendor://docusign/return',
+      // Customer coordinators use the same W-9 template and recipient role as
+      // vendors, but must return to the customer app after embedded signing.
+      customerReturnUrl:
+        process.env.DOCUSIGN_CUSTOMER_RETURN_URL ||
+        'rtc-customer://docusign/return',
       signerRole:
         process.env.DOCUSIGN_SIGNER_ROLE ||
         process.env.DOCUSIGN_VENDOR_ROLE_NAME ||

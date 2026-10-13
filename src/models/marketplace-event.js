@@ -33,6 +33,11 @@ const mSchema = mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    is_free_event: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
     ga_ticket_quantity: {
       type: Number,
       min: 0,

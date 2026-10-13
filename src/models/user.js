@@ -90,6 +90,22 @@ const mSchema = mongoose.Schema(
       default: false,
       index: true,
     },
+    eventCoordinatorExpectsTicketSales: {
+      type: Boolean,
+      default: false,
+    },
+    eventCoordinatorExpectsVendorFees: {
+      type: Boolean,
+      default: false,
+    },
+    // This is backend-owned. Profile answers may request paid-event capability,
+    // but only the coordinator compliance workflow may enable it.
+    eventCoordinatorPayoutEligibility: {
+      type: String,
+      enum: ['DISABLED', 'ENABLED'],
+      default: 'DISABLED',
+      index: true,
+    },
     eventCoordinatorCompanyName: {
       type: String,
       default: null,

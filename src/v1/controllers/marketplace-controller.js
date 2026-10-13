@@ -22,6 +22,7 @@ const {
   canUseCashPOS,
   canUseTapToPay,
 } = require('../../helper/vendor-plan-helper');
+const { isCoordinatorPayoutEligible } = require('../../helper/event-coordinator-profile');
 const VendorComplianceService = require('../services/vendor-compliance-service');
 const OperationalComplianceFormService = require('../services/operational-compliance-form-service');
 const {
@@ -542,7 +543,7 @@ const normalizeMarketplaceVendorCount = (body) => {
   return getAllowedMarketplaceVendorCount(body);
 };
 
-const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = {}) => {
+const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null, coordinator = null } = {}) => {
   const status = body.status || existingEvent?.status || 'OPEN';
   const isDraft = status === 'DRAFT';
   const eventVendorNeeds = asArray(body.event_vendor_needs).map((need) => ({
@@ -614,7 +615,10 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   const paymentResponsibility = fullyCateredEvent
     ? 'COORDINATOR'
     : cateredVipSectionEnabled ? 'BOTH' : 'VENDOR';
-  let vendorFee = roundMoney(body.vendor_fee || 0);
+  const isFreeEvent = coordinator && !isCoordinatorPayoutEligible(coordinator)
+    ? true
+    : Boolean(body.is_free_event);
+  let vendorFee = isFreeEvent ? 0 : roundMoney(body.vendor_fee || 0);
   let budgetedAmount = roundMoney(body.budgeted_amount || 0);
   if (paymentResponsibility === 'COORDINATOR') {
     vendorFee = 0;
@@ -675,6 +679,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     vendor_fee: vendorFee,
     budgeted_amount: budgetedAmount,
     payment_responsibility: paymentResponsibility,
+    is_free_event: isFreeEvent,
     event_time: normalizedEventTime,
     event_duration_hours: 0,
     event_duration_minutes: totalEventDurationMinutes,
@@ -697,7 +702,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
     fully_catered_event: fullyCateredEvent,
     ga_food_sales_allowed: gaFoodSalesAllowed,
     waive_vendor_fee_for_combined_award: waiveVendorFeeForCombinedAward,
-    vendor_fee_payment_deadline: body.vendor_fee_payment_deadline || null,
+    vendor_fee_payment_deadline: isFreeEvent ? null : body.vendor_fee_payment_deadline || null,
     separate_vip_vendor_required: separateVipVendorRequired,
     dessert_caterer_required: dessertCatererRequired,
     drinks_caterer_required: drinksCatererRequired,
@@ -712,6 +717,10 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   normalized.number_of_guests = Math.max(0, Number(normalized.number_of_guests || 0));
   if (!vipSectionEnabled) {
     normalized.vip_ticket_quantity = 0;
+    normalized.vip_ticket_price = 0;
+  }
+  if (isFreeEvent) {
+    normalized.ga_ticket_price = 0;
     normalized.vip_ticket_price = 0;
   }
 
@@ -821,14 +830,22 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null } = 
   if (paymentResponsibility === 'COORDINATOR' && budgetedAmount <= 0) {
     throw buildError('Budget amount is required when the event coordinator pays vendors.', 400);
   }
-  if (paymentResponsibility === 'VENDOR' && vendorFee <= 0) {
+  if (!isFreeEvent && paymentResponsibility === 'VENDOR' && vendorFee <= 0) {
     throw buildError('Vendor fee is required when vendors pay to attend.', 400);
   }
-  if (paymentResponsibility === 'BOTH' && (budgetedAmount <= 0 || vendorFee <= 0)) {
+  if (paymentResponsibility === 'BOTH' && budgetedAmount <= 0) {
+    throw buildError(
+      isFreeEvent
+        ? 'Budget amount is required when the event coordinator pays vendors.'
+        : 'Budget amount and vendor fee are required when both parties pay.',
+      400
+    );
+  }
+  if (paymentResponsibility === 'BOTH' && !isFreeEvent && vendorFee <= 0) {
     throw buildError('Budget amount and vendor fee are required when both parties pay.', 400);
   }
   if (
-    ['VENDOR', 'BOTH'].includes(paymentResponsibility) &&
+    !isFreeEvent && ['VENDOR', 'BOTH'].includes(paymentResponsibility) &&
     !normalized.vendor_fee_payment_deadline
   ) {
     throw buildError('Last Date to Accept Payments is required when vendors pay a fee.', 400);
@@ -4949,9 +4966,9 @@ exports.createEvent = async (req, res, next) => {
     if (req.user.userType !== 'CUSTOMER') {
       throw buildError('Only customers can create marketplace events', 403);
     }
-    await assertCustomerEventCoordinator(req.user._id);
+    const coordinator = await assertCustomerEventCoordinator(req.user._id);
 
-    const normalizedEvent = normalizeMarketplaceEventPayload(req.body);
+    const normalizedEvent = normalizeMarketplaceEventPayload(req.body, { coordinator });
     const marketplaceEvent = await MarketplaceEventService.create({
       ...normalizedEvent,
       customer_user_id: req.user._id,
@@ -5003,9 +5020,9 @@ exports.adminCreateEvent = async (req, res, next) => {
         message: 'Enter an event name.',
       }]);
     }
-    await assertCustomerEventCoordinator(eventPayload.customer_user_id);
+    const coordinator = await assertCustomerEventCoordinator(eventPayload.customer_user_id);
     const { customer_user_id, ...publishPayload } = eventPayload;
-    const normalizedEvent = normalizeMarketplaceEventPayload(publishPayload);
+    const normalizedEvent = normalizeMarketplaceEventPayload(publishPayload, { coordinator });
     const session = await mongoose.startSession();
     let marketplaceEvent;
     try {
@@ -5188,9 +5205,10 @@ exports.updateEvent = async (req, res, next) => {
       },
       event
     );
+    const coordinator = await assertCustomerEventCoordinator(req.user._id);
     const normalizedEvent = normalizeMarketplaceEventPayload(
       updatePayload,
-      { existingEvent: event }
+      { existingEvent: event, coordinator }
     );
     const marketplaceEvent = await MarketplaceEventService.update(
       { event_id: req.params.eventId, customer_user_id: req.user._id },
@@ -5248,7 +5266,7 @@ exports.deleteDraftEvent = async (req, res, next) => {
   }
 };
 
-const reopenMarketplaceEvent = async ({ event, payload, eventId, updateFilter }) => {
+const reopenMarketplaceEvent = async ({ event, payload, eventId, updateFilter, coordinator }) => {
   const now = new Date();
   const isClosedForSubmissions =
     event.status === 'CLOSED' ||
@@ -5267,12 +5285,12 @@ const reopenMarketplaceEvent = async ({ event, payload, eventId, updateFilter })
   }
   const normalizedEvent = normalizeMarketplaceEventPayload(
     { ...toPlainObject(event), ...payload, status: 'REOPENED' },
-    { existingEvent: event }
+    { existingEvent: event, coordinator }
   );
   if (!normalizedEvent.event_close_date || new Date(normalizedEvent.event_close_date) <= now) {
     throw buildError('Enter a new future Close Date and Close Time before reopening.', 400);
   }
-  if (['VENDOR', 'BOTH'].includes(normalizedEvent.payment_responsibility)) {
+  if (!normalizedEvent.is_free_event && ['VENDOR', 'BOTH'].includes(normalizedEvent.payment_responsibility)) {
     const paymentDeadline = new Date(normalizedEvent.vendor_fee_payment_deadline);
     const eventTiming = getMarketplaceEventTiming(normalizedEvent);
     const previousPaymentDeadline = event.vendor_fee_payment_deadline
@@ -5330,11 +5348,13 @@ exports.reopenEvent = async (req, res, next) => {
       throw buildError('Only customers can reopen marketplace events', 403);
     }
     const event = await getOwnedEvent(req.params.eventId, req.user._id);
+    const coordinator = await assertCustomerEventCoordinator(req.user._id);
     const marketplaceEvent = await reopenMarketplaceEvent({
       event,
       payload: req.body,
       eventId: req.params.eventId,
       updateFilter: { event_id: req.params.eventId, customer_user_id: req.user._id },
+      coordinator,
     });
     const marketplaceEventWithImages = await MarketplaceEventService.getWithImages(
       marketplaceEvent.event_id
@@ -5451,11 +5471,13 @@ exports.adminReopenEvent = async (req, res, next) => {
       { singleResult: true }
     );
     if (!event) throw buildError('Marketplace event not found', 404);
+    const coordinator = await assertCustomerEventCoordinator(event.customer_user_id);
     const marketplaceEvent = await reopenMarketplaceEvent({
       event,
       payload: req.body,
       eventId: req.params.eventId,
       updateFilter: { event_id: req.params.eventId },
+      coordinator,
     });
     await MarketplaceAdminAuditModel.create([{
       action: 'REOPEN_EVENT',
@@ -9455,6 +9477,7 @@ exports.adminUpdateEvent = async (req, res, next) => {
         );
         const normalizedEvent = normalizeMarketplaceEventPayload(updatePayload, {
           existingEvent: current,
+          coordinator: await assertCustomerEventCoordinator(current.customer_user_id),
         });
         // Admin additions raise the default total target. An explicitly
         // supplied count is respected so Admin may keep the target unchanged
@@ -10258,6 +10281,9 @@ exports.checkoutPayment = async (req, res, next) => {
     if (roundMoney(req.body.expected_total) !== roundMoney(authorizedPayment.total_amount)) {
       throw buildError('The payment amount changed. Refresh before completing payment.', 409);
     }
+    if (paymentMethod === 'FREE' && roundMoney(authorizedPayment.total_amount) !== 0) {
+      throw buildError('Free checkout is only available when no amount is due.', 400);
+    }
     if (authorizedPayment.payment_status === 'PAID') {
       const routingResult = await safelyFinalizePaidMarketplacePayment(authorizedPayment);
       return res.data(
@@ -10267,6 +10293,31 @@ exports.checkoutPayment = async (req, res, next) => {
     }
     if (!['PENDING', 'FAILED'].includes(authorizedPayment.payment_status)) {
       throw buildError('Payment is already processing and cannot be started again.', 409);
+    }
+    if (paymentMethod === 'FREE') {
+      const marketplacePayment = await MarketplacePaymentService.getModel().findOneAndUpdate(
+        {
+          payment_id: authorizedPayment.payment_id,
+          payment_status: { $in: ['PENDING', 'FAILED'] },
+        },
+        {
+          $set: {
+            payment_method: 'FREE',
+            payment_status: 'PAID',
+            paid_at: new Date(),
+          },
+        },
+        { new: true, runValidators: true }
+      );
+      if (!marketplacePayment) {
+        throw buildError('Free checkout could not be confirmed.', 409);
+      }
+      await createPaymentAudit(marketplacePayment, req, 'CHECKOUT_PAID', 'FREE');
+      const routingResult = await finalizePaidMarketplacePayment(marketplacePayment);
+      return res.data(
+        { marketplacePayment, routingResult },
+        'Marketplace free checkout confirmed'
+      );
     }
     if (authorizedPayment.payment_type === 'VENDOR_EVENT_FEE') {
       const event = await MarketplaceEventService.getByData(

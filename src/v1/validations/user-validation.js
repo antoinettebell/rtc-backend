@@ -48,6 +48,8 @@ module.exports = {
       }),
       eventCoordinatorTaxIdType: Joi.string().valid('EIN', 'SSN').allow(null, ''),
       eventCoordinatorTaxId: Joi.string().trim().allow(null, ''),
+      eventCoordinatorExpectsTicketSales: Joi.boolean().optional(),
+      eventCoordinatorExpectsVendorFees: Joi.boolean().optional(),
       eventCoordinatorAddressLine1: Joi.string().trim().allow(null, ''),
       eventCoordinatorAddressLine2: Joi.string().trim().allow(null, ''),
       eventCoordinatorAddressCity: Joi.string().trim().allow(null, ''),

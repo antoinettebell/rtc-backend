@@ -8,6 +8,13 @@ const normalizeTaxIdType = (value) => {
 const taxDigits = (value) => String(value || '').replace(/\D/g, '').slice(0, 9);
 const accountDigits = (value) => String(value || '').replace(/\D/g, '').slice(0, 17);
 
+const hasCoordinatorPayoutIntent = (user = {}) =>
+  user.eventCoordinatorExpectsTicketSales === true ||
+  user.eventCoordinatorExpectsVendorFees === true;
+
+const isCoordinatorPayoutEligible = (user = {}) =>
+  user.eventCoordinatorPayoutEligibility === 'ENABLED';
+
 const maskTaxId = (value, type = 'EIN') => {
   const digits = taxDigits(value);
   if (!digits) return null;
@@ -76,12 +83,17 @@ const sanitizeCoordinatorProfile = (user) => {
   delete output.eventCoordinatorTaxIdEncrypted;
   delete output.eventCoordinatorEin;
   delete output.eventCoordinatorDirectDepositAccountNumberEncrypted;
+  output.eventCoordinatorPayoutEligibility = isCoordinatorPayoutEligible(output)
+    ? 'ENABLED'
+    : 'DISABLED';
   return output;
 };
 
 module.exports = {
   buildPayoutAccountUpdate,
   buildTaxIdUpdate,
+  hasCoordinatorPayoutIntent,
+  isCoordinatorPayoutEligible,
   maskAccountNumber,
   maskTaxId,
   sanitizeCoordinatorProfile,

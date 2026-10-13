@@ -27,7 +27,7 @@ const mSchema = mongoose.Schema(
     avalara_entity_use_code: { type: String, enum: ['E', 'F', null], default: null },
     payment_method: {
       type: String,
-      enum: ['APPLE_PAY', 'GOOGLE_PAY'],
+      enum: ['APPLE_PAY', 'GOOGLE_PAY', 'FREE'],
       required: true,
     },
     gateway_transaction_id: { type: String, default: null, index: true },

@@ -11,6 +11,7 @@ const marketplaceEventBody = {
   })).default([]),
   event_vendor_electricity_fee: Joi.number().min(0).default(0),
   ticket_sales_enabled: Joi.boolean().default(false),
+  is_free_event: Joi.boolean().default(false),
   ticket_url: Joi.string().uri().allow(null, ''),
   ga_ticket_quantity: Joi.number().integer().min(0).default(0),
   ga_ticket_price: Joi.number().min(0).default(0),
@@ -466,13 +467,13 @@ module.exports = {
   checkoutPayment: {
     body: Joi.object({
       payment_method: Joi.string()
-        .valid('APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY', 'CASH')
+        .valid('APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY', 'CASH', 'FREE')
         .required(),
       expected_total: Joi.number().min(0).required(),
       payment_data: Joi.alternatives()
         .try(Joi.object().unknown(true), Joi.string())
         .when('payment_method', {
-          is: 'CASH',
+          is: Joi.valid('CASH', 'FREE'),
           then: Joi.optional(),
           otherwise: Joi.required(),
         }),
@@ -500,8 +501,10 @@ module.exports = {
     body: Joi.object({
       ga_quantity: Joi.number().integer().min(0).default(0),
       vip_quantity: Joi.number().integer().min(0).default(0),
-      payment_method: Joi.string().valid('APPLE_PAY', 'GOOGLE_PAY').required(),
-      payment_data: Joi.alternatives().try(Joi.object().unknown(true), Joi.string()).required(),
+      payment_method: Joi.string().valid('APPLE_PAY', 'GOOGLE_PAY', 'FREE').required(),
+      payment_data: Joi.alternatives().try(Joi.object().unknown(true), Joi.string()).when('payment_method', {
+        is: 'FREE', then: Joi.optional(), otherwise: Joi.required(),
+      }),
       idempotency_key: Joi.string().guid({ version: ['uuidv4'] }).required(),
       billing_address: Joi.object({
         line1: Joi.string().trim().required(),
@@ -539,8 +542,10 @@ module.exports = {
     body: Joi.object({
       ga_quantity: Joi.number().integer().min(0).default(0),
       vip_quantity: Joi.number().integer().min(0).default(0),
-      payment_method: Joi.string().valid('APPLE_PAY', 'GOOGLE_PAY').required(),
-      payment_data: Joi.alternatives().try(Joi.object().unknown(true), Joi.string()).required(),
+      payment_method: Joi.string().valid('APPLE_PAY', 'GOOGLE_PAY', 'FREE').required(),
+      payment_data: Joi.alternatives().try(Joi.object().unknown(true), Joi.string()).when('payment_method', {
+        is: 'FREE', then: Joi.optional(), otherwise: Joi.required(),
+      }),
       idempotency_key: Joi.string().guid({ version: ['uuidv4'] }).required(),
       purchaser: Joi.object({
         first_name: Joi.string().trim().min(1).max(100).required(),

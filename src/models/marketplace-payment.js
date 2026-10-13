@@ -106,7 +106,7 @@ const mSchema = mongoose.Schema(
     },
     payment_method: {
       type: String,
-      enum: ['APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY', 'CASH', 'ADMIN_MANUAL'],
+      enum: ['APPLE_PAY', 'GOOGLE_PAY', 'TAP_TO_PAY', 'CASH', 'FREE', 'ADMIN_MANUAL'],
       default: null,
     },
     payment_status: {

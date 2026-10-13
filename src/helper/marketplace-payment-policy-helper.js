@@ -4,6 +4,7 @@ const FINAL_EVENT_METHODS = {
 };
 
 const isMarketplacePaymentMethodAllowed = ({ paymentType, userType, paymentMethod }) => {
+  if (paymentMethod === 'FREE') return true;
   if (paymentType === 'FINAL_EVENT_PAYMENT') {
     return (FINAL_EVENT_METHODS[userType] || []).includes(paymentMethod);
   }

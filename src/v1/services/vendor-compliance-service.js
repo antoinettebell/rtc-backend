@@ -30,6 +30,31 @@ const buildComplianceError = (message, statusCode = 409, summary = null) => {
   return error;
 };
 
+// A vendor gets one self-service correction attempt for an OCR/profile
+// mismatch. Only a mismatch on the replacement moves the document to Support
+// review. This keeps the vendor-facing state aligned with the compliance
+// policy without retaining any sensitive OCR values.
+const getOcrMismatchOutcome = ({ message, revalidationAttempt = 0 }) => {
+  const requiresManualReview = Number(revalidationAttempt || 0) > 0;
+  return {
+    reviewStatus: requiresManualReview ? 'manual_review' : 'revalidation_needed',
+    ocrStatus: requiresManualReview ? 'manual_review' : 'revalidation_needed',
+    errorMessage: requiresManualReview
+      ? `${message} This replacement requires manual review.`
+      : message,
+  };
+};
+
+const applyOcrMismatchOutcome = (document, message) => {
+  const outcome = getOcrMismatchOutcome({
+    message,
+    revalidationAttempt: document.revalidation_attempt,
+  });
+  document.review_status = outcome.reviewStatus;
+  document.ocr_status = outcome.ocrStatus;
+  document.ocr_error_message = outcome.errorMessage;
+};
+
 const asDate = (value) => {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -1550,15 +1575,10 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   }
 
   if (automaticValidationFailure) {
-    const afterRevalidation = Number(document.revalidation_attempt || 0) > 0;
-    document.review_status = 'manual_review';
-    document.ocr_status = 'manual_review';
-    document.ocr_error_message = afterRevalidation
-      ? `${automaticValidationFailure} This replacement requires manual review.`
-      : automaticValidationFailure;
+    applyOcrMismatchOutcome(document, automaticValidationFailure);
   }
 
-  if (document.ocr_status !== 'manual_review') {
+  if (!['manual_review', 'revalidation_needed'].includes(document.ocr_status)) {
     document.ocr_status = ocrStatus || 'completed';
   }
   document.extracted_fields = normalizedExtractedFields;
@@ -1617,22 +1637,24 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   }
 
   if (expirationMismatch || missingOcrExpiration) {
-    document.review_status = 'manual_review';
-    document.ocr_status = 'manual_review';
-    document.ocr_error_message = expirationMismatch
-      ? 'OCR expiration date does not match the vendor-entered expiration date.'
-      : 'OCR could not confirm the vendor-entered expiration date.';
+    applyOcrMismatchOutcome(
+      document,
+      expirationMismatch
+        ? 'OCR expiration date does not match the vendor-entered expiration date.'
+        : 'OCR could not confirm the vendor-entered expiration date.'
+    );
   }
   if (issueDateMismatch || missingOcrIssueDate) {
-    document.review_status = 'manual_review';
-    document.ocr_status = 'manual_review';
-    document.ocr_error_message = issueDateMismatch
-      ? isSanitationGrade
-        ? 'OCR inspection date does not match the vendor-entered inspection date.'
-        : 'OCR issue date does not match the vendor-entered issue date.'
-      : isSanitationGrade
-        ? 'OCR could not confirm the vendor-entered inspection date.'
-        : 'OCR could not confirm the vendor-entered issue date.';
+    applyOcrMismatchOutcome(
+      document,
+      issueDateMismatch
+        ? isSanitationGrade
+          ? 'OCR inspection date does not match the vendor-entered inspection date.'
+          : 'OCR issue date does not match the vendor-entered issue date.'
+        : isSanitationGrade
+          ? 'OCR could not confirm the vendor-entered inspection date.'
+          : 'OCR could not confirm the vendor-entered issue date.'
+    );
   }
   if (
     document.document_type === 'HEALTH_PERMIT' &&
@@ -1792,6 +1814,7 @@ module.exports = {
   archiveComplianceDocument,
   purgeRejectedDocuments,
   applyOcrResult,
+  getOcrMismatchOutcome,
   sendExpirationReminders,
   archiveExpiredDocuments,
   runComplianceMaintenance,
