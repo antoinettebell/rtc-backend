@@ -29,6 +29,7 @@ const enqueueComplianceOcr = async ({ document, requirement }) => {
         document_type: document.document_type,
         file_url: document.file_url,
         file_key: document.file_key,
+        mime_type: document.mime_type,
         // The signed W-9, NDA, and Governance documents all use RTC's
         // canonical S3 bucket. Send the authoritative bucket rather than
         // requiring a second compliance-specific bucket configuration.
@@ -36,7 +37,7 @@ const enqueueComplianceOcr = async ({ document, requirement }) => {
         expected_fields: requirement?.ocrFields || [],
       },
       {
-        timeout: Number(process.env.COMPLIANCE_OCR_TIMEOUT_MS || 15000),
+        timeout: Number(process.env.COMPLIANCE_OCR_TIMEOUT_MS || 60000),
         headers,
       }
     ).catch((error) => {
