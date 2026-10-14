@@ -4,6 +4,7 @@ const path = require('path');
 const {
   getOcrMismatchOutcome,
   getTaxIdentifierOcrOutcome,
+  nameMatchesProfile,
 } = require('./vendor-compliance-service');
 
 assert.equal(
@@ -21,6 +22,19 @@ assert.equal(
 assert.equal(
   getTaxIdentifierOcrOutcome({ extractedDigits: '123456789', profileDigits: '987654321' }),
   'MISMATCH'
+);
+assert.equal(
+  nameMatchesProfile({ name: 'Jazzy Fried Rice' }, 'Jazzy Fried Rice'),
+  true,
+  'A legacy profile without a Legal Business Name or DBA may match its food-truck name'
+);
+assert.equal(
+  nameMatchesProfile(
+    { name: 'Jazzy Fried Rice', legal_business_name: 'Jazzy Fried Rice LLC' },
+    'Jazzy Fried Rice'
+  ),
+  false,
+  'A populated Legal Business Name remains authoritative over the food-truck name'
 );
 
 const firstMismatch = getOcrMismatchOutcome({
@@ -67,13 +81,8 @@ assert.match(
 );
 assert.match(
   serviceSource,
-  /\[foodTruck\.legal_business_name, foodTruck\.dba\]/,
-  'OCR business-name matching must use Legal Business Name and DBA only'
-);
-assert.doesNotMatch(
-  serviceSource,
-  /\[foodTruck\.legal_business_name, foodTruck\.dba, foodTruck\.name\]/,
-  'Food Truck Name must not be used as a tax-identity comparison value'
+  /if \(!complianceNames\.length\)[\s\S]*foodTruck\.name/,
+  'Food Truck Name must be used only as a fallback for legacy profiles without compliance names'
 );
 assert.match(
   serviceSource,

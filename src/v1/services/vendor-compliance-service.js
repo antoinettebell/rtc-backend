@@ -130,13 +130,21 @@ const normalizeName = (value) => String(value || '')
   .replace(/[^a-z0-9]+/g, ' ')
   .trim()
   .replace(/\s+/g, ' ');
-const profileBusinessNames = (foodTruck = {}) => new Set(
-  // The Food Truck Name is customer-facing branding, not tax identity. OCR
-  // identity checks must use the profile's compliance fields only.
-  [foodTruck.legal_business_name, foodTruck.dba]
+const profileBusinessNames = (foodTruck = {}) => {
+  const complianceNames = [foodTruck.legal_business_name, foodTruck.dba]
     .map(normalizeName)
-    .filter(Boolean)
-);
+    .filter(Boolean);
+
+  // Older vendor profiles can predate the dedicated Legal Business Name/DBA
+  // fields. Use the food-truck name only for those legacy profiles; once a
+  // compliance identity is present, it remains the authoritative comparison.
+  if (!complianceNames.length) {
+    const foodTruckName = normalizeName(foodTruck.name);
+    if (foodTruckName) complianceNames.push(foodTruckName);
+  }
+
+  return new Set(complianceNames);
+};
 const nameMatchesProfile = (foodTruck, value) => {
   const normalized = normalizeName(value);
   return !!normalized && profileBusinessNames(foodTruck).has(normalized);
@@ -1870,6 +1878,7 @@ module.exports = {
   getSanitationGradeMap,
   getSanitationGradeFromFields,
   getTaxIdentifierOcrOutcome,
+  nameMatchesProfile,
   uploadComplianceDocument,
   createSignedW9Document,
   reconcileActiveComplianceDocuments,
