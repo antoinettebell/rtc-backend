@@ -1743,7 +1743,7 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   const datesValidated = !expirationMismatch && !missingOcrExpiration &&
     !issueDateMismatch && !missingOcrIssueDate;
   if (
-    coreIdentityDocument &&
+    !isSanitationGrade &&
     !automaticValidationFailure &&
     datesValidated &&
     document.ocr_status === 'completed'

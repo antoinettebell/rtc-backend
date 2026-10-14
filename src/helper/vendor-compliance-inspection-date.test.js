@@ -98,7 +98,12 @@ assert.match(
 assert.match(
   serviceSource,
   /const selectNewestByType =[\s\S]*const latestByType = selectNewestByType\(documents\);[\s\S]*!isExplicitDocumentRetry && document\.ocr_status !== 'not_configured'/,
-  'Save & Run Changed OCR must submit only newly uploaded documents unless one document is explicitly retried'
+  'Save & Run OCR must submit only newly uploaded documents unless one document is explicitly retried'
+);
+assert.match(
+  serviceSource,
+  /!isSanitationGrade\s*&&\s*!automaticValidationFailure\s*&&\s*datesValidated\s*&&\s*document\.ocr_status === 'completed'/,
+  'Every successfully OCR-validated non-sanitation compliance document must become verified'
 );
 assert.match(
   serviceSource,
