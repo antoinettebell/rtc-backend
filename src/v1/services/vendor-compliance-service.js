@@ -154,7 +154,7 @@ const hasEncryptedTaxIdentifier = (foodTruck, type) =>
 const getTaxProofType = (foodTruck = {}) =>
   String(foodTruck.tax_identifier_type || '').toUpperCase() === 'SSN'
     ? 'SSN_CARD'
-    : 'EIN';
+    : null;
 
 const getVerificationCycle = (foodTruck = {}) =>
   Math.max(1, Number(foodTruck.compliance_verification_cycle || 1));
@@ -460,16 +460,11 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     hasValidTaxIdentifier(foodTruck.ssn) ||
     hasMaskedTaxIdentifier(foodTruck.ssn) ||
     hasEncryptedTaxIdentifier(foodTruck, 'SSN');
-  const hasEinOnProfile =
-    hasValidTaxIdentifier(foodTruck.ein) ||
-    hasMaskedTaxIdentifier(foodTruck.ein) ||
-    hasEncryptedTaxIdentifier(foodTruck, 'EIN');
   const selectedTaxIdentifierType =
     String(foodTruck.tax_identifier_type || '').toUpperCase() === 'SSN' ||
     hasSsnOnProfile
       ? 'SSN'
       : 'EIN';
-  const taxIdRequirementType = selectedTaxIdentifierType;
   const grandfathered = isGrandfatheredVendor(foodTruck);
   const complianceRequirements = getComplianceRequirements();
   const totalScoreWeight = complianceRequirements.reduce(
@@ -490,11 +485,10 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
       : null;
     const verified = isVerifiedActiveDocument(document, now);
     const expired = days_until_expiration !== null && days_until_expiration < 0;
-    const isTaxProof = ['EIN', 'SSN_CARD'].includes(requirement.type);
+    const isTaxProof = requirement.type === 'SSN_CARD';
     const isOptionalDocument = !requirement.required && !(
       isTaxProof && requirement.type === getTaxProofType(foodTruck)
     );
-    const isEinDocument = requirement.type === 'EIN';
     const profileTaxIdentifierVerified = false;
     let status = 'missing';
 
@@ -546,10 +540,8 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     };
   });
 
-  if (taxIdRequirementType === 'SSN') {
-    if (!hasSsnOnProfile) missingRequirements.push('SSN_PROFILE');
-  } else if (!hasEinOnProfile) {
-    missingRequirements.push('EIN_PROFILE');
+  if (selectedTaxIdentifierType === 'SSN' && !hasSsnOnProfile) {
+    missingRequirements.push('SSN_PROFILE');
   }
 
   const externalProvider = selectedTaxIdentifierType === 'SSN' ? 'COMPLYCUBE' : 'COBALT';
@@ -570,18 +562,25 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   );
   const businessLicenseVerified = isVerifiedActiveDocument(latestByType.BUSINESS_LICENSE, now);
   const w9Verified = isVerifiedActiveDocument(latestByType.W9, now);
-  const taxProofVerified = isVerifiedActiveDocument(latestByType[getTaxProofType(foodTruck)], now);
+  const taxProofType = getTaxProofType(foodTruck);
+  const taxProofVerified = taxProofType && isVerifiedActiveDocument(latestByType[taxProofType], now);
   const coreComponents = [
     { type: 'BUSINESS_LICENSE', label: 'Business License / Permit', verified: businessLicenseVerified },
     { type: 'W9', label: 'Completed W-9', verified: w9Verified },
-    { type: getTaxProofType(foodTruck), label: 'Tax-ID Proof', verified: taxProofVerified },
-    { type: 'EXTERNAL_VERIFICATION', label: 'External Verification', verified: externalPassed },
   ];
-  score = coreComponents.reduce((total, component) => total + (component.verified ? 25 : 0), 0);
+  if (taxProofType) {
+    coreComponents.push({ type: 'SSN_CARD', label: 'Social Security Card', verified: taxProofVerified });
+  }
+  const coreComponentWeight = 100 / coreComponents.length;
+  score = Number(coreComponents.reduce(
+    (total, component) => total + (component.verified ? coreComponentWeight : 0),
+    0
+  ).toFixed(2));
   coreComponents.filter((component) => !component.verified).forEach((component) => {
     if (!missingRequirements.includes(component.type)) missingRequirements.push(component.type);
   });
-  const coreCompliant = score === 100 && rejectedRequirements.length === 0 && pendingRequirements.length === 0;
+  const coreCompliant = coreComponents.every((component) => component.verified) &&
+    rejectedRequirements.length === 0 && pendingRequirements.length === 0;
   const hasValidCoi = isVerifiedActiveDocument(latestByType.COI, now);
   const eligible = coreCompliant;
   const hasPendingReview = pendingRequirements.length > 0;
@@ -605,7 +604,7 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
       status: externalPassed ? 'PASSED' : (externalRecords[0]?.status || 'NOT_STARTED'),
       checks: externalRecords,
     },
-    core_components: coreComponents.map((component) => ({ ...component, weight: 25 })),
+    core_components: coreComponents.map((component) => ({ ...component, weight: coreComponentWeight })),
     sanitation_grade: sanitationGrade,
     sanitation_grade_eligible: sanitationGradeEligible,
     sanitation_grade_blocked: sanitationGradeBlocked,
@@ -681,7 +680,7 @@ const beginProfileRevalidation = async ({ foodTruck, actor = null, previousIdent
       food_truck_id: foodTruck._id,
       review_status: 'verified',
       archived_at: null,
-      document_type: { $in: ['BUSINESS_LICENSE', 'W9', 'EIN', 'SSN_CARD'] },
+      document_type: { $in: ['BUSINESS_LICENSE', 'W9', 'SSN_CARD'] },
     },
     { sort: { created_at: -1 } }
   );
@@ -1048,7 +1047,7 @@ const uploadComplianceDocument = async ({
   });
 
   const isSanitationGrade = documentType === 'HEALTH_PERMIT';
-  const automatedCoreDocument = ['BUSINESS_LICENSE', 'W9', 'EIN', 'SSN_CARD'].includes(documentType);
+  const automatedCoreDocument = ['BUSINESS_LICENSE', 'W9', 'SSN_CARD'].includes(documentType);
   const adminRequestedPendingReview =
     user.userType === 'SUPER_ADMIN' && body.review_status === 'pending_review';
   const vendorEnteredIssueDate = asDate(body.issue_date);
@@ -1404,7 +1403,7 @@ const reviewComplianceDocument = async ({
 
   if (
     reviewStatus === 'verified' &&
-    ['BUSINESS_LICENSE', 'W9', 'EIN', 'SSN_CARD'].includes(document.document_type)
+    ['BUSINESS_LICENSE', 'W9', 'SSN_CARD'].includes(document.document_type)
   ) {
     throw buildComplianceError(
       'This core compliance document is verified only by the automated OCR and profile-matching workflow.',
@@ -1566,7 +1565,7 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     }
   }
 
-  const requiresIdentityValidation = ['BUSINESS_LICENSE', 'W9', 'EIN', 'SSN_CARD']
+  const requiresIdentityValidation = ['BUSINESS_LICENSE', 'W9', 'SSN_CARD']
     .includes(document.document_type);
   const foodTruck = requiresIdentityValidation
     ? await FoodTruckModel.findById(document.food_truck_id)
@@ -1578,7 +1577,7 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
 
   // Identity-document OCR can include an EIN or SSN in raw text/word output.
   // Preserve only purpose-built comparison outcomes, never the full OCR body.
-  if (['W9', 'EIN', 'SSN_CARD'].includes(document.document_type)) {
+  if (['W9', 'SSN_CARD'].includes(document.document_type)) {
     [
       'raw_text',
       'lines',
@@ -1637,14 +1636,6 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
       automaticValidationFailure = document.document_type === 'W9'
         ? 'OCR could not confirm that the W-9 legal business name matches the vendor profile.'
         : 'OCR could not confirm that the business license name matches the vendor profile.';
-    }
-  } else if (document.document_type === 'EIN') {
-    const extractedBusinessName = getDocumentBusinessName({ extracted_fields: normalizedExtractedFields });
-    if (extractedBusinessName) {
-      normalizedExtractedFields.legal_business_name_match = nameMatchesProfile(foodTruck, extractedBusinessName);
-      if (!normalizedExtractedFields.legal_business_name_match) {
-        automaticValidationFailure = 'OCR could not confirm that the EIN document business name matches the vendor profile.';
-      }
     }
   }
 

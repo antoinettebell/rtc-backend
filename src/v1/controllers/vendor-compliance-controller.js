@@ -55,7 +55,6 @@ const getFoodTruckDocumentTypeFromComplianceType = (documentType) => {
   if (documentType === 'HEALTH_PERMIT') return 'PERMIT';
   if (documentType === 'BUSINESS_LICENSE') return 'LICENSE';
   if (documentType === 'COI') return 'INSURANCE';
-  if (documentType === 'EIN') return 'EIN';
   if (documentType === 'W9') return 'W9';
   return 'OTHER';
 };

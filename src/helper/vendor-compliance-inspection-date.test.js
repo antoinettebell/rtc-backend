@@ -8,9 +8,13 @@ const {
 const sanitationRequirement = getComplianceRequirement('HEALTH_PERMIT');
 assert.ok(sanitationRequirement.ocrFields.includes('issue_date'));
 assert.equal(sanitationRequirement.ocrFields.includes('expiration_date'), false);
-assert.ok(getComplianceRequirement('BUSINESS_LICENSE').ocrFields.includes('issue_date'));
-assert.ok(getComplianceRequirement('COI').ocrFields.includes('issue_date'));
-assert.ok(getComplianceRequirement('LIQUOR_LICENSE').ocrFields.includes('issue_date'));
+assert.equal(getComplianceRequirement('BUSINESS_LICENSE').ocrFields.includes('issue_date'), false);
+assert.equal(getComplianceRequirement('COI').ocrFields.includes('issue_date'), false);
+assert.equal(getComplianceRequirement('LIQUOR_LICENSE').ocrFields.includes('issue_date'), false);
+assert.ok(getComplianceRequirement('BUSINESS_LICENSE').ocrFields.includes('expiration_date'));
+assert.ok(getComplianceRequirement('COI').ocrFields.includes('expiration_date'));
+assert.ok(getComplianceRequirement('LIQUOR_LICENSE').ocrFields.includes('expiration_date'));
+assert.equal(getComplianceRequirement('EIN'), null);
 
 assert.equal(getComplianceRequirement('COI').required, false);
 assert.equal(getComplianceRequirement('COI').scoreWeight, 0);
@@ -78,13 +82,13 @@ assert.match(
 );
 assert.match(
   serviceSource,
-  /weight: 25/,
-  'Core compliance components must each contribute 25 percent'
+  /const coreComponentWeight = 100 \/ coreComponents\.length/,
+  'Core compliance must divide 100 percent among the documents required for that vendor'
 );
 assert.match(
   serviceSource,
   /getTaxProofType\(foodTruck\)/,
-  'Tax proof must be selected dynamically from the encrypted-profile tax ID type'
+  'A Social Security Card must be selected only when the profile uses an SSN'
 );
 assert.match(
   serviceSource,
@@ -93,8 +97,8 @@ assert.match(
 );
 assert.match(
   serviceSource,
-  /const selectNewestByType =[\s\S]*const latestByType = selectNewestByType\(documents\);[\s\S]*Save & Run OCR is an explicit retry control/,
-  'Save & Run OCR must retry the newest stored document, including revalidation and manual-review outcomes'
+  /const selectNewestByType =[\s\S]*const latestByType = selectNewestByType\(documents\);[\s\S]*!isExplicitDocumentRetry && document\.ocr_status !== 'not_configured'/,
+  'Save & Run Changed OCR must submit only newly uploaded documents unless one document is explicitly retried'
 );
 assert.match(
   serviceSource,
