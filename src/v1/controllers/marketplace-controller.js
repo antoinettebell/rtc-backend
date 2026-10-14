@@ -722,6 +722,11 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null, coo
   if (isFreeEvent) {
     normalized.ga_ticket_price = 0;
     normalized.vip_ticket_price = 0;
+    normalized.event_vendor_needs = (normalized.event_vendor_needs || []).map((need) => ({
+      ...need,
+      fee: 0,
+    }));
+    normalized.event_vendor_electricity_fee = 0;
   }
 
   if (isDraft) {
