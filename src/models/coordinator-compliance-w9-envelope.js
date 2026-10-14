@@ -27,6 +27,16 @@ const mSchema = mongoose.Schema({
     default: 'NOT_STARTED',
     index: true,
   },
+  ocr_document_id: { type: String, default: uuidv4, unique: true, sparse: true, index: true },
+  ocr_status: {
+    type: String,
+    enum: ['not_configured', 'queued', 'processing', 'completed', 'failed', 'manual_review', 'revalidation_needed'],
+    default: 'not_configured',
+  },
+  ocr_requested_at: { type: Date, default: null },
+  ocr_completed_at: { type: Date, default: null },
+  ocr_error_message: { type: String, default: null },
+  extracted_fields: { type: mongoose.Schema.Types.Mixed, default: {} },
   completed_at: { type: Date, default: null },
   error_message: { type: String, default: null },
 }, { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } });

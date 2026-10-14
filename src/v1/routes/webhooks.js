@@ -19,6 +19,11 @@ router.post(
 );
 
 router.post(
+  '/coordinator-compliance/documents/:documentId/ocr-result',
+  WebhookController.coordinatorComplianceOcrResult
+);
+
+router.post(
   '/vendor-compliance/providers/result',
   WebhookController.vendorComplianceProviderResult
 );

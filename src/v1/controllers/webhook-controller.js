@@ -3,6 +3,7 @@ const { docusign } = require('../../config');
 const { FoodTruckModel, UserModel, VendorEmployeeModel, EmployeeSessionModel } = require('../../models');
 const CustomNotification = require('../../helper/custom-notification');
 const VendorComplianceService = require('../services/vendor-compliance-service');
+const CoordinatorComplianceController = require('./coordinator-compliance-controller');
 const ProviderVerification = require('../../helper/vendor-compliance-provider-helper');
 const EmployeeSessionService = require('../services/employee-session-service');
 const {
@@ -535,6 +536,11 @@ exports.vendorComplianceOcrResult = async (req, res) => {
       message: error.message || 'Compliance OCR result failed',
     });
   }
+};
+
+exports.coordinatorComplianceOcrResult = async (req, res, next) => {
+  if (!authorizeBackendWebhook(req, res)) return;
+  return CoordinatorComplianceController.ocrResult(req, res, next);
 };
 
 exports.vendorComplianceProviderResult = async (req, res) => {

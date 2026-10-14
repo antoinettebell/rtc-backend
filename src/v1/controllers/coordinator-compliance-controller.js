@@ -3,6 +3,7 @@ const fs = require('fs');
 const { addObjectFromBufferWithKey, addObjectWithKey } = require('../../helper/aws');
 const EncryptionService = require('../../helper/encryption');
 const DocuSignHelper = require('../../helper/docusign-helper');
+const { enqueueComplianceOcr } = require('../../helper/vendor-compliance-ocr-helper');
 const {
   CoordinatorComplianceW9EnvelopeModel,
   CoordinatorComplianceProfileModel,
@@ -10,6 +11,23 @@ const {
 } = require('../../models');
 
 const buildError = (message, code = 400) => Object.assign(new Error(message), { code });
+
+const DRIVER_LICENSE_OCR_REQUIREMENT = { ocrFields: ['name'] };
+const W9_OCR_REQUIREMENT = {
+  ocrFields: ['ein', 'business_name', 'tax_classification', 'signature_date'],
+};
+
+const normalizedName = (value) => String(value || '')
+  .toLowerCase()
+  .replace(/[^a-z0-9]/g, '');
+
+const namesMatch = (expected, actual) => {
+  const left = normalizedName(expected);
+  const right = normalizedName(actual);
+  return Boolean(left && right && (left === right || left.includes(right) || right.includes(left)));
+};
+
+const taxDigits = (value) => String(value || '').replace(/\D/g, '');
 
 const getCoordinator = async (user) => {
   const coordinator = await UserModel.findById(user._id);
@@ -42,9 +60,12 @@ const toSafeProfile = (profile) => {
     tax_id_type: value.tax_id_type,
     tax_id_masked: value.tax_id_masked,
     documents: (value.documents || []).map((document) => ({
+      document_id: document.document_id,
       document_type: document.document_type,
       original_name: document.original_name,
       uploaded_at: document.uploaded_at,
+      ocr_status: document.ocr_status,
+      ocr_error_message: document.ocr_error_message,
     })),
   };
 };
@@ -125,6 +146,8 @@ const toSafeSession = (session) => {
     envelope_id: value.envelope_id,
     status: value.status,
     verification_status: value.verification_status,
+    ocr_status: value.ocr_status,
+    ocr_error_message: value.ocr_error_message,
     completed_at: value.completed_at,
     created_at: value.created_at,
     updated_at: value.updated_at,
@@ -214,12 +237,148 @@ exports.uploadDocument = async (req, res, next) => {
     }
     const { url, key } = await addObjectWithKey(req.file, `coordinator-compliance/${coordinator._id}/${documentType}`);
     profile.documents = (profile.documents || []).filter((item) => item.document_type !== documentType);
-    profile.documents.push({ document_type: documentType, file_url: url, file_key: key, original_name: req.file.originalname, mime_type: req.file.mimetype });
+    profile.documents.push({
+      document_type: documentType,
+      file_url: url,
+      file_key: key,
+      original_name: req.file.originalname,
+      mime_type: req.file.mimetype,
+      ocr_status: 'not_configured',
+    });
     await profile.save();
     fs.unlink(req.file.path, () => {});
     return res.data({ profile: toSafeProfile(profile) }, 'Coordinator compliance document uploaded');
   } catch (error) {
     if (req.file?.path) fs.unlink(req.file.path, () => {});
+    return next(error);
+  }
+};
+
+// Only coordinator compliance documents use this route. It deliberately
+// compares against the isolated compliance profile, never the customer user
+// profile. Existing verified OCR is left untouched until the evidence changes.
+exports.submitDocumentsForOcr = async (req, res, next) => {
+  try {
+    const coordinator = await getCoordinator(req.user);
+    const profile = await getOrMigrateProfile(coordinator);
+    if (!profile) throw buildError('Save coordinator compliance information before running OCR.', 409);
+    const queued = [];
+
+    if (profile.party_type === 'INDIVIDUAL') {
+      const license = (profile.documents || []).find(
+        (document) => document.document_type === 'DRIVER_LICENSE_FRONT'
+      );
+      if (license && !['queued', 'processing', 'completed'].includes(license.ocr_status)) {
+        if (!license.document_id) license.document_id = require('uuid').v4();
+        const result = await enqueueComplianceOcr({
+          document: license,
+          requirement: DRIVER_LICENSE_OCR_REQUIREMENT,
+          callbackType: 'coordinator_compliance',
+        });
+        Object.assign(license, result);
+        queued.push('Driver license front');
+        profile.markModified('documents');
+        await profile.save();
+      }
+    }
+
+    if (profile.party_type === 'BUSINESS') {
+      const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
+        coordinator_user_id: coordinator._id,
+        status: 'SIGNED',
+      }).sort({ created_at: -1 });
+      if (session && !['queued', 'processing', 'completed'].includes(session.ocr_status)) {
+        const result = await enqueueComplianceOcr({
+          document: {
+            document_id: session.ocr_document_id,
+            file_url: session.signed_document_url,
+            file_key: session.signed_document_key,
+            mime_type: 'application/pdf',
+            document_type: 'W9',
+          },
+          requirement: W9_OCR_REQUIREMENT,
+          callbackType: 'coordinator_compliance',
+        });
+        Object.assign(session, result);
+        await session.save();
+        queued.push('Signed W-9');
+      }
+    }
+
+    return res.data({ queued }, queued.length ? 'Coordinator documents submitted for OCR' : 'No changed coordinator documents require OCR');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.ocrResult = async (req, res, next) => {
+  try {
+    const documentId = String(req.params.documentId || '');
+    const extractedFields = { ...(req.body?.extracted_fields || {}) };
+    const ocrStatus = req.body?.ocr_status || 'failed';
+    const ocrError = req.body?.ocr_error_message || null;
+    const profile = await CoordinatorComplianceProfileModel.findOne({
+      'documents.document_id': documentId,
+    });
+
+    if (profile) {
+      const document = profile.documents.find((item) => item.document_id === documentId);
+      const extractedName = extractedFields.name || extractedFields.legal_name || extractedFields.full_name;
+      // The license can contain personal details; retain only the comparison
+      // outcome and the minimal detected name needed for a review explanation.
+      ['raw_text', 'lines', 'words', 'text', 'ocr_text', 'detected_text', 'full_text'].forEach((key) => delete extractedFields[key]);
+      const nameMatches = namesMatch(profile.legal_name, extractedName);
+      document.extracted_fields = { name_match: nameMatches };
+      document.ocr_completed_at = new Date();
+      if (ocrStatus !== 'completed') {
+        document.ocr_status = ocrStatus;
+        document.ocr_error_message = ocrError || 'OCR could not read the driver license.';
+      } else if (!nameMatches) {
+        document.ocr_status = 'manual_review';
+        document.ocr_error_message = 'OCR could not confirm that the driver license name matches the compliance legal name.';
+      } else {
+        document.ocr_status = 'completed';
+        document.ocr_error_message = null;
+      }
+      profile.markModified('documents');
+      await profile.save();
+      return res.data({ profile: toSafeProfile(profile) }, 'Coordinator driver license OCR result processed');
+    }
+
+    const session = await CoordinatorComplianceW9EnvelopeModel.findOne({ ocr_document_id: documentId });
+    if (!session) throw buildError('Coordinator compliance document not found.', 404);
+    const w9Profile = await CoordinatorComplianceProfileModel.findOne({ coordinator_user_id: session.coordinator_user_id });
+    if (!w9Profile || w9Profile.party_type !== 'BUSINESS') {
+      throw buildError('Coordinator business compliance profile not found.', 404);
+    }
+    const extractedNames = [extractedFields.business_name, extractedFields.taxpayer_name].filter(Boolean);
+    const businessNameMatches = extractedNames.some((name) =>
+      namesMatch(w9Profile.legal_name, name) || namesMatch(w9Profile.dba_name, name)
+    );
+    const extractedTaxId = taxDigits(extractedFields.tax_identifier || extractedFields.ein || extractedFields.ssn);
+    const profileTaxId = taxDigits(EncryptionService.decrypt(w9Profile.tax_id_encrypted));
+    const taxIdMatches = Boolean(extractedTaxId && profileTaxId && extractedTaxId === profileTaxId);
+    ['raw_text', 'lines', 'words', 'text', 'ocr_text', 'detected_text', 'full_text', 'tax_identifier', 'ein', 'ssn'].forEach((key) => delete extractedFields[key]);
+    session.extracted_fields = { business_name_match: businessNameMatches, tax_identifier_match: taxIdMatches };
+    session.ocr_completed_at = new Date();
+    if (ocrStatus !== 'completed') {
+      session.ocr_status = ocrStatus;
+      session.ocr_error_message = ocrError || 'OCR could not read the signed W-9.';
+      session.verification_status = 'REVALIDATION_NEEDED';
+    } else if (!businessNameMatches || !taxIdMatches) {
+      session.ocr_status = 'manual_review';
+      session.ocr_error_message = !businessNameMatches
+        ? 'OCR could not confirm that the W-9 business name matches the compliance form.'
+        : 'OCR could not confirm that the W-9 EIN or SSN matches the compliance form.';
+      session.verification_status = 'MANUAL_REVIEW';
+    } else {
+      session.ocr_status = 'completed';
+      session.ocr_error_message = null;
+      session.verification_status = 'PASSED';
+    }
+    await session.save();
+    return res.data({ w9_session: toSafeSession(session) }, 'Coordinator W-9 OCR result processed');
+  } catch (error) {
     return next(error);
   }
 };

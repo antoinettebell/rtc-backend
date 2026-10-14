@@ -4,7 +4,7 @@ const { aws } = require('../config');
 const isOcrEnabled = () =>
   String(process.env.COMPLIANCE_OCR_ENABLED || 'false').toLowerCase() === 'true';
 
-const enqueueComplianceOcr = async ({ document, requirement }) => {
+const enqueueComplianceOcr = async ({ document, requirement, callbackType = null }) => {
   if (!isOcrEnabled() || !process.env.COMPLIANCE_OCR_ENDPOINT) {
     return {
       ocr_status: 'not_configured',
@@ -35,6 +35,7 @@ const enqueueComplianceOcr = async ({ document, requirement }) => {
         // requiring a second compliance-specific bucket configuration.
         bucket: aws.s3Bucket,
         expected_fields: requirement?.ocrFields || [],
+        ...(callbackType ? { callback_type: callbackType } : {}),
       },
       {
         timeout: Number(process.env.COMPLIANCE_OCR_TIMEOUT_MS || 60000),

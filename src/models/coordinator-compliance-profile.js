@@ -1,9 +1,11 @@
 const mongoose = require('mongoose');
+const { v4: uuidv4 } = require('uuid');
 
 // Identity and evidence for an event coordinator deliberately live outside the
 // customer profile.  In particular, a driver license is retained by RTC and is
 // never supplied to an identity provider.
 const documentSchema = new mongoose.Schema({
+  document_id: { type: String, default: uuidv4, index: true },
   document_type: {
     type: String,
     enum: ['DRIVER_LICENSE_FRONT', 'BUSINESS_LICENSE'],
@@ -14,6 +16,15 @@ const documentSchema = new mongoose.Schema({
   original_name: { type: String, default: null },
   mime_type: { type: String, default: null },
   uploaded_at: { type: Date, default: Date.now },
+  ocr_status: {
+    type: String,
+    enum: ['not_configured', 'queued', 'processing', 'completed', 'failed', 'manual_review', 'revalidation_needed'],
+    default: 'not_configured',
+  },
+  ocr_requested_at: { type: Date, default: null },
+  ocr_completed_at: { type: Date, default: null },
+  ocr_error_message: { type: String, default: null },
+  extracted_fields: { type: mongoose.Schema.Types.Mixed, default: {} },
 }, { _id: false });
 
 const schema = new mongoose.Schema({
