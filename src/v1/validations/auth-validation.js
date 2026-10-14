@@ -27,11 +27,7 @@ module.exports = {
       password: Joi.string().required().min(8).max(16).trim(),
       subscribedForOffGrid:Joi.boolean().optional(),
       isEventCoordinator: Joi.boolean().default(false),
-      eventCoordinatorCompanyName: Joi.when('isEventCoordinator', {
-        is: true,
-        then: Joi.string().trim().required(),
-        otherwise: Joi.string().trim().allow(null, ''),
-      }),
+      eventCoordinatorCompanyName: Joi.string().trim().allow(null, ''),
       eventCoordinatorCompanyAddress: Joi.string().trim().allow(null, ''),
       socialMedia: Joi.object({
         instagram: Joi.string().trim().pattern(/^@?[A-Za-z0-9._]{1,30}$/).allow(null, ''),

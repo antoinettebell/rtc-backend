@@ -28,11 +28,9 @@ module.exports = {
       addressCountry: Joi.string().trim().optional(),
       addressPostal: Joi.string().trim().optional(),
       isEventCoordinator: Joi.boolean(),
-      eventCoordinatorCompanyName: Joi.when('isEventCoordinator', {
-        is: true,
-        then: Joi.string().trim().required(),
-        otherwise: Joi.string().trim().allow(null, ''),
-      }),
+      // Business identity is collected in the coordinator-compliance record,
+      // not while saving the customer profile's coordinator preferences.
+      eventCoordinatorCompanyName: Joi.string().trim().allow(null, ''),
       eventCoordinatorCompanyAddress: Joi.string().trim().allow(null, ''),
       socialMedia: Joi.object({
         instagram: Joi.string().trim().pattern(/^@?[A-Za-z0-9._]{1,30}$/).allow(null, ''),

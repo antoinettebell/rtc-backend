@@ -1,7 +1,7 @@
 const express = require('express');
 const { CoordinatorComplianceController: Controller } = require('../controllers');
 const { allowedTo } = require('../../middleware/allow-route');
-const Upload = require('../../middleware/marketplace-upload');
+const Upload = require('../../middleware/coordinator-compliance-upload');
 
 const router = express.Router();
 
