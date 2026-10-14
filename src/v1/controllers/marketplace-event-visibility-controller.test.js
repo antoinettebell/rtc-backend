@@ -114,6 +114,7 @@ const makeFoodEvent = (eventId, overrides = {}) => ({
 	number_of_guests: 200,
 	budgeted_amount: 1000,
 	vendor_fee: 50,
+	payment_responsibility: 'BOTH',
 	current_submission_round: 1,
 	...overrides,
 });
@@ -187,6 +188,7 @@ const loadMarketplaceController = (state) => {
 				return item;
 			},
 		},
+		MarketplaceBidAmendmentService: { getByData: async () => [] },
 		MarketplacePaymentService: {
 			create: async (payload) => {
 				state.counters.paymentCreates += 1;
@@ -429,6 +431,23 @@ const assertEventVendorSubmissionUntouched = (state) => {
 };
 
 const runFoodVendorTests = async () => {
+	{
+		const state = createFoodState();
+		addFoodVendor(state, 'free-applicant');
+		state.events.push(makeFoodEvent('free-application-event', {
+			payment_responsibility: 'VENDOR',
+			vendor_fee: 0,
+			budgeted_amount: 0,
+		}));
+		const controller = loadMarketplaceController(state);
+		const result = await runController(controller.submitApplication, foodRequest('free-applicant', {
+			params: { eventId: 'free-application-event' },
+			body: { application_status: 'DRAFT' },
+		}));
+		assert.equal(result.error, undefined, 'free vendor events keep the application path available');
+		assert.equal(state.counters.applicationCreates, 1);
+	}
+
 	{
 		const state = createFoodState();
 		state.users.coordinator = {

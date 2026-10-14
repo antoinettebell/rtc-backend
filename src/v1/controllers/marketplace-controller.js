@@ -377,7 +377,6 @@ const COMPLIANCE_DOCUMENT_LABELS = {
   HEALTH_PERMIT: 'Sanitation Grade',
   BUSINESS_LICENSE: 'Business License/Permit',
   COI: 'Insurance',
-  LIQUOR_LICENSE: 'Liquor License',
 };
 const EXCLUDED_MARKETPLACE_REQUIREMENT_KEYS = new Set([
   'ein',
@@ -388,6 +387,12 @@ const EXCLUDED_MARKETPLACE_REQUIREMENT_KEYS = new Set([
   'form w-9',
   'tax_id',
   'tax id',
+  'ssn',
+  'ssc',
+  'ssn_card',
+  'social security',
+  'social security card',
+  'social_security_card',
 ]);
 
 const asArray = (value) => {
@@ -1370,8 +1375,25 @@ const isExcludedMarketplaceRequirementLabel = (label) => {
 
 const assertMarketplaceRequirementAllowed = (label) => {
   if (isExcludedMarketplaceRequirementLabel(label)) {
-    throw buildError('EIN and W-9 documents are not part of event submissions.', 400);
+    throw buildError('Tax and identity documents are not part of event submissions.', 400);
   }
+};
+
+// Event payment responsibility defines the submission path. A free event can
+// still be a normal vendor-application event, so an amount of $0 must never
+// be used to turn it into a catering bid-only event.
+const getFoodTruckSubmissionPaths = (event = {}) => {
+  const responsibility = String(event.payment_responsibility || '').toUpperCase();
+  if (responsibility === 'VENDOR') return { applications: true, bids: false };
+  if (responsibility === 'COORDINATOR') return { applications: false, bids: true };
+  if (responsibility === 'BOTH') return { applications: true, bids: true };
+
+  // Preserve legacy behavior for events created before payment responsibility
+  // was persisted on the marketplace event.
+  return {
+    applications: roundMoney(event.vendor_fee || 0) > 0,
+    bids: roundMoney(event.budgeted_amount || 0) > 0,
+  };
 };
 
 const REQUIREMENT_LABEL_COMPLIANCE_TYPES = {
@@ -6355,7 +6377,7 @@ exports.submitBid = async (req, res, next) => {
     const requestedStatus = req.body.bid_status || 'SUBMITTED';
     const currentRound = event.current_submission_round || 1;
 
-    if (roundMoney(event.budgeted_amount || 0) <= 0) {
+    if (!getFoodTruckSubmissionPaths(event).bids) {
       throw buildError('This event uses the application flow, not bids', 400);
     }
     if (requestedStatus !== 'DRAFT') {
@@ -6384,7 +6406,7 @@ exports.submitBid = async (req, res, next) => {
       },
       { singleResult: true }
     );
-    if (existingApplication) {
+    if (existingApplication && !getFoodTruckSubmissionPaths(event).applications) {
       throw buildError(
         'You already chose the vendor-paid application option for this event. Delete or withdraw it before submitting a bid.',
         409
@@ -7119,7 +7141,7 @@ exports.submitApplication = async (req, res, next) => {
     const requestedStatus = req.body.application_status || 'SUBMITTED';
     const currentRound = event.current_submission_round || 1;
 
-    if (roundMoney(event.vendor_fee || 0) <= 0) {
+    if (!getFoodTruckSubmissionPaths(event).applications) {
       throw buildError('This event uses the bid flow, not applications', 400);
     }
     if (requestedStatus !== 'DRAFT') {
@@ -7148,7 +7170,7 @@ exports.submitApplication = async (req, res, next) => {
       },
       { singleResult: true }
     );
-    if (existingBid) {
+    if (existingBid && !getFoodTruckSubmissionPaths(event).bids) {
       throw buildError(
         'You already chose the coordinator-paid bid option for this event. Delete or withdraw it before submitting an application.',
         409
