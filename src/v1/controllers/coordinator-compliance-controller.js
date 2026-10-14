@@ -5,6 +5,13 @@ const EncryptionService = require('../../helper/encryption');
 const DocuSignHelper = require('../../helper/docusign-helper');
 const { enqueueComplianceOcr } = require('../../helper/vendor-compliance-ocr-helper');
 const {
+  taxDigits,
+  getTaxIdentifierOcrOutcome,
+  getDocumentBusinessNames,
+  getOcrMismatchOutcome,
+  nameMatchesProfile,
+} = require('../services/vendor-compliance-service');
+const {
   CoordinatorComplianceW9EnvelopeModel,
   CoordinatorComplianceProfileModel,
   UserModel,
@@ -17,17 +24,10 @@ const W9_OCR_REQUIREMENT = {
   ocrFields: ['ein', 'business_name', 'tax_classification', 'signature_date'],
 };
 
-const normalizedName = (value) => String(value || '')
-  .toLowerCase()
-  .replace(/[^a-z0-9]/g, '');
-
-const namesMatch = (expected, actual) => {
-  const left = normalizedName(expected);
-  const right = normalizedName(actual);
-  return Boolean(left && right && (left === right || left.includes(right) || right.includes(left)));
-};
-
-const taxDigits = (value) => String(value || '').replace(/\D/g, '');
+const asVendorIdentity = (profile = {}) => ({
+  legal_business_name: profile.legal_name || null,
+  dba: profile.dba_name || null,
+});
 
 const getCoordinator = async (user) => {
   const coordinator = await UserModel.findById(user._id);
@@ -327,7 +327,7 @@ exports.ocrResult = async (req, res, next) => {
       // The license can contain personal details; retain only the comparison
       // outcome and the minimal detected name needed for a review explanation.
       ['raw_text', 'lines', 'words', 'text', 'ocr_text', 'detected_text', 'full_text'].forEach((key) => delete extractedFields[key]);
-      const nameMatches = namesMatch(profile.legal_name, extractedName);
+      const nameMatches = nameMatchesProfile(asVendorIdentity(profile), extractedName);
       document.extracted_fields = { name_match: nameMatches };
       document.ocr_completed_at = new Date();
       if (ocrStatus !== 'completed') {
@@ -351,26 +351,48 @@ exports.ocrResult = async (req, res, next) => {
     if (!w9Profile || w9Profile.party_type !== 'BUSINESS') {
       throw buildError('Coordinator business compliance profile not found.', 404);
     }
-    const extractedNames = [extractedFields.business_name, extractedFields.taxpayer_name].filter(Boolean);
+    const extractedNames = getDocumentBusinessNames({
+      extracted_fields: extractedFields,
+    });
     const businessNameMatches = extractedNames.some((name) =>
-      namesMatch(w9Profile.legal_name, name) || namesMatch(w9Profile.dba_name, name)
+      nameMatchesProfile(asVendorIdentity(w9Profile), name)
     );
     const extractedTaxId = taxDigits(extractedFields.tax_identifier || extractedFields.ein || extractedFields.ssn);
     const profileTaxId = taxDigits(EncryptionService.decrypt(w9Profile.tax_id_encrypted));
-    const taxIdMatches = Boolean(extractedTaxId && profileTaxId && extractedTaxId === profileTaxId);
+    const taxIdentifierOcrOutcome = getTaxIdentifierOcrOutcome({
+      extractedDigits: extractedTaxId,
+      profileDigits: profileTaxId,
+    });
+    const taxIdMatches = taxIdentifierOcrOutcome === 'MATCHED';
     ['raw_text', 'lines', 'words', 'text', 'ocr_text', 'detected_text', 'full_text', 'tax_identifier', 'ein', 'ssn'].forEach((key) => delete extractedFields[key]);
-    session.extracted_fields = { business_name_match: businessNameMatches, tax_identifier_match: taxIdMatches };
+    session.extracted_fields = {
+      business_name_match: businessNameMatches,
+      tax_identifier_match: taxIdMatches,
+      tax_identifier_type: w9Profile.tax_id_type || null,
+      tax_identifier_ocr_outcome: taxIdentifierOcrOutcome,
+    };
     session.ocr_completed_at = new Date();
     if (ocrStatus !== 'completed') {
       session.ocr_status = ocrStatus;
       session.ocr_error_message = ocrError || 'OCR could not read the signed W-9.';
       session.verification_status = 'REVALIDATION_NEEDED';
     } else if (!businessNameMatches || !taxIdMatches) {
-      session.ocr_status = 'manual_review';
-      session.ocr_error_message = !businessNameMatches
-        ? 'OCR could not confirm that the W-9 business name matches the compliance form.'
-        : 'OCR could not confirm that the W-9 EIN or SSN matches the compliance form.';
-      session.verification_status = 'MANUAL_REVIEW';
+      const mismatchMessage = !businessNameMatches
+        ? 'OCR could not confirm that the W-9 legal business name matches the compliance form.'
+        : taxIdentifierOcrOutcome === 'NOT_DETECTED'
+          ? 'OCR could not read a complete nine-digit EIN or SSN from the W-9.'
+          : taxIdentifierOcrOutcome === 'PROFILE_UNAVAILABLE'
+            ? 'The compliance form does not contain a usable encrypted tax ID for comparison.'
+            : 'OCR could not confirm that the W-9 EIN or SSN matches the compliance form.';
+      const mismatchOutcome = getOcrMismatchOutcome({
+        message: mismatchMessage,
+        revalidationAttempt: session.revalidation_attempt,
+      });
+      session.ocr_status = mismatchOutcome.ocrStatus;
+      session.ocr_error_message = mismatchOutcome.errorMessage;
+      session.verification_status = mismatchOutcome.ocrStatus === 'manual_review'
+        ? 'MANUAL_REVIEW'
+        : 'REVALIDATION_NEEDED';
     } else {
       session.ocr_status = 'completed';
       session.ocr_error_message = null;
@@ -466,6 +488,11 @@ exports.completeW9Signing = async (req, res, next) => {
       `coordinator-compliance/${coordinator._id}/W9`
     );
     session.status = 'SIGNED';
+    session.revalidation_attempt = await CoordinatorComplianceW9EnvelopeModel.countDocuments({
+      coordinator_user_id: coordinator._id,
+      status: 'SIGNED',
+      ocr_status: 'revalidation_needed',
+    });
     session.signed_document_url = url;
     session.signed_document_key = key;
     session.verification_status = 'PENDING';

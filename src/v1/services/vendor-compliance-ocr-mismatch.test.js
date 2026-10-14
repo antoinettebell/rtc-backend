@@ -4,8 +4,23 @@ const path = require('path');
 const {
   getOcrMismatchOutcome,
   getTaxIdentifierOcrOutcome,
+  getDocumentBusinessNames,
   nameMatchesProfile,
+  taxDigits,
 } = require('./vendor-compliance-service');
+
+assert.equal(
+  taxDigits('12-345 6789'),
+  '123456789',
+  'Tax-ID comparison must use the shared vendor sanitizer for spaces and dashes'
+);
+assert.deepEqual(
+  getDocumentBusinessNames({
+    extracted_fields: { taxpayer_name: 'Jazzy Fried Rice LLC', business_name: 'Jazzy Fried Rice' },
+  }),
+  ['Jazzy Fried Rice', 'Jazzy Fried Rice LLC'],
+  'W-9 name candidates must use the shared vendor extractor'
+);
 
 assert.equal(
   getTaxIdentifierOcrOutcome({ extractedDigits: '', profileDigits: '123456789' }),
@@ -103,6 +118,21 @@ assert.match(
   serviceSource,
   /!isExplicitDocumentRetry && document\.ocr_status !== 'not_configured'/,
   'Normal OCR submission must leave unchanged verified/reviewed documents untouched'
+);
+
+const coordinatorSource = fs.readFileSync(
+  path.join(__dirname, '../controllers/coordinator-compliance-controller.js'),
+  'utf8'
+);
+assert.match(
+  coordinatorSource,
+  /getDocumentBusinessNames\(\{\s*extracted_fields: extractedFields,\s*\}\)/,
+  'Coordinator W-9 OCR must use the vendor W-9 document-name extractor'
+);
+assert.match(
+  coordinatorSource,
+  /const extractedTaxId = taxDigits\(extractedFields\.tax_identifier \|\| extractedFields\.ein \|\| extractedFields\.ssn\)/,
+  'Coordinator W-9 OCR must use the vendor tax-ID sanitizer'
 );
 
 console.log('vendor compliance OCR mismatch tests passed');

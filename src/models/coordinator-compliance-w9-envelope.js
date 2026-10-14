@@ -37,6 +37,7 @@ const mSchema = mongoose.Schema({
   ocr_completed_at: { type: Date, default: null },
   ocr_error_message: { type: String, default: null },
   extracted_fields: { type: mongoose.Schema.Types.Mixed, default: {} },
+  revalidation_attempt: { type: Number, default: 0, min: 0 },
   completed_at: { type: Date, default: null },
   error_message: { type: String, default: null },
 }, { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } });
