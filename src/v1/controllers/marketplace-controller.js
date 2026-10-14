@@ -601,7 +601,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null, coo
     vipSectionEnabled && !fullyCateredEvent && Boolean(body.catered_vip_section_enabled);
   const gaFoodSalesAllowed =
     cateredVipSectionEnabled && Boolean(body.ga_food_sales_allowed);
-  const waiveVendorFeeForCombinedAward =
+  let waiveVendorFeeForCombinedAward =
     gaFoodSalesAllowed && Boolean(body.waive_vendor_fee_for_combined_award);
   // VIP catering always creates its own awardable service slot. Keep the legacy
   // field true for existing consumers without asking coordinators to configure it.
@@ -618,6 +618,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null, coo
   const isFreeEvent = coordinator && !isCoordinatorPayoutEligible(coordinator)
     ? true
     : Boolean(body.is_free_event);
+  if (isFreeEvent) waiveVendorFeeForCombinedAward = false;
   let vendorFee = isFreeEvent ? 0 : roundMoney(body.vendor_fee || 0);
   let budgetedAmount = roundMoney(body.budgeted_amount || 0);
   if (paymentResponsibility === 'COORDINATOR') {
@@ -817,6 +818,7 @@ const normalizeMarketplaceEventPayload = (body = {}, { existingEvent = null, coo
     );
   }
   if (
+    !isFreeEvent &&
     gaFoodSalesAllowed &&
     body.waive_vendor_fee_for_combined_award !== true &&
     body.waive_vendor_fee_for_combined_award !== false
