@@ -1,5 +1,6 @@
 /** Define user model */
 exports.UserModel = require('./user');
+exports.CoordinatorComplianceProfileModel = require('./coordinator-compliance-profile');
 
 /** Define food-truck model */
 exports.FoodTruckModel = require('./food-truck');

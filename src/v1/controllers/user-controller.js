@@ -447,9 +447,15 @@ exports.update = async (req, res, next) => {
     if (isEventCoordinator !== undefined) {
       existRecord.isEventCoordinator = isEventCoordinator;
       if (isEventCoordinator) {
-        existRecord.eventCoordinatorCompanyName = eventCoordinatorCompanyName;
-        existRecord.eventCoordinatorCompanyAddress =
-          eventCoordinatorCompanyAddress || null;
+        // Coordinator identity now belongs to coordinator compliance. Keep
+        // legacy values intact until that workflow migrates them; a simple
+        // free/paid preference save must never erase them.
+        if (Object.prototype.hasOwnProperty.call(req.body, 'eventCoordinatorCompanyName')) {
+          existRecord.eventCoordinatorCompanyName = eventCoordinatorCompanyName || null;
+        }
+        if (Object.prototype.hasOwnProperty.call(req.body, 'eventCoordinatorCompanyAddress')) {
+          existRecord.eventCoordinatorCompanyAddress = eventCoordinatorCompanyAddress || null;
+        }
         if (Object.prototype.hasOwnProperty.call(req.body, 'socialMedia')) {
           existRecord.socialMedia = normalizeCoordinatorSocialMedia(socialMedia);
         }

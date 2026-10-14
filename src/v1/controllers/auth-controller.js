@@ -166,31 +166,16 @@ exports.add = async (req, res, next) => {
       }
     }
 
-    const coordinatorTaxUpdate = isEventCoordinator
-      ? buildTaxIdUpdate({
-          type: eventCoordinatorTaxIdType || 'EIN',
-          value: eventCoordinatorTaxId || eventCoordinatorEin,
-        })
-      : {};
     const coordinatorProfileFields = isEventCoordinator
       ? {
-          eventCoordinatorCompanyName,
-          eventCoordinatorCompanyAddress: eventCoordinatorCompanyAddress || null,
+          // Identity and payout evidence are collected after signup in the
+          // coordinator compliance record, not on the customer profile.
+          eventCoordinatorCompanyName: null,
+          eventCoordinatorCompanyAddress: null,
           socialMedia: normalizeCoordinatorSocialMedia(socialMedia),
-          ...buildCoordinatorAddressUpdate(req.body),
-          eventCoordinatorAddressLine1:
-            eventCoordinatorAddressLine1 || eventCoordinatorCompanyAddress || null,
-          eventCoordinatorAddressLine2: eventCoordinatorAddressLine2 || '',
-          eventCoordinatorAddressCity: eventCoordinatorAddressCity || null,
-          eventCoordinatorAddressState: eventCoordinatorAddressState || null,
-          eventCoordinatorAddressZip: eventCoordinatorAddressZip || null,
-          eventCoordinatorFormattedAddress:
-            eventCoordinatorFormattedAddress || eventCoordinatorCompanyAddress || null,
-          eventCoordinatorPlaceId: eventCoordinatorPlaceId || null,
           eventCoordinatorExpectsTicketSales: Boolean(eventCoordinatorExpectsTicketSales),
           eventCoordinatorExpectsVendorFees: Boolean(eventCoordinatorExpectsVendorFees),
           eventCoordinatorPayoutEligibility: 'DISABLED',
-          ...coordinatorTaxUpdate,
         }
       : {
           eventCoordinatorCompanyName: null,
