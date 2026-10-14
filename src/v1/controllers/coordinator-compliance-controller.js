@@ -75,7 +75,7 @@ const buildComplianceSummary = ({ profile, session, requiresPayout }) => {
     ? 'BUSINESS_LICENSE'
     : 'DRIVER_LICENSE_FRONT';
   const hasRequiredDocument = (profile?.documents || []).some(
-    (document) => document.document_type === requiredDocumentType
+    (document) => document.document_type === requiredDocumentType && document.ocr_status === 'completed'
   );
   const hasProfile = Boolean(profile?.party_type && profile?.legal_name);
   const hasBusinessFields = profile?.party_type !== 'BUSINESS' || Boolean(
@@ -88,7 +88,7 @@ const buildComplianceSummary = ({ profile, session, requiresPayout }) => {
   if (requiresPayout) {
     requirements.push(
       { key: 'TAX_ID', label: 'EIN or SSN', complete: Boolean(profile?.tax_id_encrypted) },
-      { key: 'W9', label: 'Signed W-9', complete: session?.status === 'SIGNED' },
+      { key: 'W9', label: 'Signed W-9', complete: session?.verification_status === 'PASSED' },
       // A signed document is not provider verification. Keep this visible in
       // the score until the Cobalt/ComplyCube result is recorded.
       { key: 'IDENTITY_VERIFICATION', label: 'Identity verification', complete: false }
@@ -109,6 +109,22 @@ const buildComplianceSummary = ({ profile, session, requiresPayout }) => {
 const coordinatorVerificationPending = (profile, session) => Boolean(
   profile?.tax_id_encrypted && session?.status === 'SIGNED'
 );
+
+const enqueueCoordinatorW9Ocr = async (session) => {
+  const result = await enqueueComplianceOcr({
+    document: {
+      document_id: session.ocr_document_id,
+      file_url: session.signed_document_url,
+      file_key: session.signed_document_key,
+      mime_type: 'application/pdf',
+      document_type: 'W9',
+    },
+    requirement: W9_OCR_REQUIREMENT,
+    callbackType: 'coordinator_compliance',
+  });
+  Object.assign(session, result);
+  return session;
+};
 
 const getOrMigrateProfile = async (coordinator) => {
   let profile = await CoordinatorComplianceProfileModel.findOne({ coordinator_user_id: coordinator._id });
@@ -288,18 +304,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
         status: 'SIGNED',
       }).sort({ created_at: -1 });
       if (session && !['queued', 'processing', 'completed'].includes(session.ocr_status)) {
-        const result = await enqueueComplianceOcr({
-          document: {
-            document_id: session.ocr_document_id,
-            file_url: session.signed_document_url,
-            file_key: session.signed_document_key,
-            mime_type: 'application/pdf',
-            document_type: 'W9',
-          },
-          requirement: W9_OCR_REQUIREMENT,
-          callbackType: 'coordinator_compliance',
-        });
-        Object.assign(session, result);
+        await enqueueCoordinatorW9Ocr(session);
         await session.save();
         queued.push('Signed W-9');
       }
@@ -498,9 +503,13 @@ exports.completeW9Signing = async (req, res, next) => {
     session.verification_status = 'PENDING';
     session.completed_at = new Date();
     session.error_message = null;
+    // This mirrors the vendor W-9 lifecycle: a completed DocuSign envelope
+    // immediately becomes a queued OCR document, without requiring another
+    // customer action.
+    await enqueueCoordinatorW9Ocr(session);
     await session.save();
 
-    return res.data({ w9_session: toSafeSession(session), pending_verification: true }, 'Signed coordinator W-9 received and awaiting verification');
+    return res.data({ w9_session: toSafeSession(session), pending_ocr: true }, 'Signed coordinator W-9 received and submitted for verification');
   } catch (error) {
     return next(error);
   }
