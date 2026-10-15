@@ -538,9 +538,27 @@ exports.vendorComplianceOcrResult = async (req, res) => {
   }
 };
 
-exports.coordinatorComplianceOcrResult = async (req, res, next) => {
+exports.coordinatorComplianceOcrResult = async (req, res) => {
   if (!authorizeBackendWebhook(req, res)) return;
-  return CoordinatorComplianceController.ocrResult(req, res, next);
+  try {
+    // The coordinator route persists to an isolated profile rather than a
+    // vendor document. Keep its error contract aligned with the vendor OCR
+    // callback so the OCR worker receives a usable failure reason instead of
+    // a generic 500 body. Do not log callback payloads: they can include PII.
+    return await CoordinatorComplianceController.ocrResult(req, res, (error) => {
+      throw error;
+    });
+  } catch (error) {
+    console.error('Coordinator compliance OCR callback failed:', {
+      name: error?.name || 'Error',
+      code: error?.code || 500,
+      message: error?.message || 'Coordinator compliance OCR result failed',
+    });
+    return res.status(error?.code || 500).json({
+      success: false,
+      message: error?.message || 'Coordinator compliance OCR result failed',
+    });
+  }
 };
 
 exports.vendorComplianceProviderResult = async (req, res) => {
