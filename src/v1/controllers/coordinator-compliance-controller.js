@@ -219,6 +219,18 @@ exports.saveProfile = async (req, res, next) => {
     if (partyType === 'BUSINESS' && !String(req.body?.business_address || '').trim()) {
       throw buildError('Business address is required.');
     }
+    // A correction to the comparison data is a meaningful OCR change even
+    // when the uploaded file itself is unchanged. Preserve the document, but
+    // make the affected comparison eligible for the one shared Save & Run OCR
+    // action again. This is the same evidence lifecycle the vendor screen
+    // applies after a profile/document correction.
+    const previousProfile = await CoordinatorComplianceProfileModel.findOne({
+      coordinator_user_id: coordinator._id,
+    });
+    const normalizeIdentity = (value) => String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
+    const previousTaxId = previousProfile?.tax_id_encrypted
+      ? taxDigits(EncryptionService.decrypt(previousProfile.tax_id_encrypted))
+      : '';
     const profile = await CoordinatorComplianceProfileModel.findOneAndUpdate(
       { coordinator_user_id: coordinator._id },
       {
@@ -246,6 +258,41 @@ exports.saveProfile = async (req, res, next) => {
       profile.tax_id_masked = maskTaxId(taxId, taxIdType);
       await profile.save();
     }
+
+    const identityChanged = Boolean(previousProfile) && (
+      previousProfile.party_type !== partyType ||
+      normalizeIdentity(previousProfile.legal_name) !== normalizeIdentity(legalName)
+    );
+    const taxIdChanged = Boolean(previousProfile && (taxId || taxIdType)) && (
+      previousProfile.tax_id_type !== taxIdType || previousTaxId !== taxId
+    );
+    if (identityChanged) {
+      const requiredDocumentType = partyType === 'BUSINESS' ? 'BUSINESS_LICENSE' : 'DRIVER_LICENSE_FRONT';
+      const document = (profile.documents || []).find((item) => item.document_type === requiredDocumentType);
+      if (document) {
+        document.ocr_status = 'not_configured';
+        document.ocr_requested_at = null;
+        document.ocr_completed_at = null;
+        document.ocr_error_message = null;
+        document.review_status = 'pending_review';
+        profile.markModified('documents');
+      }
+    }
+    if (identityChanged || taxIdChanged) {
+      const signedW9 = await CoordinatorComplianceW9EnvelopeModel.findOne({
+        coordinator_user_id: coordinator._id,
+        status: 'SIGNED',
+      }).sort({ created_at: -1 });
+      if (signedW9) {
+        signedW9.ocr_status = 'not_configured';
+        signedW9.ocr_requested_at = null;
+        signedW9.ocr_completed_at = null;
+        signedW9.ocr_error_message = null;
+        signedW9.verification_status = 'PENDING';
+        await signedW9.save();
+      }
+    }
+    if (identityChanged) await profile.save();
     return res.data({ profile: toSafeProfile(profile) }, 'Coordinator compliance profile saved');
   } catch (error) {
     return next(error);
