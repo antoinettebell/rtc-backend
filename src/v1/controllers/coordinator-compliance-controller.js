@@ -21,6 +21,9 @@ const buildError = (message, code = 400) => Object.assign(new Error(message), { 
 
 const DRIVER_LICENSE_OCR_REQUIREMENT = { ocrFields: ['name'] };
 const COORDINATOR_OCR_COMPARISON_RULE_VERSION = 2;
+// Version 3 is a one-time, W-9-only diagnostic refresh. It does not affect
+// the separately verified driver license or vendor compliance records.
+const COORDINATOR_W9_OCR_COMPARISON_RULE_VERSION = 3;
 const W9_OCR_REQUIREMENT = {
   ocrFields: ['ein', 'business_name', 'tax_classification', 'signature_date'],
 };
@@ -324,7 +327,7 @@ exports.saveProfile = async (req, res, next) => {
       w9ComparisonSnapshot(profile)
     );
     const w9RulesChanged = Boolean(signedW9) &&
-      signedW9.ocr_comparison_rule_version !== COORDINATOR_OCR_COMPARISON_RULE_VERSION;
+      signedW9.ocr_comparison_rule_version !== COORDINATOR_W9_OCR_COMPARISON_RULE_VERSION;
     if (identityChanged || taxIdChanged || w9ComparisonChanged || w9RulesChanged) {
       if (signedW9) {
         signedW9.ocr_status = 'not_configured';
@@ -418,7 +421,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
       }).sort({ created_at: -1 });
       if (shouldSubmitCoordinatorOcr(session)) {
         session.ocr_comparison_snapshot = w9ComparisonSnapshot(profile);
-        session.ocr_comparison_rule_version = COORDINATOR_OCR_COMPARISON_RULE_VERSION;
+        session.ocr_comparison_rule_version = COORDINATOR_W9_OCR_COMPARISON_RULE_VERSION;
         await enqueueCoordinatorW9Ocr(session);
         await session.save();
         queued.push('Signed W-9');
@@ -500,6 +503,18 @@ exports.ocrResult = async (req, res, next) => {
       profileDigits: profileTaxId,
     });
     const taxIdMatches = taxIdentifierOcrOutcome === 'MATCHED';
+    // Diagnostic metadata only: do not log an extracted name, tax ID, OCR
+    // text, or callback body. This distinguishes a missing W-9 field from a
+    // comparison rule mismatch in the deployed flow.
+    console.info('Coordinator W-9 OCR comparison', {
+      documentId,
+      partyType: w9Profile.party_type,
+      taxpayerNamePresent: Boolean(extractedFields.taxpayer_name),
+      businessNamePresent: Boolean(extractedFields.business_name),
+      extractedNameCount: extractedNames.length,
+      nameMatched: businessNameMatches,
+      taxIdentifierOutcome: taxIdentifierOcrOutcome,
+    });
     ['raw_text', 'lines', 'words', 'text', 'ocr_text', 'detected_text', 'full_text', 'tax_identifier', 'ein', 'ssn'].forEach((key) => delete extractedFields[key]);
     session.extracted_fields = {
       business_name_match: businessNameMatches,
@@ -636,7 +651,7 @@ exports.completeW9Signing = async (req, res, next) => {
     session.error_message = null;
     const profile = await CoordinatorComplianceProfileModel.findOne({ coordinator_user_id: coordinator._id });
     session.ocr_comparison_snapshot = w9ComparisonSnapshot(profile);
-    session.ocr_comparison_rule_version = COORDINATOR_OCR_COMPARISON_RULE_VERSION;
+    session.ocr_comparison_rule_version = COORDINATOR_W9_OCR_COMPARISON_RULE_VERSION;
     // This mirrors the vendor W-9 lifecycle: a completed DocuSign envelope
     // immediately becomes a queued OCR document, without requiring another
     // customer action.
