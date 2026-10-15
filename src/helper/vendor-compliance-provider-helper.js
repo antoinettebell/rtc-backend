@@ -210,7 +210,11 @@ const startCobaltEinChecks = async (foodTruck) => {
     currentRecord({ foodTruck, provider: 'COBALT', checkType: 'TIN' }),
     currentRecord({ foodTruck, provider: 'COBALT', checkType: 'SOS' }),
   ]);
-  if (activeOrTerminalRecord(existingTin) && activeOrTerminalRecord(existingSos)) {
+  const shouldStartTin = !activeOrTerminalRecord(existingTin);
+  // A failed SOS lookup is safe to retry on an explicit user action.  Do not
+  // resend an existing TIN request: Cobalt flags duplicate TIN submissions.
+  const shouldStartSos = !existingSos || ['FAILED', 'RETRYABLE_ERROR'].includes(existingSos.status);
+  if (!shouldStartTin && !shouldStartSos) {
     return [existingTin, existingSos];
   }
   const tin = formatEinForCobalt(EncryptionService.decrypt(foodTruck.tax_identifier_encrypted));
@@ -219,28 +223,34 @@ const startCobaltEinChecks = async (foodTruck) => {
     throw new Error('EIN verification profile is incomplete');
   }
   const headers = { Accept: 'application/json', 'x-api-key': process.env.COBALT_API_KEY };
-  const tinResponse = await axios.get('https://apigateway.cobaltintelligence.com/tinVerification', {
-    params: { tin, businessName }, headers, timeout: 20000,
-  });
-  const tinResult = tinResponse.data || {};
-  const tinRecord = await upsert({ foodTruck, provider: 'COBALT', checkType: 'TIN', values: {
-    status: normalizeCobaltTin(tinResult), request_fingerprint: fingerprint(`EIN:${foodTruck.tax_identifier_masked}`),
-    safe_result_code: tinResult.irsCode === undefined ? null : String(tinResult.irsCode), safe_reason: safeReason(tinResult.irsReason), submitted_at: new Date(),
-  } });
-  const sosResponse = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
-    params: cobaltSosParams(businessName, foodTruck.business_registration_state), headers, timeout: 35000,
-  });
-  const sos = sosResponse.data || {};
-  const sosStatus = normalizeCobaltSos(sos, foodTruck);
-  const sosRecord = await upsert({ foodTruck, provider: 'COBALT', checkType: 'SOS', values: {
-    status: sosStatus, provider_reference: sos.retryId || sos.requestId || null,
-    safe_reason: sosStatus === 'PENDING'
-      ? 'Secretary of State search pending.'
-      : sosStatus === 'PASSED'
-        ? 'Secretary of State record matched the legal business profile.'
-        : 'Secretary of State result did not satisfy the legal business profile check.',
-    submitted_at: new Date(),
-  } });
+  let tinRecord = existingTin;
+  if (shouldStartTin) {
+    const tinResponse = await axios.get('https://apigateway.cobaltintelligence.com/tinVerification', {
+      params: { tin, businessName }, headers, timeout: 20000,
+    });
+    const tinResult = tinResponse.data || {};
+    tinRecord = await upsert({ foodTruck, provider: 'COBALT', checkType: 'TIN', values: {
+      status: normalizeCobaltTin(tinResult), request_fingerprint: fingerprint(`EIN:${foodTruck.tax_identifier_masked}`),
+      safe_result_code: tinResult.irsCode === undefined ? null : String(tinResult.irsCode), safe_reason: safeReason(tinResult.irsReason), submitted_at: new Date(),
+    } });
+  }
+  let sosRecord = existingSos;
+  if (shouldStartSos) {
+    const sosResponse = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
+      params: cobaltSosParams(businessName, foodTruck.business_registration_state), headers, timeout: 35000,
+    });
+    const sos = sosResponse.data || {};
+    const sosStatus = normalizeCobaltSos(sos, foodTruck);
+    sosRecord = await upsert({ foodTruck, provider: 'COBALT', checkType: 'SOS', values: {
+      status: sosStatus, provider_reference: sos.retryId || sos.requestId || null,
+      safe_reason: sosStatus === 'PENDING'
+        ? 'Secretary of State search pending.'
+        : sosStatus === 'PASSED'
+          ? 'Secretary of State record matched the legal business profile.'
+          : 'Secretary of State result did not satisfy the legal business profile check.',
+      submitted_at: new Date(),
+    } });
+  }
   return [tinRecord, sosRecord];
 };
 
@@ -257,7 +267,9 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
     check_type: checkType,
   }).exec();
   const [existingTin, existingSos] = await Promise.all([recordFor('TIN'), recordFor('SOS')]);
-  if (activeOrTerminalRecord(existingTin) && activeOrTerminalRecord(existingSos)) {
+  const shouldStartTin = !activeOrTerminalRecord(existingTin);
+  const shouldStartSos = !existingSos || ['FAILED', 'RETRYABLE_ERROR'].includes(existingSos.status);
+  if (!shouldStartTin && !shouldStartSos) {
     return [existingTin, existingSos];
   }
   const tin = formatEinForCobalt(EncryptionService.decrypt(profile.tax_id_encrypted));
@@ -276,38 +288,44 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
     { $set: values },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
-  const tinResponse = await axios.get('https://apigateway.cobaltintelligence.com/tinVerification', {
-    params: { tin, businessName }, headers, timeout: 20000,
-  });
-  const tinResult = tinResponse.data || {};
-  const tinRecord = await save('TIN', {
-    status: normalizeCobaltTin(tinResult),
-    request_fingerprint: fingerprint(`EIN:${profile.tax_id_masked}`),
-    safe_result_code: tinResult.irsCode === undefined ? null : String(tinResult.irsCode),
-    safe_reason: safeReason(tinResult.irsReason),
-    submitted_at: new Date(),
-  });
-  const sosResponse = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
-    params: cobaltSosParams(businessName, profile.registration_state),
-    headers,
-    timeout: 35000,
-  });
-  const sos = sosResponse.data || {};
-  const sosStatus = normalizeCobaltSos(sos, {
-    legal_business_name: profile.legal_name,
-    dba: profile.dba_name,
-    business_registration_state: profile.registration_state,
-  });
-  const sosRecord = await save('SOS', {
-    status: sosStatus,
-    provider_reference: sos.retryId || sos.requestId || null,
-    safe_reason: sosStatus === 'PENDING'
-      ? 'Secretary of State search pending.'
-      : sosStatus === 'PASSED'
-        ? 'Secretary of State record matched the legal business profile.'
-        : 'Secretary of State result did not satisfy the legal business profile check.',
-    submitted_at: new Date(),
-  });
+  let tinRecord = existingTin;
+  if (shouldStartTin) {
+    const tinResponse = await axios.get('https://apigateway.cobaltintelligence.com/tinVerification', {
+      params: { tin, businessName }, headers, timeout: 20000,
+    });
+    const tinResult = tinResponse.data || {};
+    tinRecord = await save('TIN', {
+      status: normalizeCobaltTin(tinResult),
+      request_fingerprint: fingerprint(`EIN:${profile.tax_id_masked}`),
+      safe_result_code: tinResult.irsCode === undefined ? null : String(tinResult.irsCode),
+      safe_reason: safeReason(tinResult.irsReason),
+      submitted_at: new Date(),
+    });
+  }
+  let sosRecord = existingSos;
+  if (shouldStartSos) {
+    const sosResponse = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
+      params: cobaltSosParams(businessName, profile.registration_state),
+      headers,
+      timeout: 35000,
+    });
+    const sos = sosResponse.data || {};
+    const sosStatus = normalizeCobaltSos(sos, {
+      legal_business_name: profile.legal_name,
+      dba: profile.dba_name,
+      business_registration_state: profile.registration_state,
+    });
+    sosRecord = await save('SOS', {
+      status: sosStatus,
+      provider_reference: sos.retryId || sos.requestId || null,
+      safe_reason: sosStatus === 'PENDING'
+        ? 'Secretary of State search pending.'
+        : sosStatus === 'PASSED'
+          ? 'Secretary of State record matched the legal business profile.'
+          : 'Secretary of State result did not satisfy the legal business profile check.',
+      submitted_at: new Date(),
+    });
+  }
   return [tinRecord, sosRecord];
 };
 
