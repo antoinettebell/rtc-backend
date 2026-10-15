@@ -84,9 +84,28 @@ const currentRecord = ({ foodTruck, provider, checkType }) =>
 const activeOrTerminalRecord = (record) =>
   record && ['PENDING', 'PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(record.status);
 
+// A provider result normally arrives through the signed webhook. This manual
+// refresh is deliberately limited to an already-pending ComplyCube check so a
+// user can recover from a previously disabled/misconfigured webhook without
+// creating a duplicate check or resending any identity fields.
+const refreshPendingComplyCubeCheck = async (record) => {
+  if (!record || record.status !== 'PENDING' || !record.provider_reference) return record;
+  const response = await axios.get(`https://api.complycube.com/v1/checks/${record.provider_reference}`, {
+    headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000,
+  });
+  const check = response.data || {};
+  record.status = normalizeComplyCube(check);
+  record.safe_result_code = String(check?.result?.outcome || check?.outcome || '').toLowerCase() || null;
+  record.safe_reason = record.status === 'MANUAL_REVIEW' ? 'ComplyCube requires attention.' : null;
+  if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(record.status)) record.completed_at = new Date();
+  await record.save();
+  return record;
+};
+
 const startComplyCubeSsnCheck = async (foodTruck) => {
   if (!enabled() || !process.env.COMPLYCUBE_API_KEY) return null;
   const existing = await currentRecord({ foodTruck, provider: 'COMPLYCUBE', checkType: 'SSN' });
+  if (existing?.status === 'PENDING') return refreshPendingComplyCubeCheck(existing);
   if (activeOrTerminalRecord(existing)) return existing;
   const user = await UserModel.findById(foodTruck.userId).lean();
   const ssn = formatSsnForComplyCube(EncryptionService.decrypt(foodTruck.tax_identifier_encrypted));
@@ -131,6 +150,7 @@ const startCoordinatorComplyCubeSsnCheck = async ({ coordinator, profile }) => {
     provider: 'COMPLYCUBE',
     check_type: 'SSN',
   }).exec();
+  if (existing?.status === 'PENDING') return refreshPendingComplyCubeCheck(existing);
   if (activeOrTerminalRecord(existing)) return existing;
   const name = coordinatorNameParts(profile.legal_name);
   const ssn = formatSsnForComplyCube(EncryptionService.decrypt(profile.tax_id_encrypted));
