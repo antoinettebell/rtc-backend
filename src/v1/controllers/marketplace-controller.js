@@ -135,6 +135,7 @@ const {
   MarketplacePaymentModel,
   MarketplaceVendorNotificationModel,
   OperationalNotificationModel,
+  CoordinatorComplianceProfileModel,
 } = require('../../models');
 const {
   SUBMISSION_TYPES,
@@ -2456,10 +2457,21 @@ const assertCustomerEventCoordinator = async (userId) => {
     await customer.save();
   }
 
+  // Coordinator tax identity now lives in the isolated compliance profile.
+  // Continue accepting legacy records above, but never reject a coordinator
+  // whose verified EIN/SSN was intentionally moved out of the customer user
+  // profile.
+  const complianceProfile = customer && !customer.eventCoordinatorTaxIdEncrypted
+    ? await CoordinatorComplianceProfileModel.findOne({
+      coordinator_user_id: customer._id,
+      tax_id_encrypted: { $nin: [null, ''] },
+    }).select('_id')
+    : null;
+
   if (
     !customer ||
     !customer.isEventCoordinator ||
-    !customer.eventCoordinatorTaxIdEncrypted
+    (!customer.eventCoordinatorTaxIdEncrypted && !complianceProfile)
   ) {
     throw buildError(
       'Event coordination profile with tax ID is required to access My Events.',
