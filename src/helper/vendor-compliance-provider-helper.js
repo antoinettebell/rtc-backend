@@ -85,7 +85,7 @@ const startComplyCubeSsnCheck = async (foodTruck) => {
   if (activeOrTerminalRecord(existing)) return existing;
   const user = await UserModel.findById(foodTruck.userId).lean();
   const ssn = EncryptionService.decrypt(foodTruck.tax_identifier_encrypted);
-  if (!ssn || !user?.firstName || !user?.lastName) throw new Error('SSN verification profile is incomplete');
+  if (!ssn || !user?.firstName || !user?.lastName || !user?.email) throw new Error('SSN verification profile is incomplete');
   const previous = await VendorComplianceProviderVerificationModel.findOne({
     food_truck_id: foodTruck._id,
     provider: 'COMPLYCUBE',
@@ -93,7 +93,7 @@ const startComplyCubeSsnCheck = async (foodTruck) => {
     provider_client_reference: { $ne: null },
   }).sort({ created_at: -1 }).lean();
   const clientPayload = {
-    type: 'person', externalId: `rtc-vendor-${foodTruck._id}`,
+    type: 'person', email: user.email, externalId: `rtc-vendor-${foodTruck._id}`,
     personDetails: { firstName: user.firstName, lastName: user.lastName, ssn },
   };
   const requestOptions = { headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000 };
@@ -129,7 +129,7 @@ const startCoordinatorComplyCubeSsnCheck = async ({ coordinator, profile }) => {
   if (activeOrTerminalRecord(existing)) return existing;
   const name = coordinatorNameParts(profile.legal_name);
   const ssn = EncryptionService.decrypt(profile.tax_id_encrypted);
-  if (!name || !ssn) throw new Error('SSN verification profile is incomplete');
+  if (!name || !ssn || !coordinator?.email) throw new Error('SSN verification profile is incomplete');
   const previous = await CoordinatorComplianceProviderVerificationModel.findOne({
     coordinator_user_id: coordinator._id,
     provider: 'COMPLYCUBE',
@@ -138,6 +138,7 @@ const startCoordinatorComplyCubeSsnCheck = async ({ coordinator, profile }) => {
   }).sort({ created_at: -1 }).lean();
   const clientPayload = {
     type: 'person',
+    email: coordinator.email,
     externalId: `rtc-coordinator-${coordinator._id}`,
     personDetails: { ...name, ssn },
   };
