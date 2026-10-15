@@ -767,7 +767,7 @@ const startExternalVerificationWhenInternalChecksPass = async (foodTruckId) => {
   for (const document of documents || []) {
     if (!latestByType[document.document_type]) latestByType[document.document_type] = document;
   }
-  const internalChecksPass = ['BUSINESS_LICENSE', 'W9', taxProofType]
+  const internalChecksPass = ['BUSINESS_LICENSE', 'W9', taxProofType].filter(Boolean)
     .every((documentType) => isVerifiedActiveDocument(latestByType[documentType]));
   if (!internalChecksPass) return null;
 
