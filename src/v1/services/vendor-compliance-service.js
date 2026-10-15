@@ -757,7 +757,7 @@ const beginProfileRevalidation = async ({ foodTruck, actor = null, previousIdent
 // adapter reuses the active record for the current verification cycle.
 const startExternalVerificationWhenInternalChecksPass = async (foodTruckId) => {
   const foodTruck = await FoodTruckModel.findById(foodTruckId)
-    .select('+tax_identifier_encrypted tax_identifier_type tax_identifier_masked legal_business_name dba name business_registration_state compliance_verification_cycle userId')
+    .select('+tax_identifier_encrypted tax_identifier_type tax_identifier_masked legal_business_name dba name legal_business_type business_registration_state compliance_verification_cycle userId')
     .exec();
   if (!foodTruck) return null;
 
