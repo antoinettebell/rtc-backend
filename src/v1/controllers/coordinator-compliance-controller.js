@@ -121,6 +121,20 @@ const enqueueCoordinatorW9Ocr = async (session) => {
   return session;
 };
 
+// Mirror the vendor lifecycle: normal Save & Run OCR submits new evidence
+// only, but may recover a request that has remained queued for two minutes.
+// This prevents duplicate active jobs while allowing a failed handoff to be
+// retried from the one shared save action.
+const shouldSubmitCoordinatorOcr = (record) => {
+  if (!record) return false;
+  if (record.ocr_status === 'not_configured') return true;
+  if (record.ocr_status !== 'queued') return false;
+  const requestedAt = record.ocr_requested_at
+    ? new Date(record.ocr_requested_at).getTime()
+    : 0;
+  return !requestedAt || Date.now() - requestedAt >= 2 * 60 * 1000;
+};
+
 const getOrMigrateProfile = async (coordinator) => {
   let profile = await CoordinatorComplianceProfileModel.findOne({ coordinator_user_id: coordinator._id });
   if (profile) return profile;
@@ -279,7 +293,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
       const license = (profile.documents || []).find(
         (document) => document.document_type === 'DRIVER_LICENSE_FRONT'
       );
-      if (license && !['queued', 'processing', 'completed'].includes(license.ocr_status)) {
+      if (shouldSubmitCoordinatorOcr(license)) {
         if (!license.document_id) license.document_id = require('uuid').v4();
         const result = await enqueueComplianceOcr({
           document: license,
@@ -298,7 +312,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
         coordinator_user_id: coordinator._id,
         status: 'SIGNED',
       }).sort({ created_at: -1 });
-      if (session && !['queued', 'processing', 'completed'].includes(session.ocr_status)) {
+      if (shouldSubmitCoordinatorOcr(session)) {
         await enqueueCoordinatorW9Ocr(session);
         await session.save();
         queued.push('Signed W-9');

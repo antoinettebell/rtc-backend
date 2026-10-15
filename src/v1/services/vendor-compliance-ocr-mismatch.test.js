@@ -134,5 +134,15 @@ assert.match(
   /const extractedTaxId = taxDigits\(extractedFields\.tax_identifier \|\| extractedFields\.ein \|\| extractedFields\.ssn\)/,
   'Coordinator W-9 OCR must use the vendor tax-ID sanitizer'
 );
+assert.match(
+  coordinatorSource,
+  /Date\.now\(\) - requestedAt >= 2 \* 60 \* 1000/,
+  'Coordinator OCR must retry a queued handoff only after the vendor two-minute stale-request window'
+);
+assert.match(
+  coordinatorSource,
+  /record\.ocr_status === 'not_configured'/,
+  'Coordinator Save & Run OCR must continue to submit new evidence only'
+);
 
 console.log('vendor compliance OCR mismatch tests passed');
