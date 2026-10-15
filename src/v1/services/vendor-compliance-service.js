@@ -667,15 +667,6 @@ const assertEligible = async (foodTruckOrId, actionLabel = 'continue') => {
   return summary;
 };
 
-const getDocumentBusinessName = (document = {}) =>
-  getFirstFieldValue(document.extracted_fields || {}, [
-    'legal_business_name',
-    'business_name',
-    'taxpayer_name',
-    'name',
-    'insured_name',
-  ]);
-
 const getDocumentBusinessNames = (document = {}) => {
   const fields = document.extracted_fields || {};
   return [
@@ -688,8 +679,9 @@ const getDocumentBusinessNames = (document = {}) => {
 };
 
 // Tax identifiers are deliberately never retained in OCR metadata. A tax-ID
-// edit therefore requires a fresh W-9/tax-proof scan, while a name-only edit
-// preserves documents whose OCR-captured name remains valid.
+// edit requires a fresh W-9/tax-proof scan. A legal-name or DBA correction
+// revalidates every active identity document so each OCR comparison is tied to
+// the current vendor profile.
 const beginProfileRevalidation = async ({ foodTruck, actor = null, previousIdentity = {} }) => {
   const currentIdentity = {
     legal_business_name: foodTruck.legal_business_name || null,
@@ -717,9 +709,8 @@ const beginProfileRevalidation = async ({ foodTruck, actor = null, previousIdent
   const revalidationCycle = getVerificationCycle(foodTruck) + 1;
   for (const document of documents) {
     const affectsTax = ['W9', taxProofType].includes(document.document_type);
-    const capturedName = getDocumentBusinessName(document);
-    const nameStillMatches = !capturedName || nameMatchesProfile(foodTruck, capturedName);
-    if ((taxChanged && affectsTax) || (nameChanged && !nameStillMatches)) {
+    const isIdentityEvidence = ['BUSINESS_LICENSE', 'W9', 'SSN_CARD'].includes(document.document_type);
+    if ((taxChanged && affectsTax) || (nameChanged && isIdentityEvidence)) {
       document.review_status = 'revalidation_needed';
       document.ocr_status = 'revalidation_needed';
       document.revalidation_cycle = revalidationCycle;
