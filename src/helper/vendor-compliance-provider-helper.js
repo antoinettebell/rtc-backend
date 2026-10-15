@@ -13,6 +13,11 @@ const enabled = () => String(process.env.COMPLIANCE_EXTERNAL_VERIFICATION_ENABLE
 const fingerprint = (value) => crypto.createHmac('sha256', process.env.COMPLIANCE_FINGERPRINT_SECRET || process.env.ENCRYPTION_SECRET_KEY || 'disabled')
   .update(value).digest('hex');
 const safeReason = (value) => String(value || '').slice(0, 300);
+const formatSsnForComplyCube = (value) => {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (digits.length !== 9) return null;
+  return `${digits.slice(0, 3)}-${digits.slice(3, 5)}-${digits.slice(5)}`;
+};
 const normalizeComplyCube = (check = {}) => {
   const outcome = String(check?.result?.outcome || check?.outcome || '').toLowerCase();
   const status = String(check?.status || '').toLowerCase();
@@ -84,7 +89,7 @@ const startComplyCubeSsnCheck = async (foodTruck) => {
   const existing = await currentRecord({ foodTruck, provider: 'COMPLYCUBE', checkType: 'SSN' });
   if (activeOrTerminalRecord(existing)) return existing;
   const user = await UserModel.findById(foodTruck.userId).lean();
-  const ssn = EncryptionService.decrypt(foodTruck.tax_identifier_encrypted);
+  const ssn = formatSsnForComplyCube(EncryptionService.decrypt(foodTruck.tax_identifier_encrypted));
   if (!ssn || !user?.firstName || !user?.lastName || !user?.email) throw new Error('SSN verification profile is incomplete');
   const previous = await VendorComplianceProviderVerificationModel.findOne({
     food_truck_id: foodTruck._id,
@@ -128,7 +133,7 @@ const startCoordinatorComplyCubeSsnCheck = async ({ coordinator, profile }) => {
   }).exec();
   if (activeOrTerminalRecord(existing)) return existing;
   const name = coordinatorNameParts(profile.legal_name);
-  const ssn = EncryptionService.decrypt(profile.tax_id_encrypted);
+  const ssn = formatSsnForComplyCube(EncryptionService.decrypt(profile.tax_id_encrypted));
   if (!name || !ssn || !coordinator?.email) throw new Error('SSN verification profile is incomplete');
   const previous = await CoordinatorComplianceProviderVerificationModel.findOne({
     coordinator_user_id: coordinator._id,
