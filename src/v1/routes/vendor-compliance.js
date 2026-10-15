@@ -32,6 +32,12 @@ router.post(
 );
 
 router.post(
+  '/food-truck/:foodTruckId/verification',
+  allowedTo(['SUPER_ADMIN', 'VENDOR']),
+  Controller.startExternalVerification
+);
+
+router.post(
   '/food-truck/:foodTruckId/w9/signing',
   allowedTo(['SUPER_ADMIN', 'VENDOR']),
   Controller.startW9Signing

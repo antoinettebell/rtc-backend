@@ -568,6 +568,13 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   const externalPassed = requiredExternalChecks.every(
     (checkType) => externalByType[checkType]?.status === 'PASSED'
   );
+  const externalStatuses = externalRecords.map((record) => record.status);
+  const externalStatus = externalPassed ? 'PASSED'
+    : externalStatuses.includes('PENDING') ? 'PENDING'
+      : externalStatuses.includes('RETRYABLE_ERROR') ? 'RETRYABLE_ERROR'
+        : externalStatuses.includes('MANUAL_REVIEW') ? 'MANUAL_REVIEW'
+          : externalStatuses.includes('FAILED') ? 'FAILED'
+            : 'NOT_STARTED';
   const businessLicenseVerified = isVerifiedActiveDocument(latestByType.BUSINESS_LICENSE, now);
   const w9Verified = isVerifiedActiveDocument(latestByType.W9, now);
   const taxProofType = getTaxProofType(foodTruck);
@@ -579,6 +586,13 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   if (taxProofType) {
     coreComponents.push({ type: 'SSN_CARD', label: 'Social Security Card', verified: taxProofVerified });
   }
+  coreComponents.push({
+    type: 'EXTERNAL_IDENTITY_VERIFICATION',
+    label: selectedTaxIdentifierType === 'SSN'
+      ? 'ComplyCube identity verification'
+      : 'Cobalt business verification',
+    verified: externalPassed,
+  });
   const coreComponentWeight = 100 / coreComponents.length;
   score = Number(coreComponents.reduce(
     (total, component) => total + (component.verified ? coreComponentWeight : 0),
@@ -587,11 +601,16 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   coreComponents.filter((component) => !component.verified).forEach((component) => {
     if (!missingRequirements.includes(component.type)) missingRequirements.push(component.type);
   });
-  const coreCompliant = coreComponents.every((component) => component.verified) &&
+  const internalCoreCompliant = coreComponents
+    .filter((component) => component.type !== 'EXTERNAL_IDENTITY_VERIFICATION')
+    .every((component) => component.verified) &&
     rejectedRequirements.length === 0 && pendingRequirements.length === 0;
+  const coreCompliant = internalCoreCompliant && externalPassed;
   const hasValidCoi = isVerifiedActiveDocument(latestByType.COI, now);
   const eligible = coreCompliant;
-  const hasPendingReview = pendingRequirements.length > 0;
+  const hasPendingReview = pendingRequirements.length > 0 || externalRecords.some(
+    (record) => record.status === 'PENDING'
+  );
   const scoreBand = getScoreBand({ score, eligible, hasPendingReview });
   const complianceMessage = eligible
     ? 'Vendor core compliance is complete.'
@@ -606,10 +625,11 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     score_label: scoreBand.label,
     eligible,
     core_compliant: coreCompliant,
+    internal_core_compliant: internalCoreCompliant,
     event_eligible: coreCompliant && hasValidCoi,
     external_verification: {
       provider: externalProvider,
-      status: externalPassed ? 'PASSED' : (externalRecords[0]?.status || 'NOT_STARTED'),
+      status: externalStatus,
       checks: externalRecords,
     },
     core_components: coreComponents.map((component) => ({ ...component, weight: coreComponentWeight })),
@@ -1754,9 +1774,8 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
   }
   await document.save();
   await updateLinkedFoodTruckDocumentComplianceStatus(document);
-  if (coreIdentityDocument && document.review_status === 'verified') {
-    await startExternalVerificationWhenInternalChecksPass(document.food_truck_id);
-  }
+  // External verification is intentionally user-initiated from the explicit
+  // Verification action. OCR callbacks only establish the internal gate.
   return document;
 };
 
@@ -1875,6 +1894,7 @@ module.exports = {
   calculateComplianceSummary,
   assertEligible,
   beginProfileRevalidation,
+  startExternalVerificationWhenInternalChecksPass,
   getSanitationGradeMap,
   getSanitationGradeFromFields,
   taxDigits,

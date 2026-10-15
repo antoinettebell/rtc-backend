@@ -58,6 +58,7 @@ const schema = new mongoose.Schema({
   tax_id_type: { type: String, enum: ['EIN', 'SSN', null], default: null },
   tax_id_encrypted: { type: String, default: null },
   tax_id_masked: { type: String, default: null },
+  external_verification_cycle: { type: Number, default: 1, min: 1 },
   documents: { type: [documentSchema], default: [] },
 }, { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } });
 

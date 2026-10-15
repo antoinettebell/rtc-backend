@@ -12,6 +12,7 @@ router.get('/me', allowedTo(['CUSTOMER']), Controller.status);
 router.put('/profile', allowedTo(['CUSTOMER']), Controller.saveProfile);
 router.post('/documents', allowedTo(['CUSTOMER']), Upload.single(), Controller.uploadDocument);
 router.post('/ocr', allowedTo(['CUSTOMER']), Controller.submitDocumentsForOcr);
+router.post('/verification', allowedTo(['CUSTOMER']), Controller.startExternalVerification);
 router.post('/w9/signing', allowedTo(['CUSTOMER']), Controller.startW9Signing);
 router.post('/w9/complete', allowedTo(['CUSTOMER']), Controller.completeW9Signing);
 

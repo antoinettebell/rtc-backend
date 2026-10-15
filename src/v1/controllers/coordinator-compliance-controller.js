@@ -15,6 +15,7 @@ const {
 const {
   CoordinatorComplianceW9EnvelopeModel,
   CoordinatorComplianceProfileModel,
+  CoordinatorComplianceProviderVerificationModel,
   UserModel,
 } = require('../../models');
 
@@ -109,7 +110,29 @@ const toSafeProfile = (profile) => {
   };
 };
 
-const buildComplianceSummary = ({ profile, session, requiresPayout }) => {
+const getExternalVerification = async (profile) => {
+  if (!profile?.tax_id_type) return { provider: null, status: 'NOT_STARTED', passed: false, checks: [] };
+  const provider = String(profile.tax_id_type).toUpperCase() === 'SSN' ? 'COMPLYCUBE' : 'COBALT';
+  const checkTypes = provider === 'COMPLYCUBE' ? ['SSN'] : ['TIN', 'SOS'];
+  const checks = await CoordinatorComplianceProviderVerificationModel.find({
+    coordinator_user_id: profile.coordinator_user_id,
+    verification_cycle: Math.max(1, Number(profile.external_verification_cycle || 1)),
+    provider,
+    check_type: { $in: checkTypes },
+  }).lean();
+  const byType = Object.fromEntries(checks.map((item) => [item.check_type, item]));
+  const passed = checkTypes.every((type) => byType[type]?.status === 'PASSED');
+  const statuses = checks.map((item) => item.status);
+  const status = passed ? 'PASSED'
+    : statuses.includes('PENDING') ? 'PENDING'
+      : statuses.includes('RETRYABLE_ERROR') ? 'RETRYABLE_ERROR'
+        : statuses.includes('MANUAL_REVIEW') ? 'MANUAL_REVIEW'
+          : statuses.includes('FAILED') ? 'FAILED'
+            : 'NOT_STARTED';
+  return { provider, status, passed, checks };
+};
+
+const buildComplianceSummary = ({ profile, session, requiresPayout, externalVerification }) => {
   const requiredDocumentType = profile?.party_type === 'BUSINESS'
     ? 'BUSINESS_LICENSE'
     : 'DRIVER_LICENSE_FRONT';
@@ -127,13 +150,18 @@ const buildComplianceSummary = ({ profile, session, requiresPayout }) => {
   if (requiresPayout) {
     requirements.push(
       { key: 'TAX_ID', label: 'EIN or SSN', complete: Boolean(profile?.tax_id_encrypted) },
-      { key: 'W9', label: 'Signed W-9', complete: session?.verification_status === 'PASSED' }
+      { key: 'W9', label: 'Signed W-9', complete: session?.verification_status === 'PASSED' },
+      {
+        key: 'EXTERNAL_IDENTITY_VERIFICATION',
+        label: profile?.tax_id_type === 'SSN' ? 'ComplyCube identity verification' : 'Cobalt business verification',
+        complete: externalVerification?.passed === true,
+      }
     );
   }
   const hasPendingReview = (profile?.documents || []).some((document) =>
     document.review_status === 'pending_review' || ['queued', 'processing'].includes(document.ocr_status)
   ) || (requiresPayout && (
-    session?.verification_status === 'PENDING' || ['queued', 'processing'].includes(session?.ocr_status)
+    session?.verification_status === 'PENDING' || ['queued', 'processing'].includes(session?.ocr_status) || externalVerification?.status === 'PENDING'
   ));
   const completed = requirements.filter((item) => item.complete).length;
   const score = requirements.length ? Math.round((completed / requirements.length) * 100) : 0;
@@ -143,9 +171,10 @@ const buildComplianceSummary = ({ profile, session, requiresPayout }) => {
     score_label: score === 100 ? 'Compliance complete' : hasPendingReview ? 'Pending review' : 'Needs attention',
     requirements,
     remaining: requirements.filter((item) => !item.complete).map((item) => item.label),
-    // External Cobalt/ComplyCube verification is intentionally deferred until
-    // the internal OCR comparison is proven. It must not lower this score.
-    provider_verification_pending: false,
+    // External verification begins only from the explicit Verification action,
+    // after the internal OCR comparison has passed.
+    provider_verification_pending: externalVerification?.status === 'PENDING',
+    external_verification: externalVerification || { provider: null, status: 'NOT_STARTED', checks: [] },
   };
 };
 
@@ -154,9 +183,10 @@ const buildComplianceSummary = ({ profile, session, requiresPayout }) => {
 // completed W-9/license cannot leave the profile incorrectly limited to free
 // events. A coordinator who has not opted into paid capabilities remains
 // disabled regardless of their document score.
-const reconcilePayoutEligibility = async ({ coordinator, profile, session }) => {
+const reconcilePayoutEligibility = async ({ coordinator, profile, session, externalVerification = null }) => {
   const requiresPayout = requiresPayoutCompliance(coordinator);
-  const compliance = buildComplianceSummary({ profile, session, requiresPayout });
+  const verification = externalVerification || await getExternalVerification(profile);
+  const compliance = buildComplianceSummary({ profile, session, requiresPayout, externalVerification: verification });
   const nextEligibility = requiresPayout && compliance.score === 100
     ? 'ENABLED'
     : 'DISABLED';
@@ -307,8 +337,11 @@ exports.saveProfile = async (req, res, next) => {
     const taxId = String(req.body?.tax_id || '').replace(/\D/g, '');
     const taxIdType = String(req.body?.tax_id_type || '').toUpperCase();
     if (taxId || taxIdType) {
-      if (!['EIN', 'SSN'].includes(taxIdType) || taxId.length !== 9) {
-        throw buildError('A nine-digit EIN or SSN is required.');
+      const expectedTaxIdType = partyType === 'BUSINESS' ? 'EIN' : 'SSN';
+      if (taxIdType !== expectedTaxIdType || taxId.length !== 9) {
+        throw buildError(partyType === 'BUSINESS'
+          ? 'A nine-digit EIN is required for a business coordinator.'
+          : 'A nine-digit SSN is required for an individual coordinator.');
       }
       // The encrypted value remains in the compliance record only. Provider
       // selection is intentionally deferred to the verification service.
@@ -325,6 +358,16 @@ exports.saveProfile = async (req, res, next) => {
     const taxIdChanged = Boolean(previousProfile && (taxId || taxIdType)) && (
       previousProfile.tax_id_type !== taxIdType || previousTaxId !== taxId
     );
+    if (identityChanged || taxIdChanged) {
+      profile.external_verification_cycle = Math.max(1, Number(profile.external_verification_cycle || 1)) + 1;
+      await CoordinatorComplianceProviderVerificationModel.updateMany(
+        {
+          coordinator_user_id: coordinator._id,
+          status: { $in: ['NOT_STARTED', 'PENDING', 'PASSED', 'RETRYABLE_ERROR'] },
+        },
+        { $set: { status: 'SUPERSEDED', completed_at: new Date() } }
+      );
+    }
     const requiredDocumentType = partyType === 'BUSINESS' ? 'BUSINESS_LICENSE' : 'DRIVER_LICENSE_FRONT';
     const document = (profile.documents || []).find((item) => item.document_type === requiredDocumentType);
     const documentComparisonChanged = Boolean(document) && !snapshotMatches(
@@ -363,7 +406,7 @@ exports.saveProfile = async (req, res, next) => {
         await signedW9.save();
       }
     }
-    if (identityChanged || documentComparisonChanged || documentRulesChanged) await profile.save();
+    if (identityChanged || taxIdChanged || documentComparisonChanged || documentRulesChanged) await profile.save();
     await reconcilePayoutEligibility({ coordinator, profile, session: signedW9 });
     return res.data({ profile: toSafeProfile(profile) }, 'Coordinator compliance profile saved');
   } catch (error) {
@@ -467,12 +510,51 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
         status: 'SIGNED',
       }).sort({ created_at: -1 })
       : null;
+    const externalVerification = await getExternalVerification(profile);
     return res.data({
       queued,
       profile: toSafeProfile(profile),
       w9_session: toSafeSession(w9Session),
-      compliance: buildComplianceSummary({ profile, session: w9Session, requiresPayout: requiresPayoutCompliance(coordinator) }),
+      compliance: buildComplianceSummary({ profile, session: w9Session, requiresPayout: requiresPayoutCompliance(coordinator), externalVerification }),
     }, queued.length ? 'Coordinator documents submitted for OCR' : 'No changed coordinator documents require OCR');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+exports.startExternalVerification = async (req, res, next) => {
+  try {
+    const coordinator = await getCoordinator(req.user);
+    if (!requiresPayoutCompliance(coordinator)) {
+      throw buildError('Enable ticket sales or vendor-fee payouts before requesting verification.', 409);
+    }
+    const profile = await getOrMigrateProfile(coordinator);
+    const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
+      coordinator_user_id: coordinator._id,
+      status: 'SIGNED',
+    }).sort({ created_at: -1 });
+    const before = buildComplianceSummary({
+      profile,
+      session,
+      requiresPayout: true,
+      externalVerification: await getExternalVerification(profile),
+    });
+    const internalComplete = before.requirements
+      .filter((requirement) => requirement.key !== 'EXTERNAL_IDENTITY_VERIFICATION')
+      .every((requirement) => requirement.complete);
+    if (!internalComplete) {
+      throw buildError('Complete internal compliance before requesting identity verification.', 409);
+    }
+    const ProviderHelper = require('../../helper/vendor-compliance-provider-helper');
+    const isIndividualSsn = profile.party_type === 'INDIVIDUAL' && profile.tax_id_type === 'SSN';
+    const verification = isIndividualSsn
+      ? await ProviderHelper.startCoordinatorComplyCubeSsnCheck({ coordinator, profile })
+      : await ProviderHelper.startCoordinatorCobaltEinChecks({ coordinator, profile });
+    if (!verification || (Array.isArray(verification) && !verification.length)) {
+      throw buildError(isIndividualSsn ? 'ComplyCube verification is not configured.' : 'Cobalt verification is not configured.', 503);
+    }
+    const reconciled = await reconcilePayoutEligibility({ coordinator, profile, session });
+    return res.data({ verification, compliance: reconciled.compliance }, 'Identity verification requested');
   } catch (error) {
     return next(error);
   }

@@ -570,14 +570,16 @@ exports.vendorComplianceProviderResult = async (req, res) => {
     if (!allowedStatuses.has(String(req.body?.status || '').toUpperCase())) {
       return res.status(400).json({ success: false, message: 'Unsupported provider verification status' });
     }
-    const result = await ProviderVerification.applyProviderResult({
+    const payload = {
       provider: req.body?.provider,
       providerReference: req.body?.provider_reference,
       status: req.body?.status,
       safeResultCode: req.body?.safe_result_code,
       safeReason: req.body?.safe_reason,
       webhookEventReference: req.body?.webhook_event_reference,
-    });
+    };
+    const result = await ProviderVerification.applyProviderResult(payload) ||
+      await ProviderVerification.applyCoordinatorProviderResult(payload);
     if (!result) return res.status(404).json({ success: false, message: 'Verification record not found' });
     return res.data({ verification: result }, 'Provider verification result processed');
   } catch (error) {

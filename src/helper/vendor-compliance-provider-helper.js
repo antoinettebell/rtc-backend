@@ -1,6 +1,12 @@
 const axios = require('axios');
 const crypto = require('crypto');
-const { FoodTruckModel, UserModel, VendorComplianceProviderVerificationModel } = require('../models');
+const {
+  FoodTruckModel,
+  UserModel,
+  VendorComplianceProviderVerificationModel,
+  CoordinatorComplianceProviderVerificationModel,
+  CoordinatorComplianceProfileModel,
+} = require('../models');
 const EncryptionService = require('./encryption');
 
 const enabled = () => String(process.env.COMPLIANCE_EXTERNAL_VERIFICATION_ENABLED || 'false').toLowerCase() === 'true';
@@ -105,6 +111,61 @@ const startComplyCubeSsnCheck = async (foodTruck) => {
   } });
 };
 
+const coordinatorNameParts = (legalName) => {
+  const parts = String(legalName || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return null;
+  return { firstName: parts[0], lastName: parts[parts.length - 1] };
+};
+
+const startCoordinatorComplyCubeSsnCheck = async ({ coordinator, profile }) => {
+  if (!enabled() || !process.env.COMPLYCUBE_API_KEY) return null;
+  const verificationCycle = Math.max(1, Number(profile.external_verification_cycle || 1));
+  const existing = await CoordinatorComplianceProviderVerificationModel.findOne({
+    coordinator_user_id: coordinator._id,
+    verification_cycle: verificationCycle,
+    provider: 'COMPLYCUBE',
+    check_type: 'SSN',
+  }).exec();
+  if (activeOrTerminalRecord(existing)) return existing;
+  const name = coordinatorNameParts(profile.legal_name);
+  const ssn = EncryptionService.decrypt(profile.tax_id_encrypted);
+  if (!name || !ssn) throw new Error('SSN verification profile is incomplete');
+  const previous = await CoordinatorComplianceProviderVerificationModel.findOne({
+    coordinator_user_id: coordinator._id,
+    provider: 'COMPLYCUBE',
+    check_type: 'SSN',
+    provider_client_reference: { $ne: null },
+  }).sort({ created_at: -1 }).lean();
+  const clientPayload = {
+    type: 'person',
+    externalId: `rtc-coordinator-${coordinator._id}`,
+    personDetails: { ...name, ssn },
+  };
+  const requestOptions = { headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000 };
+  const clientResponse = previous?.provider_client_reference
+    ? await axios.patch(`https://api.complycube.com/v1/clients/${previous.provider_client_reference}`, clientPayload, requestOptions)
+    : await axios.post('https://api.complycube.com/v1/clients', clientPayload, requestOptions);
+  const clientId = clientResponse.data?.id || previous?.provider_client_reference;
+  const checkResponse = await axios.post('https://api.complycube.com/v1/checks', {
+    clientId,
+    type: 'ssn_check',
+  }, { headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000 });
+  const check = checkResponse.data || {};
+  return CoordinatorComplianceProviderVerificationModel.findOneAndUpdate(
+    { coordinator_user_id: coordinator._id, verification_cycle: verificationCycle, provider: 'COMPLYCUBE', check_type: 'SSN' },
+    {
+      $set: {
+        status: normalizeComplyCube(check),
+        provider_reference: check.id || null,
+        provider_client_reference: clientId || null,
+        request_fingerprint: fingerprint(`SSN:${profile.tax_id_masked}`),
+        submitted_at: new Date(),
+      },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+};
+
 const startCobaltEinChecks = async (foodTruck) => {
   if (!enabled() || !process.env.COBALT_API_KEY) return [];
   if (String(process.env.COBALT_ALLOW_EIN_QUERY_TRANSMISSION || 'false').toLowerCase() !== 'true') {
@@ -148,6 +209,73 @@ const startCobaltEinChecks = async (foodTruck) => {
   return [tinRecord, sosRecord];
 };
 
+const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
+  if (!enabled() || !process.env.COBALT_API_KEY) return [];
+  if (String(process.env.COBALT_ALLOW_EIN_QUERY_TRANSMISSION || 'false').toLowerCase() !== 'true') {
+    throw new Error('Cobalt EIN query transmission requires explicit authorization');
+  }
+  const verificationCycle = Math.max(1, Number(profile.external_verification_cycle || 1));
+  const recordFor = (checkType) => CoordinatorComplianceProviderVerificationModel.findOne({
+    coordinator_user_id: coordinator._id,
+    verification_cycle: verificationCycle,
+    provider: 'COBALT',
+    check_type: checkType,
+  }).exec();
+  const [existingTin, existingSos] = await Promise.all([recordFor('TIN'), recordFor('SOS')]);
+  if (activeOrTerminalRecord(existingTin) && activeOrTerminalRecord(existingSos)) {
+    return [existingTin, existingSos];
+  }
+  const tin = EncryptionService.decrypt(profile.tax_id_encrypted);
+  const businessName = profile.legal_name;
+  if (!tin || !businessName || !profile.registration_state || !profile.entity_type) {
+    throw new Error('EIN verification profile is incomplete');
+  }
+  const headers = { Accept: 'application/json', 'x-api-key': process.env.COBALT_API_KEY };
+  const save = (checkType, values) => CoordinatorComplianceProviderVerificationModel.findOneAndUpdate(
+    {
+      coordinator_user_id: coordinator._id,
+      verification_cycle: verificationCycle,
+      provider: 'COBALT',
+      check_type: checkType,
+    },
+    { $set: values },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  const tinResponse = await axios.get('https://apigateway.cobaltintelligence.com/tinVerification', {
+    params: { tin, businessName }, headers, timeout: 20000,
+  });
+  const tinResult = tinResponse.data || {};
+  const tinRecord = await save('TIN', {
+    status: normalizeCobaltTin(tinResult),
+    request_fingerprint: fingerprint(`EIN:${profile.tax_id_masked}`),
+    safe_result_code: tinResult.irsCode === undefined ? null : String(tinResult.irsCode),
+    safe_reason: safeReason(tinResult.irsReason),
+    submitted_at: new Date(),
+  });
+  const sosResponse = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
+    params: { searchQuery: businessName, state: profile.registration_state, liveData: true },
+    headers,
+    timeout: 35000,
+  });
+  const sos = sosResponse.data || {};
+  const sosStatus = normalizeCobaltSos(sos, {
+    legal_business_name: profile.legal_name,
+    dba: profile.dba_name,
+    business_registration_state: profile.registration_state,
+  });
+  const sosRecord = await save('SOS', {
+    status: sosStatus,
+    provider_reference: sos.retryId || sos.requestId || null,
+    safe_reason: sosStatus === 'PENDING'
+      ? 'Secretary of State search pending.'
+      : sosStatus === 'PASSED'
+        ? 'Secretary of State record matched the legal business profile.'
+        : 'Secretary of State result did not satisfy the legal business profile check.',
+    submitted_at: new Date(),
+  });
+  return [tinRecord, sosRecord];
+};
+
 const pollPendingCobaltSosChecks = async () => {
   if (!enabled() || !process.env.COBALT_API_KEY) return 0;
   if (String(process.env.COBALT_ALLOW_EIN_QUERY_TRANSMISSION || 'false').toLowerCase() !== 'true') return 0;
@@ -182,6 +310,39 @@ const pollPendingCobaltSosChecks = async () => {
       // The retry record remains pending; do not persist provider error bodies.
     }
   }
+  const pendingCoordinatorChecks = await CoordinatorComplianceProviderVerificationModel.find({
+    provider: 'COBALT', check_type: 'SOS', status: 'PENDING', provider_reference: { $ne: null },
+  }).limit(50).exec();
+  for (const record of pendingCoordinatorChecks) {
+    try {
+      const profile = await CoordinatorComplianceProfileModel.findOne({
+        coordinator_user_id: record.coordinator_user_id,
+      }).select('legal_name dba_name registration_state').lean();
+      if (!profile) continue;
+      const response = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
+        params: { retryId: record.provider_reference },
+        headers: { Accept: 'application/json', 'x-api-key': process.env.COBALT_API_KEY },
+        timeout: 35000,
+      });
+      const result = response.data || {};
+      record.status = normalizeCobaltSos(result, {
+        legal_business_name: profile.legal_name,
+        dba: profile.dba_name,
+        business_registration_state: profile.registration_state,
+      });
+      record.provider_reference = result.retryId || record.provider_reference;
+      record.safe_reason = record.status === 'PENDING'
+        ? 'Secretary of State search is still pending.'
+        : record.status === 'PASSED'
+          ? 'Secretary of State record matched the legal business profile.'
+          : 'Secretary of State result did not satisfy the legal business profile check.';
+      if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(record.status)) record.completed_at = new Date();
+      await record.save();
+      processed += 1;
+    } catch (_) {
+      // The retry record remains pending; do not persist provider error bodies.
+    }
+  }
   return processed;
 };
 
@@ -203,4 +364,22 @@ const applyProviderResult = async ({ provider, providerReference, status, safeRe
   return record;
 };
 
-module.exports = { enabled, normalizeComplyCube, normalizeCobaltTin, normalizeCobaltSos, startComplyCubeSsnCheck, startCobaltEinChecks, pollPendingCobaltSosChecks, applyProviderResult };
+const applyCoordinatorProviderResult = async ({ provider, providerReference, status, safeResultCode = null, safeReason = null, webhookEventReference = null }) => {
+  const record = await CoordinatorComplianceProviderVerificationModel.findOne({
+    provider: String(provider || '').toUpperCase(),
+    provider_reference: providerReference,
+  });
+  if (!record) return null;
+  if (webhookEventReference && record.webhook_event_reference === webhookEventReference) return record;
+  const terminal = ['PASSED', 'FAILED', 'MANUAL_REVIEW'];
+  if (terminal.includes(record.status) && record.status !== status) return record;
+  record.status = status;
+  record.safe_result_code = safeResultCode || record.safe_result_code;
+  record.safe_reason = safeReason || record.safe_reason;
+  record.webhook_event_reference = webhookEventReference || record.webhook_event_reference;
+  if (terminal.includes(status)) record.completed_at = new Date();
+  await record.save();
+  return record;
+};
+
+module.exports = { enabled, normalizeComplyCube, normalizeCobaltTin, normalizeCobaltSos, startComplyCubeSsnCheck, startCoordinatorComplyCubeSsnCheck, startCobaltEinChecks, startCoordinatorCobaltEinChecks, pollPendingCobaltSosChecks, applyProviderResult, applyCoordinatorProviderResult };

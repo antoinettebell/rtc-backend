@@ -264,6 +264,25 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
   }
 };
 
+exports.startExternalVerification = async (req, res, next) => {
+  try {
+    const foodTruck = await getVendorFoodTruck(req.user, req.params.foodTruckId);
+    const result = await VendorComplianceService.startExternalVerificationWhenInternalChecksPass(foodTruck._id);
+    if (!result) {
+      const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
+      const error = new Error(summary.internal_core_compliant
+        ? 'Identity verification could not be started. Please try again later.'
+        : 'Complete internal compliance before requesting identity verification.');
+      error.code = 409;
+      throw error;
+    }
+    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
+    return res.data({ verification: result, compliance: summary }, 'Identity verification requested');
+  } catch (e) {
+    return handleError(e, next);
+  }
+};
+
 exports.startW9Signing = async (req, res, next) => {
   try {
     const foodTruck = await getVendorFoodTruck(req.user, req.params.foodTruckId);
