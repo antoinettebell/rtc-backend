@@ -10,6 +10,8 @@ const {
 const EncryptionService = require('./encryption');
 
 const enabled = () => String(process.env.COMPLIANCE_EXTERNAL_VERIFICATION_ENABLED || 'false').toLowerCase() === 'true';
+const cobaltTestMode = () => String(process.env.COBALT_TEST_MODE || 'false').toLowerCase() === 'true';
+const cobaltTestParams = () => cobaltTestMode() ? { test: 'complete' } : {};
 const fingerprint = (value) => crypto.createHmac('sha256', process.env.COMPLIANCE_FINGERPRINT_SECRET || process.env.ENCRYPTION_SECRET_KEY || 'disabled')
   .update(value).digest('hex');
 const safeReason = (value) => String(value || '').slice(0, 300);
@@ -215,7 +217,9 @@ const startCobaltEinChecks = async (foodTruck) => {
   }
   const headers = { Accept: 'application/json', 'x-api-key': process.env.COBALT_API_KEY };
   const tinResponse = await axios.get('https://apigateway.cobaltintelligence.com/tinVerification', {
-    params: { tin, businessName }, headers, timeout: 20000,
+    // Cobalt's test parameter is deliberately opt-in, so fake QA EINs never
+    // reach the normal verification flow unless test mode is explicitly enabled.
+    params: { tin, businessName, ...cobaltTestParams() }, headers, timeout: 20000,
   });
   const tinResult = tinResponse.data || {};
   const tinRecord = await upsert({ foodTruck, provider: 'COBALT', checkType: 'TIN', values: {
@@ -223,7 +227,7 @@ const startCobaltEinChecks = async (foodTruck) => {
     safe_result_code: tinResult.irsCode === undefined ? null : String(tinResult.irsCode), safe_reason: safeReason(tinResult.irsReason), submitted_at: new Date(),
   } });
   const sosResponse = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
-    params: { searchQuery: businessName, state: foodTruck.business_registration_state, liveData: true }, headers, timeout: 35000,
+    params: { searchQuery: businessName, state: foodTruck.business_registration_state, liveData: true, ...cobaltTestParams() }, headers, timeout: 35000,
   });
   const sos = sosResponse.data || {};
   const sosStatus = normalizeCobaltSos(sos, foodTruck);
@@ -272,7 +276,7 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
   const tinResponse = await axios.get('https://apigateway.cobaltintelligence.com/tinVerification', {
-    params: { tin, businessName }, headers, timeout: 20000,
+    params: { tin, businessName, ...cobaltTestParams() }, headers, timeout: 20000,
   });
   const tinResult = tinResponse.data || {};
   const tinRecord = await save('TIN', {
@@ -283,7 +287,7 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
     submitted_at: new Date(),
   });
   const sosResponse = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
-    params: { searchQuery: businessName, state: profile.registration_state, liveData: true },
+    params: { searchQuery: businessName, state: profile.registration_state, liveData: true, ...cobaltTestParams() },
     headers,
     timeout: 35000,
   });
