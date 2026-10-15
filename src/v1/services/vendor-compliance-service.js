@@ -586,13 +586,18 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   if (taxProofType) {
     coreComponents.push({ type: 'SSN_CARD', label: 'Social Security Card', verified: taxProofVerified });
   }
-  coreComponents.push({
-    type: 'EXTERNAL_IDENTITY_VERIFICATION',
-    label: selectedTaxIdentifierType === 'SSN'
-      ? 'ComplyCube identity verification'
-      : 'Cobalt business verification',
-    verified: externalPassed,
-  });
+  if (selectedTaxIdentifierType === 'SSN') {
+    coreComponents.push({
+      type: 'EXTERNAL_IDENTITY_VERIFICATION',
+      label: 'ComplyCube identity verification',
+      verified: externalPassed,
+    });
+  } else {
+    coreComponents.push(
+      { type: 'COBALT_TIN', label: 'EIN verification', verified: externalByType.TIN?.status === 'PASSED' },
+      { type: 'COBALT_SOS', label: 'State verification', verified: externalByType.SOS?.status === 'PASSED' },
+    );
+  }
   const coreComponentWeight = 100 / coreComponents.length;
   score = Number(coreComponents.reduce(
     (total, component) => total + (component.verified ? coreComponentWeight : 0),
@@ -602,7 +607,7 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     if (!missingRequirements.includes(component.type)) missingRequirements.push(component.type);
   });
   const internalCoreCompliant = coreComponents
-    .filter((component) => component.type !== 'EXTERNAL_IDENTITY_VERIFICATION')
+    .filter((component) => !['EXTERNAL_IDENTITY_VERIFICATION', 'COBALT_TIN', 'COBALT_SOS'].includes(component.type))
     .every((component) => component.verified) &&
     rejectedRequirements.length === 0 && pendingRequirements.length === 0;
   const coreCompliant = internalCoreCompliant && externalPassed;

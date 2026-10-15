@@ -148,15 +148,25 @@ const buildComplianceSummary = ({ profile, session, requiresPayout, externalVeri
     { key: requiredDocumentType, label: profile?.party_type === 'BUSINESS' ? 'Business license' : 'Driver license front', complete: hasRequiredDocument },
   ];
   if (requiresPayout) {
+    const cobaltChecks = Object.fromEntries(
+      (externalVerification?.checks || []).map((check) => [check.check_type, check])
+    );
     requirements.push(
       { key: 'TAX_ID', label: 'EIN or SSN', complete: Boolean(profile?.tax_id_encrypted) },
-      { key: 'W9', label: 'Signed W-9', complete: session?.verification_status === 'PASSED' },
-      {
-        key: 'EXTERNAL_IDENTITY_VERIFICATION',
-        label: profile?.tax_id_type === 'SSN' ? 'ComplyCube identity verification' : 'Cobalt business verification',
-        complete: externalVerification?.passed === true,
-      }
+      { key: 'W9', label: 'Signed W-9', complete: session?.verification_status === 'PASSED' }
     );
+    if (String(profile?.tax_id_type).toUpperCase() === 'EIN') {
+      requirements.push(
+        { key: 'COBALT_TIN', label: 'EIN verification', complete: cobaltChecks.TIN?.status === 'PASSED' },
+        { key: 'COBALT_SOS', label: 'State verification', complete: cobaltChecks.SOS?.status === 'PASSED' },
+      );
+    } else {
+      requirements.push({
+        key: 'EXTERNAL_IDENTITY_VERIFICATION',
+        label: 'ComplyCube identity verification',
+        complete: externalVerification?.passed === true,
+      });
+    }
   }
   const hasPendingReview = (profile?.documents || []).some((document) =>
     document.review_status === 'pending_review' || ['queued', 'processing'].includes(document.ocr_status)
