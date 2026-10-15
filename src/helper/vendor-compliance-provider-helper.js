@@ -18,6 +18,10 @@ const formatSsnForComplyCube = (value) => {
   if (digits.length !== 9) return null;
   return `${digits.slice(0, 3)}-${digits.slice(3, 5)}-${digits.slice(5)}`;
 };
+const formatEinForCobalt = (value) => {
+  const digits = String(value || '').replace(/\D/g, '');
+  return digits.length === 9 ? digits : null;
+};
 const normalizeComplyCube = (check = {}) => {
   const outcome = String(check?.result?.outcome || check?.outcome || '').toLowerCase();
   const status = String(check?.status || '').toLowerCase();
@@ -204,7 +208,7 @@ const startCobaltEinChecks = async (foodTruck) => {
   if (activeOrTerminalRecord(existingTin) && activeOrTerminalRecord(existingSos)) {
     return [existingTin, existingSos];
   }
-  const tin = EncryptionService.decrypt(foodTruck.tax_identifier_encrypted);
+  const tin = formatEinForCobalt(EncryptionService.decrypt(foodTruck.tax_identifier_encrypted));
   const businessName = foodTruck.legal_business_name;
   if (!tin || !businessName || !foodTruck.business_registration_state || !foodTruck.legal_business_type) {
     throw new Error('EIN verification profile is incomplete');
@@ -251,7 +255,7 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
   if (activeOrTerminalRecord(existingTin) && activeOrTerminalRecord(existingSos)) {
     return [existingTin, existingSos];
   }
-  const tin = EncryptionService.decrypt(profile.tax_id_encrypted);
+  const tin = formatEinForCobalt(EncryptionService.decrypt(profile.tax_id_encrypted));
   const businessName = profile.legal_name;
   if (!tin || !businessName || !profile.registration_state || !profile.entity_type) {
     throw new Error('EIN verification profile is incomplete');
