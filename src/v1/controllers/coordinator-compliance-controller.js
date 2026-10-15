@@ -307,7 +307,10 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
       }
     }
 
-    if (profile.party_type === 'BUSINESS') {
+    // A signed W-9 is required for either paid coordinator type. The vendor
+    // lifecycle is tax-ID agnostic: business coordinators use EIN, while
+    // individual coordinators use SSN.
+    if (requiresPayoutCompliance(coordinator)) {
       const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
         coordinator_user_id: coordinator._id,
         status: 'SIGNED',
@@ -362,8 +365,8 @@ exports.ocrResult = async (req, res, next) => {
     const session = await CoordinatorComplianceW9EnvelopeModel.findOne({ ocr_document_id: documentId });
     if (!session) throw buildError('Coordinator compliance document not found.', 404);
     const w9Profile = await CoordinatorComplianceProfileModel.findOne({ coordinator_user_id: session.coordinator_user_id });
-    if (!w9Profile || w9Profile.party_type !== 'BUSINESS') {
-      throw buildError('Coordinator business compliance profile not found.', 404);
+    if (!w9Profile) {
+      throw buildError('Coordinator compliance profile not found.', 404);
     }
     const extractedNames = getDocumentBusinessNames({
       extracted_fields: extractedFields,
@@ -392,7 +395,7 @@ exports.ocrResult = async (req, res, next) => {
       session.verification_status = 'REVALIDATION_NEEDED';
     } else if (!businessNameMatches || !taxIdMatches) {
       const mismatchMessage = !businessNameMatches
-        ? 'OCR could not confirm that the W-9 legal business name matches the compliance form.'
+        ? `OCR could not confirm that the W-9 ${w9Profile.party_type === 'BUSINESS' ? 'legal business name' : 'taxpayer name'} matches the compliance form.`
         : taxIdentifierOcrOutcome === 'NOT_DETECTED'
           ? 'OCR could not read a complete nine-digit EIN or SSN from the W-9.'
           : taxIdentifierOcrOutcome === 'PROFILE_UNAVAILABLE'

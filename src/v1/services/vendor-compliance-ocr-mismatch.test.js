@@ -144,5 +144,15 @@ assert.match(
   /record\.ocr_status === 'not_configured'/,
   'Coordinator Save & Run OCR must continue to submit new evidence only'
 );
+assert.match(
+  coordinatorSource,
+  /if \(requiresPayoutCompliance\(coordinator\)\) \{[\s\S]*status: 'SIGNED'/,
+  'Paid individual and business coordinators must both submit their signed W-9 for OCR'
+);
+assert.doesNotMatch(
+  coordinatorSource,
+  /w9Profile\.party_type !== 'BUSINESS'/,
+  'Individual coordinator W-9 OCR must not be rejected as a business-only document'
+);
 
 console.log('vendor compliance OCR mismatch tests passed');
