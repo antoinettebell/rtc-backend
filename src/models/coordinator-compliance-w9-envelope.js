@@ -40,6 +40,7 @@ const mSchema = mongoose.Schema({
   // Expected W-9 identity values at submission time, retained only to detect
   // a later correction that needs a new internal OCR comparison.
   ocr_comparison_snapshot: { type: mongoose.Schema.Types.Mixed, default: null },
+  ocr_comparison_rule_version: { type: Number, default: null },
   revalidation_attempt: { type: Number, default: 0, min: 0 },
   completed_at: { type: Date, default: null },
   error_message: { type: String, default: null },

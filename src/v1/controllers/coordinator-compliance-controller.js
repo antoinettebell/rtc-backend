@@ -20,6 +20,7 @@ const {
 const buildError = (message, code = 400) => Object.assign(new Error(message), { code });
 
 const DRIVER_LICENSE_OCR_REQUIREMENT = { ocrFields: ['name'] };
+const COORDINATOR_OCR_COMPARISON_RULE_VERSION = 2;
 const W9_OCR_REQUIREMENT = {
   ocrFields: ['ein', 'business_name', 'tax_classification', 'signature_date'],
 };
@@ -302,7 +303,9 @@ exports.saveProfile = async (req, res, next) => {
       document.ocr_comparison_snapshot,
       driverLicenseComparisonSnapshot(profile)
     );
-    if (identityChanged || documentComparisonChanged) {
+    const documentRulesChanged = Boolean(document) &&
+      document.ocr_comparison_rule_version !== COORDINATOR_OCR_COMPARISON_RULE_VERSION;
+    if (identityChanged || documentComparisonChanged || documentRulesChanged) {
       if (document) {
         document.ocr_status = 'not_configured';
         document.ocr_requested_at = null;
@@ -320,7 +323,9 @@ exports.saveProfile = async (req, res, next) => {
       signedW9.ocr_comparison_snapshot,
       w9ComparisonSnapshot(profile)
     );
-    if (identityChanged || taxIdChanged || w9ComparisonChanged) {
+    const w9RulesChanged = Boolean(signedW9) &&
+      signedW9.ocr_comparison_rule_version !== COORDINATOR_OCR_COMPARISON_RULE_VERSION;
+    if (identityChanged || taxIdChanged || w9ComparisonChanged || w9RulesChanged) {
       if (signedW9) {
         signedW9.ocr_status = 'not_configured';
         signedW9.ocr_requested_at = null;
@@ -330,7 +335,7 @@ exports.saveProfile = async (req, res, next) => {
         await signedW9.save();
       }
     }
-    if (identityChanged || documentComparisonChanged) await profile.save();
+    if (identityChanged || documentComparisonChanged || documentRulesChanged) await profile.save();
     return res.data({ profile: toSafeProfile(profile) }, 'Coordinator compliance profile saved');
   } catch (error) {
     return next(error);
@@ -389,6 +394,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
       if (shouldSubmitCoordinatorOcr(license)) {
         if (!license.document_id) license.document_id = require('uuid').v4();
         license.ocr_comparison_snapshot = driverLicenseComparisonSnapshot(profile);
+        license.ocr_comparison_rule_version = COORDINATOR_OCR_COMPARISON_RULE_VERSION;
         const result = await enqueueComplianceOcr({
           document: license,
           requirement: DRIVER_LICENSE_OCR_REQUIREMENT,
@@ -412,6 +418,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
       }).sort({ created_at: -1 });
       if (shouldSubmitCoordinatorOcr(session)) {
         session.ocr_comparison_snapshot = w9ComparisonSnapshot(profile);
+        session.ocr_comparison_rule_version = COORDINATOR_OCR_COMPARISON_RULE_VERSION;
         await enqueueCoordinatorW9Ocr(session);
         await session.save();
         queued.push('Signed W-9');
@@ -629,6 +636,7 @@ exports.completeW9Signing = async (req, res, next) => {
     session.error_message = null;
     const profile = await CoordinatorComplianceProfileModel.findOne({ coordinator_user_id: coordinator._id });
     session.ocr_comparison_snapshot = w9ComparisonSnapshot(profile);
+    session.ocr_comparison_rule_version = COORDINATOR_OCR_COMPARISON_RULE_VERSION;
     // This mirrors the vendor W-9 lifecycle: a completed DocuSign envelope
     // immediately becomes a queued OCR document, without requiring another
     // customer action.

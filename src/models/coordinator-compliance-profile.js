@@ -34,6 +34,7 @@ const documentSchema = new mongoose.Schema({
   // during the most recent OCR submission. This lets later form corrections
   // requeue existing evidence without relying on a new file upload.
   ocr_comparison_snapshot: { type: mongoose.Schema.Types.Mixed, default: null },
+  ocr_comparison_rule_version: { type: Number, default: null },
 }, { _id: false });
 
 const schema = new mongoose.Schema({
