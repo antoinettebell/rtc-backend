@@ -88,10 +88,7 @@ const buildComplianceSummary = ({ profile, session, requiresPayout }) => {
   if (requiresPayout) {
     requirements.push(
       { key: 'TAX_ID', label: 'EIN or SSN', complete: Boolean(profile?.tax_id_encrypted) },
-      { key: 'W9', label: 'Signed W-9', complete: session?.verification_status === 'PASSED' },
-      // A signed document is not provider verification. Keep this visible in
-      // the score until the Cobalt/ComplyCube result is recorded.
-      { key: 'IDENTITY_VERIFICATION', label: 'Identity verification', complete: false }
+      { key: 'W9', label: 'Signed W-9', complete: session?.verification_status === 'PASSED' }
     );
   }
   const completed = requirements.filter((item) => item.complete).length;
@@ -102,13 +99,11 @@ const buildComplianceSummary = ({ profile, session, requiresPayout }) => {
     score_label: score === 100 ? 'Compliance complete' : 'Needs attention',
     requirements,
     remaining: requirements.filter((item) => !item.complete).map((item) => item.label),
-    provider_verification_pending: requiresPayout && coordinatorVerificationPending(profile, session),
+    // External Cobalt/ComplyCube verification is intentionally deferred until
+    // the internal OCR comparison is proven. It must not lower this score.
+    provider_verification_pending: false,
   };
 };
-
-const coordinatorVerificationPending = (profile, session) => Boolean(
-  profile?.tax_id_encrypted && session?.status === 'SIGNED'
-);
 
 const enqueueCoordinatorW9Ocr = async (session) => {
   const result = await enqueueComplianceOcr({
