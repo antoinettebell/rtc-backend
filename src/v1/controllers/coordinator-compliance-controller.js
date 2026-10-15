@@ -4,6 +4,7 @@ const { addObjectFromBufferWithKey, addObjectWithKey } = require('../../helper/a
 const EncryptionService = require('../../helper/encryption');
 const DocuSignHelper = require('../../helper/docusign-helper');
 const { enqueueComplianceOcr } = require('../../helper/vendor-compliance-ocr-helper');
+const { getComplianceRequirement } = require('../../helper/vendor-compliance-config');
 const {
   taxDigits,
   getTaxIdentifierOcrOutcome,
@@ -20,6 +21,7 @@ const {
 const buildError = (message, code = 400) => Object.assign(new Error(message), { code });
 
 const DRIVER_LICENSE_OCR_REQUIREMENT = { ocrFields: ['name'] };
+const BUSINESS_LICENSE_OCR_REQUIREMENT = getComplianceRequirement('BUSINESS_LICENSE');
 const COORDINATOR_OCR_COMPARISON_RULE_VERSION = 2;
 // Version 6 refreshes a W-9 after the shared IRS form parser update. It does not affect
 // the separately verified driver license or vendor compliance records.
@@ -390,25 +392,28 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
     if (!profile) throw buildError('Save coordinator compliance information before running OCR.', 409);
     const queued = [];
 
-    if (profile.party_type === 'INDIVIDUAL') {
-      const license = (profile.documents || []).find(
-        (document) => document.document_type === 'DRIVER_LICENSE_FRONT'
-      );
-      if (shouldSubmitCoordinatorOcr(license)) {
-        if (!license.document_id) license.document_id = require('uuid').v4();
-        license.ocr_comparison_snapshot = driverLicenseComparisonSnapshot(profile);
-        license.ocr_comparison_rule_version = COORDINATOR_OCR_COMPARISON_RULE_VERSION;
-        const result = await enqueueComplianceOcr({
-          document: license,
-          requirement: DRIVER_LICENSE_OCR_REQUIREMENT,
-          callbackType: 'coordinator_compliance',
-        });
-        Object.assign(license, result);
-        license.review_status = 'pending_review';
-        queued.push('Driver license front');
-        profile.markModified('documents');
-        await profile.save();
-      }
+    const requiredDocumentType = profile.party_type === 'BUSINESS'
+      ? 'BUSINESS_LICENSE'
+      : 'DRIVER_LICENSE_FRONT';
+    const requiredDocument = (profile.documents || []).find(
+      (document) => document.document_type === requiredDocumentType
+    );
+    if (shouldSubmitCoordinatorOcr(requiredDocument)) {
+      if (!requiredDocument.document_id) requiredDocument.document_id = require('uuid').v4();
+      requiredDocument.ocr_comparison_snapshot = driverLicenseComparisonSnapshot(profile);
+      requiredDocument.ocr_comparison_rule_version = COORDINATOR_OCR_COMPARISON_RULE_VERSION;
+      const result = await enqueueComplianceOcr({
+        document: requiredDocument,
+        requirement: profile.party_type === 'BUSINESS'
+          ? BUSINESS_LICENSE_OCR_REQUIREMENT
+          : DRIVER_LICENSE_OCR_REQUIREMENT,
+        callbackType: 'coordinator_compliance',
+      });
+      Object.assign(requiredDocument, result);
+      requiredDocument.review_status = 'pending_review';
+      queued.push(profile.party_type === 'BUSINESS' ? 'Business license' : 'Driver license front');
+      profile.markModified('documents');
+      await profile.save();
     }
 
     // A signed W-9 is required for either paid coordinator type. The vendor
@@ -457,11 +462,15 @@ exports.ocrResult = async (req, res, next) => {
 
     if (profile) {
       const document = profile.documents.find((item) => item.document_id === documentId);
-      const extractedName = extractedFields.name || extractedFields.legal_name || extractedFields.full_name;
+      const extractedName = profile.party_type === 'BUSINESS'
+        ? extractedFields.business_name || extractedFields.legal_business_name || extractedFields.name
+        : extractedFields.name || extractedFields.legal_name || extractedFields.full_name;
       // The license can contain personal details; retain only the comparison
       // outcome and the minimal detected name needed for a review explanation.
       ['raw_text', 'lines', 'words', 'text', 'ocr_text', 'detected_text', 'full_text'].forEach((key) => delete extractedFields[key]);
-      const nameMatches = personalNameMatches(profile.legal_name, extractedName);
+      const nameMatches = profile.party_type === 'BUSINESS'
+        ? nameMatchesProfile(asVendorIdentity(profile), extractedName)
+        : personalNameMatches(profile.legal_name, extractedName);
       document.extracted_fields = { name_match: nameMatches };
       document.ocr_completed_at = new Date();
       if (ocrStatus !== 'completed') {
@@ -470,7 +479,7 @@ exports.ocrResult = async (req, res, next) => {
         document.review_status = 'revalidation_needed';
       } else if (!nameMatches) {
         document.ocr_status = 'manual_review';
-        document.ocr_error_message = 'OCR could not confirm that the driver license name matches the compliance legal name.';
+        document.ocr_error_message = `OCR could not confirm that the ${profile.party_type === 'BUSINESS' ? 'business license' : 'driver license'} name matches the compliance legal name.`;
         document.review_status = 'manual_review';
       } else {
         document.ocr_status = 'completed';
