@@ -21,9 +21,9 @@ const buildError = (message, code = 400) => Object.assign(new Error(message), { 
 
 const DRIVER_LICENSE_OCR_REQUIREMENT = { ocrFields: ['name'] };
 const COORDINATOR_OCR_COMPARISON_RULE_VERSION = 2;
-// Version 4 is a one-time, W-9-only diagnostic refresh. It does not affect
+// Version 5 is a one-time, W-9-only diagnostic refresh. It does not affect
 // the separately verified driver license or vendor compliance records.
-const COORDINATOR_W9_OCR_COMPARISON_RULE_VERSION = 4;
+const COORDINATOR_W9_OCR_COMPARISON_RULE_VERSION = 5;
 const W9_OCR_REQUIREMENT = {
   ocrFields: ['ein', 'business_name', 'tax_classification', 'signature_date'],
 };
@@ -488,9 +488,13 @@ exports.ocrResult = async (req, res, next) => {
     if (!w9Profile) {
       throw buildError('Coordinator compliance profile not found.', 404);
     }
-    const extractedNames = getDocumentBusinessNames({
-      extracted_fields: extractedFields,
-    });
+    // W-9 Line 1 (taxpayer_name) is the individual's legal-name field. Line
+    // 2 is only a business/disregarded-entity name and must not participate in
+    // an individual coordinator's identity comparison. Businesses continue to
+    // use the exact vendor W-9 candidate set unchanged.
+    const extractedNames = w9Profile.party_type === 'BUSINESS'
+      ? getDocumentBusinessNames({ extracted_fields: extractedFields })
+      : [extractedFields.taxpayer_name].filter(Boolean);
     const businessNameMatches = extractedNames.some((name) => (
       w9Profile.party_type === 'BUSINESS'
         ? nameMatchesProfile(asVendorIdentity(w9Profile), name)
