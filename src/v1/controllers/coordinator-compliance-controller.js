@@ -149,6 +149,24 @@ const buildComplianceSummary = ({ profile, session, requiresPayout }) => {
   };
 };
 
+// Paid-event access is a separate, backend-owned user flag. Keep it in lockstep
+// with the same internal-compliance requirements shown to the coordinator so a
+// completed W-9/license cannot leave the profile incorrectly limited to free
+// events. A coordinator who has not opted into paid capabilities remains
+// disabled regardless of their document score.
+const reconcilePayoutEligibility = async ({ coordinator, profile, session }) => {
+  const requiresPayout = requiresPayoutCompliance(coordinator);
+  const compliance = buildComplianceSummary({ profile, session, requiresPayout });
+  const nextEligibility = requiresPayout && compliance.score === 100
+    ? 'ENABLED'
+    : 'DISABLED';
+  if (coordinator.eventCoordinatorPayoutEligibility !== nextEligibility) {
+    coordinator.eventCoordinatorPayoutEligibility = nextEligibility;
+    await coordinator.save();
+  }
+  return { compliance, payoutEligibility: nextEligibility };
+};
+
 const enqueueCoordinatorW9Ocr = async (session) => {
   const result = await enqueueComplianceOcr({
     document: {
@@ -232,12 +250,17 @@ exports.status = async (req, res, next) => {
     }).sort({ created_at: -1 });
     const profile = await getOrMigrateProfile(coordinator);
     const requiresPayout = requiresPayoutCompliance(coordinator);
+    const { compliance, payoutEligibility } = await reconcilePayoutEligibility({
+      coordinator,
+      profile,
+      session,
+    });
     return res.data({
-      payout_eligibility: coordinator.eventCoordinatorPayoutEligibility,
+      payout_eligibility: payoutEligibility,
       requires_payout_compliance: requiresPayout,
       w9_session: toSafeSession(session),
       profile: toSafeProfile(profile),
-      compliance: buildComplianceSummary({ profile, session, requiresPayout }),
+      compliance,
     }, 'Coordinator compliance status');
   } catch (error) {
     return next(error);
@@ -341,6 +364,7 @@ exports.saveProfile = async (req, res, next) => {
       }
     }
     if (identityChanged || documentComparisonChanged || documentRulesChanged) await profile.save();
+    await reconcilePayoutEligibility({ coordinator, profile, session: signedW9 });
     return res.data({ profile: toSafeProfile(profile) }, 'Coordinator compliance profile saved');
   } catch (error) {
     return next(error);
@@ -374,6 +398,10 @@ exports.uploadDocument = async (req, res, next) => {
       ocr_status: 'not_configured',
     });
     await profile.save();
+    const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
+      coordinator_user_id: coordinator._id,
+    }).sort({ created_at: -1 });
+    await reconcilePayoutEligibility({ coordinator, profile, session });
     fs.unlink(req.file.path, () => {});
     return res.data({ profile: toSafeProfile(profile) }, 'Coordinator compliance document uploaded');
   } catch (error) {
@@ -488,6 +516,11 @@ exports.ocrResult = async (req, res, next) => {
       }
       profile.markModified('documents');
       await profile.save();
+      const coordinator = await UserModel.findById(profile.coordinator_user_id);
+      const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
+        coordinator_user_id: profile.coordinator_user_id,
+      }).sort({ created_at: -1 });
+      if (coordinator) await reconcilePayoutEligibility({ coordinator, profile, session });
       return res.data({ profile: toSafeProfile(profile) }, 'Coordinator driver license OCR result processed');
     }
 
@@ -563,6 +596,8 @@ exports.ocrResult = async (req, res, next) => {
       session.verification_status = 'PASSED';
     }
     await session.save();
+    const coordinator = await UserModel.findById(session.coordinator_user_id);
+    if (coordinator) await reconcilePayoutEligibility({ coordinator, profile: w9Profile, session });
     return res.data({ w9_session: toSafeSession(session) }, 'Coordinator W-9 OCR result processed');
   } catch (error) {
     return next(error);
