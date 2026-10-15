@@ -21,6 +21,11 @@ const documentSchema = new mongoose.Schema({
     enum: ['not_configured', 'queued', 'processing', 'completed', 'failed', 'manual_review', 'revalidation_needed'],
     default: 'not_configured',
   },
+  review_status: {
+    type: String,
+    enum: ['pending_review', 'verified', 'manual_review', 'revalidation_needed'],
+    default: 'pending_review',
+  },
   ocr_requested_at: { type: Date, default: null },
   ocr_completed_at: { type: Date, default: null },
   ocr_error_message: { type: String, default: null },

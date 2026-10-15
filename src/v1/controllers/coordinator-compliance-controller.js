@@ -65,6 +65,7 @@ const toSafeProfile = (profile) => {
       file_url: document.file_url,
       original_name: document.original_name,
       uploaded_at: document.uploaded_at,
+      review_status: document.review_status,
       ocr_status: document.ocr_status,
       ocr_error_message: document.ocr_error_message,
     })),
@@ -92,12 +93,17 @@ const buildComplianceSummary = ({ profile, session, requiresPayout }) => {
       { key: 'W9', label: 'Signed W-9', complete: session?.verification_status === 'PASSED' }
     );
   }
+  const hasPendingReview = (profile?.documents || []).some((document) =>
+    document.review_status === 'pending_review' || ['queued', 'processing'].includes(document.ocr_status)
+  ) || (requiresPayout && (
+    session?.verification_status === 'PENDING' || ['queued', 'processing'].includes(session?.ocr_status)
+  ));
   const completed = requirements.filter((item) => item.complete).length;
   const score = requirements.length ? Math.round((completed / requirements.length) * 100) : 0;
   return {
     score,
     score_color: score === 100 ? 'green' : score >= 50 ? 'yellow' : 'orange',
-    score_label: score === 100 ? 'Compliance complete' : 'Needs attention',
+    score_label: score === 100 ? 'Compliance complete' : hasPendingReview ? 'Pending review' : 'Needs attention',
     requirements,
     remaining: requirements.filter((item) => !item.complete).map((item) => item.label),
     // External Cobalt/ComplyCube verification is intentionally deferred until
@@ -303,6 +309,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
           callbackType: 'coordinator_compliance',
         });
         Object.assign(license, result);
+        license.review_status = 'pending_review';
         queued.push('Driver license front');
         profile.markModified('documents');
         await profile.save();
@@ -324,7 +331,18 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
       }
     }
 
-    return res.data({ queued }, queued.length ? 'Coordinator documents submitted for OCR' : 'No changed coordinator documents require OCR');
+    const w9Session = requiresPayoutCompliance(coordinator)
+      ? await CoordinatorComplianceW9EnvelopeModel.findOne({
+        coordinator_user_id: coordinator._id,
+        status: 'SIGNED',
+      }).sort({ created_at: -1 })
+      : null;
+    return res.data({
+      queued,
+      profile: toSafeProfile(profile),
+      w9_session: toSafeSession(w9Session),
+      compliance: buildComplianceSummary({ profile, session: w9Session, requiresPayout: requiresPayoutCompliance(coordinator) }),
+    }, queued.length ? 'Coordinator documents submitted for OCR' : 'No changed coordinator documents require OCR');
   } catch (error) {
     return next(error);
   }
@@ -352,12 +370,15 @@ exports.ocrResult = async (req, res, next) => {
       if (ocrStatus !== 'completed') {
         document.ocr_status = ocrStatus;
         document.ocr_error_message = ocrError || 'OCR could not read the driver license.';
+        document.review_status = 'revalidation_needed';
       } else if (!nameMatches) {
         document.ocr_status = 'manual_review';
         document.ocr_error_message = 'OCR could not confirm that the driver license name matches the compliance legal name.';
+        document.review_status = 'manual_review';
       } else {
         document.ocr_status = 'completed';
         document.ocr_error_message = null;
+        document.review_status = 'verified';
       }
       profile.markModified('documents');
       await profile.save();
