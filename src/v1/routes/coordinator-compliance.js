@@ -5,6 +5,9 @@ const Upload = require('../../middleware/coordinator-compliance-upload');
 
 const router = express.Router();
 
+// Keep the root alias for clients built before the explicit /me contract.
+// Both routes return only the authenticated coordinator's isolated record.
+router.get('/', allowedTo(['CUSTOMER']), Controller.status);
 router.get('/me', allowedTo(['CUSTOMER']), Controller.status);
 router.put('/profile', allowedTo(['CUSTOMER']), Controller.saveProfile);
 router.post('/documents', allowedTo(['CUSTOMER']), Upload.single(), Controller.uploadDocument);
