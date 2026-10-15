@@ -27,6 +27,11 @@ const formatEinForCobalt = (value) => {
   const digits = String(value || '').replace(/\D/g, '');
   return digits.length === 9 ? digits : null;
 };
+// Cobalt test mode returns a fixed sample response.  A check started in that
+// mode must never suppress a subsequent authorized live lookup for the same
+// compliance cycle.
+const cobaltRequestFingerprint = ({ maskedTaxId, businessName, state }) =>
+  fingerprint(`COBALT_EIN:${maskedTaxId || ''}:${normalizeName(businessName)}:${normalizeState(state)}:${cobaltTestMode() ? 'test' : 'live'}`);
 const normalizeComplyCube = (check = {}) => {
   const outcome = String(check?.result?.outcome || check?.outcome || '').toLowerCase();
   const status = String(check?.status || '').toLowerCase();
@@ -206,17 +211,27 @@ const startCobaltEinChecks = async (foodTruck) => {
   if (String(process.env.COBALT_ALLOW_EIN_QUERY_TRANSMISSION || 'false').toLowerCase() !== 'true') {
     throw new Error('Cobalt EIN query transmission requires explicit authorization');
   }
-  const [existingTin, existingSos] = await Promise.all([
-    currentRecord({ foodTruck, provider: 'COBALT', checkType: 'TIN' }),
-    currentRecord({ foodTruck, provider: 'COBALT', checkType: 'SOS' }),
-  ]);
-  if (activeOrTerminalRecord(existingTin) && activeOrTerminalRecord(existingSos)) {
-    return [existingTin, existingSos];
-  }
   const tin = formatEinForCobalt(EncryptionService.decrypt(foodTruck.tax_identifier_encrypted));
   const businessName = foodTruck.legal_business_name;
   if (!tin || !businessName || !foodTruck.business_registration_state || !foodTruck.legal_business_type) {
     throw new Error('EIN verification profile is incomplete');
+  }
+  const requestFingerprint = cobaltRequestFingerprint({
+    maskedTaxId: foodTruck.tax_identifier_masked,
+    businessName,
+    state: foodTruck.business_registration_state,
+  });
+  const [existingTin, existingSos] = await Promise.all([
+    currentRecord({ foodTruck, provider: 'COBALT', checkType: 'TIN' }),
+    currentRecord({ foodTruck, provider: 'COBALT', checkType: 'SOS' }),
+  ]);
+  if (
+    activeOrTerminalRecord(existingTin) &&
+    activeOrTerminalRecord(existingSos) &&
+    existingTin.request_fingerprint === requestFingerprint &&
+    existingSos.request_fingerprint === requestFingerprint
+  ) {
+    return [existingTin, existingSos];
   }
   const headers = { Accept: 'application/json', 'x-api-key': process.env.COBALT_API_KEY };
   const tinResponse = await axios.get('https://apigateway.cobaltintelligence.com/tinVerification', {
@@ -224,7 +239,7 @@ const startCobaltEinChecks = async (foodTruck) => {
   });
   const tinResult = tinResponse.data || {};
   const tinRecord = await upsert({ foodTruck, provider: 'COBALT', checkType: 'TIN', values: {
-    status: normalizeCobaltTin(tinResult), request_fingerprint: fingerprint(`EIN:${foodTruck.tax_identifier_masked}`),
+    status: normalizeCobaltTin(tinResult), request_fingerprint: requestFingerprint,
     safe_result_code: tinResult.irsCode === undefined ? null : String(tinResult.irsCode), safe_reason: safeReason(tinResult.irsReason), submitted_at: new Date(),
   } });
   const sosResponse = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
@@ -233,7 +248,7 @@ const startCobaltEinChecks = async (foodTruck) => {
   const sos = sosResponse.data || {};
   const sosStatus = normalizeCobaltSos(sos, foodTruck);
   const sosRecord = await upsert({ foodTruck, provider: 'COBALT', checkType: 'SOS', values: {
-    status: sosStatus, provider_reference: sos.retryId || sos.requestId || null,
+    status: sosStatus, request_fingerprint: requestFingerprint, provider_reference: sos.retryId || sos.requestId || null,
     safe_reason: sosStatus === 'PENDING'
       ? 'Secretary of State search pending.'
       : sosStatus === 'PASSED'
@@ -256,14 +271,24 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
     provider: 'COBALT',
     check_type: checkType,
   }).exec();
-  const [existingTin, existingSos] = await Promise.all([recordFor('TIN'), recordFor('SOS')]);
-  if (activeOrTerminalRecord(existingTin) && activeOrTerminalRecord(existingSos)) {
-    return [existingTin, existingSos];
-  }
   const tin = formatEinForCobalt(EncryptionService.decrypt(profile.tax_id_encrypted));
   const businessName = profile.legal_name;
   if (!tin || !businessName || !profile.registration_state || !profile.entity_type) {
     throw new Error('EIN verification profile is incomplete');
+  }
+  const requestFingerprint = cobaltRequestFingerprint({
+    maskedTaxId: profile.tax_id_masked,
+    businessName,
+    state: profile.registration_state,
+  });
+  const [existingTin, existingSos] = await Promise.all([recordFor('TIN'), recordFor('SOS')]);
+  if (
+    activeOrTerminalRecord(existingTin) &&
+    activeOrTerminalRecord(existingSos) &&
+    existingTin.request_fingerprint === requestFingerprint &&
+    existingSos.request_fingerprint === requestFingerprint
+  ) {
+    return [existingTin, existingSos];
   }
   const headers = { Accept: 'application/json', 'x-api-key': process.env.COBALT_API_KEY };
   const save = (checkType, values) => CoordinatorComplianceProviderVerificationModel.findOneAndUpdate(
@@ -282,7 +307,7 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
   const tinResult = tinResponse.data || {};
   const tinRecord = await save('TIN', {
     status: normalizeCobaltTin(tinResult),
-    request_fingerprint: fingerprint(`EIN:${profile.tax_id_masked}`),
+    request_fingerprint: requestFingerprint,
     safe_result_code: tinResult.irsCode === undefined ? null : String(tinResult.irsCode),
     safe_reason: safeReason(tinResult.irsReason),
     submitted_at: new Date(),
@@ -300,6 +325,7 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
   });
   const sosRecord = await save('SOS', {
     status: sosStatus,
+    request_fingerprint: requestFingerprint,
     provider_reference: sos.retryId || sos.requestId || null,
     safe_reason: sosStatus === 'PENDING'
       ? 'Secretary of State search pending.'
