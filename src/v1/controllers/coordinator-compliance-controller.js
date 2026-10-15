@@ -21,9 +21,9 @@ const buildError = (message, code = 400) => Object.assign(new Error(message), { 
 
 const DRIVER_LICENSE_OCR_REQUIREMENT = { ocrFields: ['name'] };
 const COORDINATOR_OCR_COMPARISON_RULE_VERSION = 2;
-// Version 5 is a one-time, W-9-only diagnostic refresh. It does not affect
+// Version 6 refreshes a W-9 after the shared IRS form parser update. It does not affect
 // the separately verified driver license or vendor compliance records.
-const COORDINATOR_W9_OCR_COMPARISON_RULE_VERSION = 5;
+const COORDINATOR_W9_OCR_COMPARISON_RULE_VERSION = 6;
 const W9_OCR_REQUIREMENT = {
   ocrFields: ['ein', 'business_name', 'tax_classification', 'signature_date'],
 };
@@ -515,10 +515,6 @@ exports.ocrResult = async (req, res, next) => {
       partyType: w9Profile.party_type,
       taxpayerNamePresent: Boolean(extractedFields.taxpayer_name),
       businessNamePresent: Boolean(extractedFields.business_name),
-      // Explicit, one-time diagnostic requested for this W-9 mismatch. The
-      // tax ID and raw OCR content remain excluded from logs and persistence.
-      taxpayerName: extractedFields.taxpayer_name || null,
-      businessName: extractedFields.business_name || null,
       extractedNameCount: extractedNames.length,
       nameMatched: businessNameMatches,
       taxIdentifierOutcome: taxIdentifierOcrOutcome,
