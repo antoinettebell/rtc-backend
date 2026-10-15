@@ -62,6 +62,7 @@ const toSafeProfile = (profile) => {
     documents: (value.documents || []).map((document) => ({
       document_id: document.document_id,
       document_type: document.document_type,
+      file_url: document.file_url,
       original_name: document.original_name,
       uploaded_at: document.uploaded_at,
       ocr_status: document.ocr_status,
@@ -173,6 +174,7 @@ const toSafeSession = (session) => {
     verification_status: value.verification_status,
     ocr_status: value.ocr_status,
     ocr_error_message: value.ocr_error_message,
+    signed_document_url: value.signed_document_url,
     completed_at: value.completed_at,
     created_at: value.created_at,
     updated_at: value.updated_at,
