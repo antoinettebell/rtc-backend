@@ -65,6 +65,19 @@ const snapshotMatches = (savedSnapshot, currentSnapshot) => (
   Boolean(savedSnapshot) && JSON.stringify(savedSnapshot) === JSON.stringify(currentSnapshot)
 );
 
+// A government ID may show a middle name and may place the surname first,
+// while an individual's signed W-9 commonly uses first and last name only.
+// For coordinator personal identity we require the compliance form's first
+// and last tokens to appear on the document; optional middle tokens do not
+// create a false mismatch. Business names continue to use the vendor's exact
+// name matching rule below.
+const personalNameMatches = (profileName, documentName) => {
+  const profileTokens = normalizeIdentity(profileName).split(' ').filter(Boolean);
+  const documentTokens = new Set(normalizeIdentity(documentName).split(' ').filter(Boolean));
+  if (profileTokens.length < 2 || documentTokens.size < 2) return false;
+  return documentTokens.has(profileTokens[0]) && documentTokens.has(profileTokens[profileTokens.length - 1]);
+};
+
 const toSafeProfile = (profile) => {
   if (!profile) return null;
   const value = typeof profile.toObject === 'function' ? profile.toObject() : profile;
@@ -438,7 +451,7 @@ exports.ocrResult = async (req, res, next) => {
       // The license can contain personal details; retain only the comparison
       // outcome and the minimal detected name needed for a review explanation.
       ['raw_text', 'lines', 'words', 'text', 'ocr_text', 'detected_text', 'full_text'].forEach((key) => delete extractedFields[key]);
-      const nameMatches = nameMatchesProfile(asVendorIdentity(profile), extractedName);
+      const nameMatches = personalNameMatches(profile.legal_name, extractedName);
       document.extracted_fields = { name_match: nameMatches };
       document.ocr_completed_at = new Date();
       if (ocrStatus !== 'completed') {
@@ -468,9 +481,11 @@ exports.ocrResult = async (req, res, next) => {
     const extractedNames = getDocumentBusinessNames({
       extracted_fields: extractedFields,
     });
-    const businessNameMatches = extractedNames.some((name) =>
-      nameMatchesProfile(asVendorIdentity(w9Profile), name)
-    );
+    const businessNameMatches = extractedNames.some((name) => (
+      w9Profile.party_type === 'BUSINESS'
+        ? nameMatchesProfile(asVendorIdentity(w9Profile), name)
+        : personalNameMatches(w9Profile.legal_name, name)
+    ));
     const extractedTaxId = taxDigits(extractedFields.tax_identifier || extractedFields.ein || extractedFields.ssn);
     const profileTaxId = taxDigits(EncryptionService.decrypt(w9Profile.tax_id_encrypted));
     const taxIdentifierOcrOutcome = getTaxIdentifierOcrOutcome({
