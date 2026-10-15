@@ -47,6 +47,24 @@ const maskTaxId = (value, type) => {
   return `${type}:${'*'.repeat(5)}${digits.slice(-4)}`;
 };
 
+const normalizeIdentity = (value) => String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
+
+const driverLicenseComparisonSnapshot = (profile) => ({
+  legal_name: normalizeIdentity(profile?.legal_name),
+});
+
+const w9ComparisonSnapshot = (profile) => ({
+  legal_name: normalizeIdentity(profile?.legal_name),
+  tax_id_type: profile?.tax_id_type || null,
+  tax_id: profile?.tax_id_encrypted
+    ? taxDigits(EncryptionService.decrypt(profile.tax_id_encrypted))
+    : '',
+});
+
+const snapshotMatches = (savedSnapshot, currentSnapshot) => (
+  Boolean(savedSnapshot) && JSON.stringify(savedSnapshot) === JSON.stringify(currentSnapshot)
+);
+
 const toSafeProfile = (profile) => {
   if (!profile) return null;
   const value = typeof profile.toObject === 'function' ? profile.toObject() : profile;
@@ -227,7 +245,6 @@ exports.saveProfile = async (req, res, next) => {
     const previousProfile = await CoordinatorComplianceProfileModel.findOne({
       coordinator_user_id: coordinator._id,
     });
-    const normalizeIdentity = (value) => String(value || '').trim().replace(/\s+/g, ' ').toUpperCase();
     const previousTaxId = previousProfile?.tax_id_encrypted
       ? taxDigits(EncryptionService.decrypt(previousProfile.tax_id_encrypted))
       : '';
@@ -266,9 +283,13 @@ exports.saveProfile = async (req, res, next) => {
     const taxIdChanged = Boolean(previousProfile && (taxId || taxIdType)) && (
       previousProfile.tax_id_type !== taxIdType || previousTaxId !== taxId
     );
-    if (identityChanged) {
-      const requiredDocumentType = partyType === 'BUSINESS' ? 'BUSINESS_LICENSE' : 'DRIVER_LICENSE_FRONT';
-      const document = (profile.documents || []).find((item) => item.document_type === requiredDocumentType);
+    const requiredDocumentType = partyType === 'BUSINESS' ? 'BUSINESS_LICENSE' : 'DRIVER_LICENSE_FRONT';
+    const document = (profile.documents || []).find((item) => item.document_type === requiredDocumentType);
+    const documentComparisonChanged = Boolean(document) && !snapshotMatches(
+      document.ocr_comparison_snapshot,
+      driverLicenseComparisonSnapshot(profile)
+    );
+    if (identityChanged || documentComparisonChanged) {
       if (document) {
         document.ocr_status = 'not_configured';
         document.ocr_requested_at = null;
@@ -278,11 +299,15 @@ exports.saveProfile = async (req, res, next) => {
         profile.markModified('documents');
       }
     }
-    if (identityChanged || taxIdChanged) {
-      const signedW9 = await CoordinatorComplianceW9EnvelopeModel.findOne({
-        coordinator_user_id: coordinator._id,
-        status: 'SIGNED',
-      }).sort({ created_at: -1 });
+    const signedW9 = await CoordinatorComplianceW9EnvelopeModel.findOne({
+      coordinator_user_id: coordinator._id,
+      status: 'SIGNED',
+    }).sort({ created_at: -1 });
+    const w9ComparisonChanged = Boolean(signedW9) && !snapshotMatches(
+      signedW9.ocr_comparison_snapshot,
+      w9ComparisonSnapshot(profile)
+    );
+    if (identityChanged || taxIdChanged || w9ComparisonChanged) {
       if (signedW9) {
         signedW9.ocr_status = 'not_configured';
         signedW9.ocr_requested_at = null;
@@ -292,7 +317,7 @@ exports.saveProfile = async (req, res, next) => {
         await signedW9.save();
       }
     }
-    if (identityChanged) await profile.save();
+    if (identityChanged || documentComparisonChanged) await profile.save();
     return res.data({ profile: toSafeProfile(profile) }, 'Coordinator compliance profile saved');
   } catch (error) {
     return next(error);
@@ -350,6 +375,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
       );
       if (shouldSubmitCoordinatorOcr(license)) {
         if (!license.document_id) license.document_id = require('uuid').v4();
+        license.ocr_comparison_snapshot = driverLicenseComparisonSnapshot(profile);
         const result = await enqueueComplianceOcr({
           document: license,
           requirement: DRIVER_LICENSE_OCR_REQUIREMENT,
@@ -372,6 +398,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
         status: 'SIGNED',
       }).sort({ created_at: -1 });
       if (shouldSubmitCoordinatorOcr(session)) {
+        session.ocr_comparison_snapshot = w9ComparisonSnapshot(profile);
         await enqueueCoordinatorW9Ocr(session);
         await session.save();
         queued.push('Signed W-9');
@@ -585,6 +612,8 @@ exports.completeW9Signing = async (req, res, next) => {
     session.verification_status = 'PENDING';
     session.completed_at = new Date();
     session.error_message = null;
+    const profile = await CoordinatorComplianceProfileModel.findOne({ coordinator_user_id: coordinator._id });
+    session.ocr_comparison_snapshot = w9ComparisonSnapshot(profile);
     // This mirrors the vendor W-9 lifecycle: a completed DocuSign envelope
     // immediately becomes a queued OCR document, without requiring another
     // customer action.

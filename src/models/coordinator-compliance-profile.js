@@ -30,6 +30,10 @@ const documentSchema = new mongoose.Schema({
   ocr_completed_at: { type: Date, default: null },
   ocr_error_message: { type: String, default: null },
   extracted_fields: { type: mongoose.Schema.Types.Mixed, default: {} },
+  // Values from the isolated coordinator compliance form that were compared
+  // during the most recent OCR submission. This lets later form corrections
+  // requeue existing evidence without relying on a new file upload.
+  ocr_comparison_snapshot: { type: mongoose.Schema.Types.Mixed, default: null },
 }, { _id: false });
 
 const schema = new mongoose.Schema({
