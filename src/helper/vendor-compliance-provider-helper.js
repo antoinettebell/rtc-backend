@@ -52,6 +52,8 @@ const normalizeName = (value) => String(value || '')
 const normalizeState = (value) => String(value || '').toLowerCase().replace(/[^a-z]/g, '');
 const normalizeCobaltSos = (result = {}, foodTruck = {}) => {
   if (result.retryId) return 'PENDING';
+  const providerMessage = String(result.status || result.message || '');
+  if (/retry\s*id\s*invalid/i.test(providerMessage)) return 'RETRYABLE_ERROR';
   const expectedNames = new Set(
     [foodTruck.legal_business_name, foodTruck.dba]
       .map(normalizeName)
@@ -71,8 +73,14 @@ const normalizeCobaltSos = (result = {}, foodTruck = {}) => {
   });
   if (match) return 'PASSED';
   if (Array.isArray(result.results) && result.results.length) return 'FAILED';
-  if (/failed|invalid|not found/i.test(String(result.status || result.message || ''))) return 'FAILED';
+  if (/failed|invalid|not found/i.test(providerMessage)) return 'FAILED';
   return 'MANUAL_REVIEW';
+};
+const cobaltSosSafeReason = (status) => {
+  if (status === 'PENDING') return 'Secretary of State search is still pending.';
+  if (status === 'PASSED') return 'Secretary of State record matched the legal business profile.';
+  if (status === 'RETRYABLE_ERROR') return 'Cobalt did not accept the State retry reference. A new State verification can be requested.';
+  return 'Secretary of State result did not satisfy the legal business profile check.';
 };
 
 const upsert = async ({ foodTruck, provider, checkType, values }) =>
@@ -226,11 +234,7 @@ const startCobaltEinChecks = async (foodTruck) => {
         existingSos.status = normalizeCobaltSos(result, foodTruck);
         existingSos.provider_reference = result.retryId || existingSos.provider_reference;
         existingSos.retry_count = Number(existingSos.retry_count || 0) + 1;
-        existingSos.safe_reason = existingSos.status === 'PENDING'
-          ? 'Secretary of State search is still pending.'
-          : existingSos.status === 'PASSED'
-            ? 'Secretary of State record matched the legal business profile.'
-            : 'Secretary of State result did not satisfy the legal business profile check.';
+        existingSos.safe_reason = cobaltSosSafeReason(existingSos.status);
         if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(existingSos.status)) existingSos.completed_at = new Date();
         await existingSos.save();
       } catch (_) {
@@ -266,11 +270,7 @@ const startCobaltEinChecks = async (foodTruck) => {
     const sosStatus = normalizeCobaltSos(sos, foodTruck);
     sosRecord = await upsert({ foodTruck, provider: 'COBALT', checkType: 'SOS', values: {
       status: sosStatus, provider_reference: sos.retryId || sos.requestId || null,
-      safe_reason: sosStatus === 'PENDING'
-        ? 'Secretary of State search pending.'
-        : sosStatus === 'PASSED'
-          ? 'Secretary of State record matched the legal business profile.'
-          : 'Secretary of State result did not satisfy the legal business profile check.',
+      safe_reason: cobaltSosSafeReason(sosStatus),
       submitted_at: new Date(),
     } });
   }
@@ -308,11 +308,7 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
         });
         existingSos.provider_reference = result.retryId || existingSos.provider_reference;
         existingSos.retry_count = Number(existingSos.retry_count || 0) + 1;
-        existingSos.safe_reason = existingSos.status === 'PENDING'
-          ? 'Secretary of State search is still pending.'
-          : existingSos.status === 'PASSED'
-            ? 'Secretary of State record matched the legal business profile.'
-            : 'Secretary of State result did not satisfy the legal business profile check.';
+        existingSos.safe_reason = cobaltSosSafeReason(existingSos.status);
         if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(existingSos.status)) existingSos.completed_at = new Date();
         await existingSos.save();
       } catch (_) {
@@ -367,11 +363,7 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
     sosRecord = await save('SOS', {
       status: sosStatus,
       provider_reference: sos.retryId || sos.requestId || null,
-      safe_reason: sosStatus === 'PENDING'
-        ? 'Secretary of State search pending.'
-        : sosStatus === 'PASSED'
-          ? 'Secretary of State record matched the legal business profile.'
-          : 'Secretary of State result did not satisfy the legal business profile check.',
+      safe_reason: cobaltSosSafeReason(sosStatus),
       submitted_at: new Date(),
     });
   }
@@ -400,11 +392,7 @@ const pollPendingCobaltSosChecks = async () => {
       record.status = normalizeCobaltSos(result, foodTruck);
       record.provider_reference = result.retryId || record.provider_reference;
       record.retry_count = Number(record.retry_count || 0) + 1;
-      record.safe_reason = record.status === 'PENDING'
-        ? 'Secretary of State search is still pending.'
-        : record.status === 'PASSED'
-          ? 'Secretary of State record matched the legal business profile.'
-          : 'Secretary of State result did not satisfy the legal business profile check.';
+      record.safe_reason = cobaltSosSafeReason(record.status);
       if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(record.status)) record.completed_at = new Date();
       await record.save();
       processed += 1;
@@ -433,11 +421,7 @@ const pollPendingCobaltSosChecks = async () => {
         business_registration_state: profile.registration_state,
       });
       record.provider_reference = result.retryId || record.provider_reference;
-      record.safe_reason = record.status === 'PENDING'
-        ? 'Secretary of State search is still pending.'
-        : record.status === 'PASSED'
-          ? 'Secretary of State record matched the legal business profile.'
-          : 'Secretary of State result did not satisfy the legal business profile check.';
+      record.safe_reason = cobaltSosSafeReason(record.status);
       if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(record.status)) record.completed_at = new Date();
       await record.save();
       processed += 1;
