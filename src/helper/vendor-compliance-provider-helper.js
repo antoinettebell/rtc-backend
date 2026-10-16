@@ -215,6 +215,29 @@ const startCobaltEinChecks = async (foodTruck) => {
   // resend an existing TIN request: Cobalt flags duplicate TIN submissions.
   const shouldStartSos = !existingSos || ['FAILED', 'RETRYABLE_ERROR'].includes(existingSos.status);
   if (!shouldStartTin && !shouldStartSos) {
+    if (existingSos?.status === 'PENDING' && existingSos.provider_reference) {
+      try {
+        const response = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
+          params: { retryId: existingSos.provider_reference },
+          headers: { Accept: 'application/json', 'x-api-key': process.env.COBALT_API_KEY },
+          timeout: 35000,
+        });
+        const result = response.data || {};
+        existingSos.status = normalizeCobaltSos(result, foodTruck);
+        existingSos.provider_reference = result.retryId || existingSos.provider_reference;
+        existingSos.retry_count = Number(existingSos.retry_count || 0) + 1;
+        existingSos.safe_reason = existingSos.status === 'PENDING'
+          ? 'Secretary of State search is still pending.'
+          : existingSos.status === 'PASSED'
+            ? 'Secretary of State record matched the legal business profile.'
+            : 'Secretary of State result did not satisfy the legal business profile check.';
+        if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(existingSos.status)) existingSos.completed_at = new Date();
+        await existingSos.save();
+      } catch (_) {
+        // Keep the existing pending retry ID. A manual refresh must not create
+        // another State search when Cobalt is temporarily unavailable.
+      }
+    }
     return [existingTin, existingSos];
   }
   const tin = formatEinForCobalt(EncryptionService.decrypt(foodTruck.tax_identifier_encrypted));
@@ -270,6 +293,32 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
   const shouldStartTin = !activeOrTerminalRecord(existingTin);
   const shouldStartSos = !existingSos || ['FAILED', 'RETRYABLE_ERROR'].includes(existingSos.status);
   if (!shouldStartTin && !shouldStartSos) {
+    if (existingSos?.status === 'PENDING' && existingSos.provider_reference) {
+      try {
+        const response = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
+          params: { retryId: existingSos.provider_reference },
+          headers: { Accept: 'application/json', 'x-api-key': process.env.COBALT_API_KEY },
+          timeout: 35000,
+        });
+        const result = response.data || {};
+        existingSos.status = normalizeCobaltSos(result, {
+          legal_business_name: profile.legal_name,
+          dba: profile.dba_name,
+          business_registration_state: profile.registration_state,
+        });
+        existingSos.provider_reference = result.retryId || existingSos.provider_reference;
+        existingSos.retry_count = Number(existingSos.retry_count || 0) + 1;
+        existingSos.safe_reason = existingSos.status === 'PENDING'
+          ? 'Secretary of State search is still pending.'
+          : existingSos.status === 'PASSED'
+            ? 'Secretary of State record matched the legal business profile.'
+            : 'Secretary of State result did not satisfy the legal business profile check.';
+        if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(existingSos.status)) existingSos.completed_at = new Date();
+        await existingSos.save();
+      } catch (_) {
+        // Preserve the retry ID and avoid creating another State search.
+      }
+    }
     return [existingTin, existingSos];
   }
   const tin = formatEinForCobalt(EncryptionService.decrypt(profile.tax_id_encrypted));
