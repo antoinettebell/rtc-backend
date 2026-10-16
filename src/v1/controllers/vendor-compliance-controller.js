@@ -267,7 +267,10 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
 exports.startExternalVerification = async (req, res, next) => {
   try {
     const foodTruck = await getVendorFoodTruck(req.user, req.params.foodTruckId);
-    const result = await VendorComplianceService.startExternalVerificationWhenInternalChecksPass(foodTruck._id);
+    const checkType = ['TIN', 'SOS'].includes(String(req.body?.check_type || '').toUpperCase())
+      ? String(req.body.check_type).toUpperCase()
+      : null;
+    const result = await VendorComplianceService.startExternalVerificationWhenInternalChecksPass(foodTruck._id, { checkType });
     if (!result) {
       const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
       const error = new Error(summary.internal_core_compliant

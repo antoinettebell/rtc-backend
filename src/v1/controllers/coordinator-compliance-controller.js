@@ -561,9 +561,12 @@ exports.startExternalVerification = async (req, res, next) => {
     }
     const ProviderHelper = require('../../helper/vendor-compliance-provider-helper');
     const isIndividualSsn = profile.party_type === 'INDIVIDUAL' && profile.tax_id_type === 'SSN';
+    const checkType = ['TIN', 'SOS'].includes(String(req.body?.check_type || '').toUpperCase())
+      ? String(req.body.check_type).toUpperCase()
+      : null;
     const verification = isIndividualSsn
       ? await ProviderHelper.startCoordinatorComplyCubeSsnCheck({ coordinator, profile })
-      : await ProviderHelper.startCoordinatorCobaltEinChecks({ coordinator, profile });
+      : await ProviderHelper.startCoordinatorCobaltEinChecks({ coordinator, profile, checkType });
     if (!verification || (Array.isArray(verification) && !verification.length)) {
       throw buildError(isIndividualSsn ? 'ComplyCube verification is not configured.' : 'Cobalt verification is not configured.', 503);
     }

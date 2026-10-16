@@ -218,7 +218,7 @@ const startCoordinatorComplyCubeSsnCheck = async ({ coordinator, profile }) => {
   );
 };
 
-const startCobaltEinChecks = async (foodTruck) => {
+const startCobaltEinChecks = async (foodTruck, { checkType = null } = {}) => {
   if (!enabled() || !process.env.COBALT_API_KEY) return [];
   if (String(process.env.COBALT_ALLOW_EIN_QUERY_TRANSMISSION || 'false').toLowerCase() !== 'true') {
     throw new Error('Cobalt EIN query transmission requires explicit authorization');
@@ -227,12 +227,14 @@ const startCobaltEinChecks = async (foodTruck) => {
     currentRecord({ foodTruck, provider: 'COBALT', checkType: 'TIN' }),
     currentRecord({ foodTruck, provider: 'COBALT', checkType: 'SOS' }),
   ]);
-  const shouldStartTin = !activeOrTerminalRecord(existingTin) || stalePendingCobaltTin(existingTin);
+  const shouldStartTin = checkType !== 'SOS'
+    && (!activeOrTerminalRecord(existingTin) || stalePendingCobaltTin(existingTin));
   // A failed SOS lookup is safe to retry on an explicit user action.  Do not
   // resend an active TIN request: Cobalt flags duplicate TIN submissions.
   // A pending check without a reference becomes retryable only after the
   // bounded stale window above.
-  const shouldStartSos = !existingSos || ['FAILED', 'RETRYABLE_ERROR'].includes(existingSos.status);
+  const shouldStartSos = checkType !== 'TIN'
+    && (!existingSos || ['FAILED', 'RETRYABLE_ERROR'].includes(existingSos.status));
   if (!shouldStartTin && !shouldStartSos) {
     if (existingSos?.status === 'PENDING' && existingSos.provider_reference) {
       try {
@@ -289,7 +291,7 @@ const startCobaltEinChecks = async (foodTruck) => {
   return [tinRecord, sosRecord];
 };
 
-const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
+const startCoordinatorCobaltEinChecks = async ({ coordinator, profile, checkType = null }) => {
   if (!enabled() || !process.env.COBALT_API_KEY) return [];
   if (String(process.env.COBALT_ALLOW_EIN_QUERY_TRANSMISSION || 'false').toLowerCase() !== 'true') {
     throw new Error('Cobalt EIN query transmission requires explicit authorization');
@@ -302,8 +304,10 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
     check_type: checkType,
   }).exec();
   const [existingTin, existingSos] = await Promise.all([recordFor('TIN'), recordFor('SOS')]);
-  const shouldStartTin = !activeOrTerminalRecord(existingTin) || stalePendingCobaltTin(existingTin);
-  const shouldStartSos = !existingSos || ['FAILED', 'RETRYABLE_ERROR'].includes(existingSos.status);
+  const shouldStartTin = checkType !== 'SOS'
+    && (!activeOrTerminalRecord(existingTin) || stalePendingCobaltTin(existingTin));
+  const shouldStartSos = checkType !== 'TIN'
+    && (!existingSos || ['FAILED', 'RETRYABLE_ERROR'].includes(existingSos.status));
   if (!shouldStartTin && !shouldStartSos) {
     if (existingSos?.status === 'PENDING' && existingSos.provider_reference) {
       try {

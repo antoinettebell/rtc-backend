@@ -751,7 +751,7 @@ const beginProfileRevalidation = async ({ foodTruck, actor = null, previousIdent
 // Provider calls are deliberately deferred until the three internal core
 // documents have passed their own OCR comparisons. This is idempotent: the
 // adapter reuses the active record for the current verification cycle.
-const startExternalVerificationWhenInternalChecksPass = async (foodTruckId) => {
+const startExternalVerificationWhenInternalChecksPass = async (foodTruckId, { checkType = null } = {}) => {
   const foodTruck = await FoodTruckModel.findById(foodTruckId)
     .select('+tax_identifier_encrypted tax_identifier_type tax_identifier_masked legal_business_name dba name legal_business_type business_registration_state compliance_verification_cycle userId')
     .exec();
@@ -772,7 +772,7 @@ const startExternalVerificationWhenInternalChecksPass = async (foodTruckId) => {
   try {
     return String(foodTruck.tax_identifier_type || '').toUpperCase() === 'SSN'
       ? await ProviderHelper.startComplyCubeSsnCheck(foodTruck)
-      : await ProviderHelper.startCobaltEinChecks(foodTruck);
+      : await ProviderHelper.startCobaltEinChecks(foodTruck, { checkType });
   } catch (error) {
     const provider = String(foodTruck.tax_identifier_type || '').toUpperCase() === 'SSN'
       ? 'COMPLYCUBE'
