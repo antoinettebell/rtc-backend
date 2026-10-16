@@ -11,6 +11,10 @@ const EncryptionService = require('./encryption');
 
 const enabled = () => String(process.env.COMPLIANCE_EXTERNAL_VERIFICATION_ENABLED || 'false').toLowerCase() === 'true';
 const cobaltTestMode = () => String(process.env.COBALT_TEST_MODE || 'false').toLowerCase() === 'true';
+// Cobalt TIN checks normally return immediately. A pending response has no
+// pollable reference, so let an explicit later action recover only after the
+// provider's duplicate-submission window has had time to clear.
+const COBALT_TIN_STALE_RETRY_MS = 15 * 60 * 1000;
 const cobaltTestParams = () => cobaltTestMode() ? { test: 'complete' } : {};
 const cobaltSosParams = (businessName, state) => (cobaltTestMode()
   ? { searchQuery: businessName, state, test: 'complete' }
@@ -100,6 +104,11 @@ const currentRecord = ({ foodTruck, provider, checkType }) =>
 
 const activeOrTerminalRecord = (record) =>
   record && ['PENDING', 'PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(record.status);
+const stalePendingCobaltTin = (record, now = Date.now()) =>
+  record?.status === 'PENDING'
+  && !record.provider_reference
+  && record.submitted_at
+  && now - new Date(record.submitted_at).getTime() >= COBALT_TIN_STALE_RETRY_MS;
 
 // A provider result normally arrives through the signed webhook. This manual
 // refresh is deliberately limited to an already-pending ComplyCube check so a
@@ -218,9 +227,11 @@ const startCobaltEinChecks = async (foodTruck) => {
     currentRecord({ foodTruck, provider: 'COBALT', checkType: 'TIN' }),
     currentRecord({ foodTruck, provider: 'COBALT', checkType: 'SOS' }),
   ]);
-  const shouldStartTin = !activeOrTerminalRecord(existingTin);
+  const shouldStartTin = !activeOrTerminalRecord(existingTin) || stalePendingCobaltTin(existingTin);
   // A failed SOS lookup is safe to retry on an explicit user action.  Do not
-  // resend an existing TIN request: Cobalt flags duplicate TIN submissions.
+  // resend an active TIN request: Cobalt flags duplicate TIN submissions.
+  // A pending check without a reference becomes retryable only after the
+  // bounded stale window above.
   const shouldStartSos = !existingSos || ['FAILED', 'RETRYABLE_ERROR'].includes(existingSos.status);
   if (!shouldStartTin && !shouldStartSos) {
     if (existingSos?.status === 'PENDING' && existingSos.provider_reference) {
@@ -258,7 +269,8 @@ const startCobaltEinChecks = async (foodTruck) => {
     const tinResult = tinResponse.data || {};
     tinRecord = await upsert({ foodTruck, provider: 'COBALT', checkType: 'TIN', values: {
       status: normalizeCobaltTin(tinResult), request_fingerprint: fingerprint(`EIN:${foodTruck.tax_identifier_masked}`),
-      safe_result_code: tinResult.irsCode === undefined ? null : String(tinResult.irsCode), safe_reason: safeReason(tinResult.irsReason), submitted_at: new Date(),
+      safe_result_code: tinResult.irsCode === undefined ? null : String(tinResult.irsCode), safe_reason: safeReason(tinResult.irsReason),
+      retry_count: Number(existingTin?.retry_count || 0) + (existingTin ? 1 : 0), submitted_at: new Date(),
     } });
   }
   let sosRecord = existingSos;
@@ -290,7 +302,7 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile }) => {
     check_type: checkType,
   }).exec();
   const [existingTin, existingSos] = await Promise.all([recordFor('TIN'), recordFor('SOS')]);
-  const shouldStartTin = !activeOrTerminalRecord(existingTin);
+  const shouldStartTin = !activeOrTerminalRecord(existingTin) || stalePendingCobaltTin(existingTin);
   const shouldStartSos = !existingSos || ['FAILED', 'RETRYABLE_ERROR'].includes(existingSos.status);
   if (!shouldStartTin && !shouldStartSos) {
     if (existingSos?.status === 'PENDING' && existingSos.provider_reference) {
