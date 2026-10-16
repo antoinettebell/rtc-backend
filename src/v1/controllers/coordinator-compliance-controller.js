@@ -550,7 +550,11 @@ exports.startExternalVerification = async (req, res, next) => {
       externalVerification: await getExternalVerification(profile),
     });
     const internalComplete = before.requirements
-      .filter((requirement) => requirement.key !== 'EXTERNAL_IDENTITY_VERIFICATION')
+      .filter((requirement) => ![
+        'EXTERNAL_IDENTITY_VERIFICATION',
+        'COBALT_TIN',
+        'COBALT_SOS',
+      ].includes(requirement.key))
       .every((requirement) => requirement.complete);
     if (!internalComplete) {
       throw buildError('Complete internal compliance before requesting identity verification.', 409);
