@@ -1,35 +1,41 @@
-const REGRESSION_TEST_TRANSACTION_FEE = 0.01;
+const roundMoney = (value) =>
+  Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
-// TEMPORARY REGRESSION TEST OVERRIDE.
-// Production coordinator award fee: roundMoney(baseAmount * 0.015), or 1.5%.
-const getCoordinatorAwardFeeAmount = () => REGRESSION_TEST_TRANSACTION_FEE;
+// Marketplace fees are persisted as decimal rates (for example, 0.035 is 3.5%).
+const COORDINATOR_AWARD_FEE_RATE = 0.035;
+const FINAL_EVENT_PAYMENT_FEE_RATE = 0.035;
 
-// TEMPORARY REGRESSION TEST OVERRIDE.
-// Production Marketplace Vendor application checkout fee:
-// roundMoney(checkoutSubtotal * 0.035), or 3.5%.
+const getCoordinatorAwardFeeAmount = (baseAmount) =>
+  roundMoney(baseAmount * COORDINATOR_AWARD_FEE_RATE);
+
+// Marketplace Vendor application checkout fee.
 const getMarketplaceVendorApplicationCheckoutFeeAmount = () =>
-  REGRESSION_TEST_TRANSACTION_FEE;
+  0.01;
 
-// TEMPORARY REGRESSION TEST OVERRIDE.
-// Production customer ticket processing fee:
-// roundMoney(ticketSubtotal * 0.035), or 3.5%.
+// Customer ticket processing remains configured by the ticket-sales plan.
 const getCustomerTicketProcessingFeeAmount = () =>
-  REGRESSION_TEST_TRANSACTION_FEE;
+  0.01;
 
-// TEMPORARY REGRESSION TEST OVERRIDE.
-// Production final-event payment values:
-// baseAmount = roundMoney(awardedBid.full_bid_amount)
-// tipAmount = roundMoney(requestedTipAmount)
-// totalAmount/coordinatorPayoutAmount = roundMoney(baseAmount + tipAmount)
-const getFinalEventPaymentAmounts = () => ({
-  baseAmount: REGRESSION_TEST_TRANSACTION_FEE,
-  tipAmount: 0,
-  totalAmount: REGRESSION_TEST_TRANSACTION_FEE,
-  coordinatorPayoutAmount: REGRESSION_TEST_TRANSACTION_FEE,
-});
+// The coordinator pays the final awarded amount and optional tip. RTC retains
+// the 3.5% POS fee, so that fee is excluded from the vendor payout.
+const getFinalEventPaymentAmounts = (awardedAmount, requestedTipAmount) => {
+  const baseAmount = roundMoney(awardedAmount);
+  const tipAmount = roundMoney(requestedTipAmount);
+  const feeAmount = roundMoney(baseAmount * FINAL_EVENT_PAYMENT_FEE_RATE);
+
+  return {
+    baseAmount,
+    feeRate: FINAL_EVENT_PAYMENT_FEE_RATE,
+    feeAmount,
+    tipAmount,
+    totalAmount: roundMoney(baseAmount + feeAmount + tipAmount),
+    coordinatorPayoutAmount: roundMoney(baseAmount + tipAmount),
+  };
+};
 
 module.exports = {
-  REGRESSION_TEST_TRANSACTION_FEE,
+  COORDINATOR_AWARD_FEE_RATE,
+  FINAL_EVENT_PAYMENT_FEE_RATE,
   getCoordinatorAwardFeeAmount,
   getCustomerTicketProcessingFeeAmount,
   getFinalEventPaymentAmounts,

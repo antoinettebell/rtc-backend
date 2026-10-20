@@ -103,6 +103,7 @@ const {
   refundPaidMarketplaceVendorFee,
 } = require('../../helper/marketplace-vendor-fee-refund');
 const {
+  COORDINATOR_AWARD_FEE_RATE,
   getCoordinatorAwardFeeAmount,
   getFinalEventPaymentAmounts,
   getMarketplaceVendorApplicationCheckoutFeeAmount,
@@ -301,7 +302,6 @@ const assertRequiredMarketplaceFields = (fields = {}) => {
 };
 
 const MARKETPLACE_PHONE_NUMBER = '800-410-7053';
-const COORDINATOR_AWARD_FEE_RATE = 0.015;
 const VENDOR_EVENT_PROCESSING_RATE = 0.02;
 const roundMoney = (value) => Number((Number(value || 0)).toFixed(2));
 const ACTIVE_EVENT_STATUSES = ['OPEN', 'REOPENED'];
@@ -10108,6 +10108,8 @@ exports.createFinalEventPayment = async (req, res, next) => {
     const requestedTipAmount = roundMoney(req.body.tip_amount || 0);
     const {
       baseAmount,
+      feeRate,
+      feeAmount,
       tipAmount,
       totalAmount,
       coordinatorPayoutAmount,
@@ -10134,8 +10136,8 @@ exports.createFinalEventPayment = async (req, res, next) => {
           food_truck_id: foodTruckId,
           payment_type: 'FINAL_EVENT_PAYMENT',
           base_amount: baseAmount,
-          fee_rate: null,
-          fee_amount: 0,
+          fee_rate: feeRate,
+          fee_amount: feeAmount,
           tip_amount: tipAmount,
           total_amount: totalAmount,
           coordinator_payout_amount: coordinatorPayoutAmount,
@@ -10158,7 +10160,8 @@ exports.createFinalEventPayment = async (req, res, next) => {
       marketplacePayment.selected_bid_ids = awardedBid ? [awardedBid.bid_id] : [];
       marketplacePayment.food_truck_id = foodTruckId;
       marketplacePayment.base_amount = baseAmount;
-      marketplacePayment.fee_amount = 0;
+      marketplacePayment.fee_rate = feeRate;
+      marketplacePayment.fee_amount = feeAmount;
       marketplacePayment.tip_amount = tipAmount;
       marketplacePayment.total_amount = totalAmount;
       marketplacePayment.coordinator_payout_amount = coordinatorPayoutAmount;
@@ -10245,7 +10248,9 @@ exports.updateFinalPaymentTip = async (req, res, next) => {
     }
 
     const tipAmount = roundMoney(req.body.tip_amount || 0);
-    const totalAmount = roundMoney(payment.base_amount + tipAmount);
+    const totalAmount = roundMoney(
+      payment.base_amount + payment.fee_amount + tipAmount
+    );
     const updatedPayment = await MarketplacePaymentService.getModel().findOneAndUpdate(
       {
         payment_id: payment.payment_id,
@@ -10255,7 +10260,7 @@ exports.updateFinalPaymentTip = async (req, res, next) => {
         $set: {
           tip_amount: tipAmount,
           total_amount: totalAmount,
-          coordinator_payout_amount: totalAmount,
+          coordinator_payout_amount: roundMoney(payment.base_amount + tipAmount),
           payment_method: null,
         },
       },
