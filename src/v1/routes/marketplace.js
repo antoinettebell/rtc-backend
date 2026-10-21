@@ -1,5 +1,11 @@
 const express = require('express');
 const router = express.Router();
+const CoordinatorComplianceController = require('../controllers/coordinator-compliance-controller');
+const CoordinatorComplianceUpload = require('../../middleware/coordinator-compliance-upload');
+const marketplaceVendorCompliance = (req, res, next) => {
+  req.marketplaceVendorCompliance = true;
+  next();
+};
 const {
   MarketplaceController: Controller,
   MarketplaceTicketController: TicketController,
@@ -13,6 +19,13 @@ const MarketplaceUpload = require('../../middleware/marketplace-upload');
 router.get('/event-vendor/profile', allowedTo(['VENDOR']), EventVendorController.getProfile);
 router.put('/event-vendor/profile', allowedTo(['VENDOR']), EventVendorController.saveProfile);
 router.post('/event-vendor/profile/submit', allowedTo(['VENDOR']), EventVendorController.submitProfile);
+router.get('/event-vendor/compliance', allowedTo(['VENDOR']), marketplaceVendorCompliance, CoordinatorComplianceController.status);
+router.put('/event-vendor/compliance/profile', allowedTo(['VENDOR']), marketplaceVendorCompliance, CoordinatorComplianceController.saveProfile);
+router.post('/event-vendor/compliance/documents', allowedTo(['VENDOR']), marketplaceVendorCompliance, CoordinatorComplianceUpload.single(), CoordinatorComplianceController.uploadDocument);
+router.post('/event-vendor/compliance/ocr', allowedTo(['VENDOR']), marketplaceVendorCompliance, CoordinatorComplianceController.submitDocumentsForOcr);
+router.post('/event-vendor/compliance/verification', allowedTo(['VENDOR']), marketplaceVendorCompliance, CoordinatorComplianceController.startExternalVerification);
+router.post('/event-vendor/compliance/w9/signing', allowedTo(['VENDOR']), marketplaceVendorCompliance, CoordinatorComplianceController.startW9Signing);
+router.post('/event-vendor/compliance/w9/complete', allowedTo(['VENDOR']), marketplaceVendorCompliance, CoordinatorComplianceController.completeW9Signing);
 router.get('/event-vendor/photos', allowedTo(['VENDOR']), EventVendorController.listPhotos);
 router.post('/event-vendor/photos', allowedTo(['VENDOR']), MarketplaceUpload.single(), EventVendorController.uploadPhoto);
 router.post('/event-vendor/photos/:photoId/replace', allowedTo(['VENDOR']), MarketplaceUpload.single(), EventVendorController.replacePhoto);

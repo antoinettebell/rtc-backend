@@ -61,6 +61,7 @@ const {
   getCoordinatorNotSelectTransition,
 } = require('../../helper/marketplace-submission-lifecycle');
 const { resolveEventVendorParticipationPath } = require('../../helper/event-vendor-participation-helper');
+const { getMarketplaceVendorCompliance } = require('./coordinator-compliance-controller');
 const { normalizeExternalWebLink, normalizeExternalWebLinks } = require('../../helper/external-web-link');
 const {
   hasMarketplaceVendorAwardCapacity,
@@ -175,6 +176,23 @@ const assertApprovedProfile = async (userId) => {
     throw error('Your Marketplace Vendor profile must be approved first', 403);
   }
   return profile;
+};
+
+const assertMarketplaceVendorCompliance = async (userId) => {
+  const compliance = await getMarketplaceVendorCompliance(userId);
+  if (Number(compliance?.score || 0) !== 100) {
+    const required = (compliance?.requirements || [])
+      .filter((item) => !item.complete)
+      .map((item) => item.label)
+      .join(', ');
+    throw error(
+      required
+        ? `Complete Marketplace Vendor compliance before continuing: ${required}.`
+        : 'Complete Marketplace Vendor compliance before continuing.',
+      403
+    );
+  }
+  return compliance;
 };
 
 const sanitizePhone = (value) => {
@@ -633,6 +651,7 @@ exports.removeApplicationPhoto = async (req, res, next) => {
 
 exports.eligibleEvents = async (req, res, next) => {
   try {
+    await assertMarketplaceVendorCompliance(req.user._id);
     const profile = (await assertApprovedProfile(req.user._id)).toObject();
     const priorApplications = await EventVendorApplicationModel.find({
       vendor_user_id: req.user._id,
@@ -675,6 +694,7 @@ exports.submitApplication = async (req, res, next) => {
       EventVendorProfileModel.findOne({ vendor_user_id: req.user._id, status: 'ACTIVE', review_status: 'APPROVED' }).lean(),
       MarketplaceEventModel.findOne({ event_id: req.params.eventId, status: { $in: ['OPEN', 'REOPENED'] }, vendor_applications_closed_at: null }).lean(),
     ]);
+    await assertMarketplaceVendorCompliance(req.user._id);
     if (!profile) throw error('Complete the Marketplace Vendor profile first', 409);
     if (!event || (event.event_close_date && new Date(event.event_close_date) <= new Date())) throw error('Applications are closed', 410);
     if (
@@ -1275,6 +1295,7 @@ exports.getTapToPayTerminalStatus = async (req, res, next) => {
 exports.prepareGeneralPurchase = async (req, res, next) => {
   try {
     await assertEventVendor(req.user._id);
+    await assertMarketplaceVendorCompliance(req.user._id);
     const profile = await assertApprovedProfile(req.user._id);
     const checkoutKey = String(req.body.checkout_key || '').trim();
     if (!checkoutKey) throw error('Checkout key is required');
@@ -1318,6 +1339,7 @@ exports.prepareGeneralPurchase = async (req, res, next) => {
 exports.completeGeneralPurchase = async (req, res, next) => {
   try {
     await assertEventVendor(req.user._id);
+    await assertMarketplaceVendorCompliance(req.user._id);
     const profile = await assertApprovedProfile(req.user._id);
     const transactionId = String(req.body.transaction_id || '').trim();
     if (!transactionId) throw error('A verified Tap to Pay transaction is required');

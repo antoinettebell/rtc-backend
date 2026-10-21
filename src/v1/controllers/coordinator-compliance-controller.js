@@ -36,15 +36,22 @@ const asVendorIdentity = (profile = {}) => ({
   dba: profile.dba_name || null,
 });
 
-const getCoordinator = async (user) => {
+const getCoordinator = async (user, { allowMarketplaceVendor = false } = {}) => {
   const coordinator = await UserModel.findById(user._id);
-  if (!coordinator || user.userType !== 'CUSTOMER' || !coordinator.isEventCoordinator) {
+  const isCoordinator = user.userType === 'CUSTOMER' && coordinator?.isEventCoordinator;
+  const isMarketplaceVendor = allowMarketplaceVendor && user.userType === 'VENDOR';
+  if (!coordinator || (!isCoordinator && !isMarketplaceVendor)) {
     throw buildError('Only enabled event coordinators can manage coordinator compliance.', 403);
   }
+  // The Marketplace Vendor route deliberately reuses the exact same isolated
+  // compliance evidence, DocuSign, OCR, and provider-verification lifecycle.
+  // This marker makes W-9 and verification mandatory for that route.
+  coordinator.__marketplaceVendorCompliance = isMarketplaceVendor;
   return coordinator;
 };
 
 const requiresPayoutCompliance = (coordinator) =>
+  coordinator.__marketplaceVendorCompliance === true ||
   coordinator.eventCoordinatorExpectsTicketSales === true ||
   coordinator.eventCoordinatorExpectsVendorFees === true;
 
@@ -188,6 +195,25 @@ const buildComplianceSummary = ({ profile, session, requiresPayout, externalVeri
   };
 };
 
+// Marketplace Vendors deliberately share the coordinator compliance evidence
+// contract: one identity document, a DocuSign W-9, OCR, and provider checks.
+// Their records remain keyed to their own authenticated user IDs.
+exports.getMarketplaceVendorCompliance = async (userId) => {
+  const profile = await CoordinatorComplianceProfileModel.findOne({
+    coordinator_user_id: userId,
+  });
+  const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
+    coordinator_user_id: userId,
+    status: 'SIGNED',
+  }).sort({ created_at: -1 });
+  return buildComplianceSummary({
+    profile,
+    session,
+    requiresPayout: true,
+    externalVerification: await getExternalVerification(profile),
+  });
+};
+
 // Paid-event access is a separate, backend-owned user flag. Keep it in lockstep
 // with the same internal-compliance requirements shown to the coordinator so a
 // completed W-9/license cannot leave the profile incorrectly limited to free
@@ -200,7 +226,10 @@ const reconcilePayoutEligibility = async ({ coordinator, profile, session, exter
   const nextEligibility = requiresPayout && compliance.score === 100
     ? 'ENABLED'
     : 'DISABLED';
-  if (coordinator.eventCoordinatorPayoutEligibility !== nextEligibility) {
+  if (
+    !coordinator.__marketplaceVendorCompliance &&
+    coordinator.eventCoordinatorPayoutEligibility !== nextEligibility
+  ) {
     coordinator.eventCoordinatorPayoutEligibility = nextEligibility;
     await coordinator.save();
   }
@@ -284,7 +313,7 @@ const toSafeSession = (session) => {
 
 exports.status = async (req, res, next) => {
   try {
-    const coordinator = await getCoordinator(req.user);
+    const coordinator = await getCoordinator(req.user, { allowMarketplaceVendor: req.marketplaceVendorCompliance === true });
     const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
       coordinator_user_id: coordinator._id,
     }).sort({ created_at: -1 });
@@ -309,7 +338,7 @@ exports.status = async (req, res, next) => {
 
 exports.saveProfile = async (req, res, next) => {
   try {
-    const coordinator = await getCoordinator(req.user);
+    const coordinator = await getCoordinator(req.user, { allowMarketplaceVendor: req.marketplaceVendorCompliance === true });
     const partyType = String(req.body?.party_type || '').toUpperCase();
     if (!['INDIVIDUAL', 'BUSINESS'].includes(partyType)) {
       throw buildError('Choose whether the coordinator is an individual or business.');
@@ -426,7 +455,7 @@ exports.saveProfile = async (req, res, next) => {
 
 exports.uploadDocument = async (req, res, next) => {
   try {
-    const coordinator = await getCoordinator(req.user);
+    const coordinator = await getCoordinator(req.user, { allowMarketplaceVendor: req.marketplaceVendorCompliance === true });
     if (!req.file) throw buildError('Choose a document to upload.');
     const documentType = String(req.body?.document_type || '').toUpperCase();
     if (!['DRIVER_LICENSE_FRONT', 'BUSINESS_LICENSE'].includes(documentType)) {
@@ -468,7 +497,7 @@ exports.uploadDocument = async (req, res, next) => {
 // profile. Existing verified OCR is left untouched until the evidence changes.
 exports.submitDocumentsForOcr = async (req, res, next) => {
   try {
-    const coordinator = await getCoordinator(req.user);
+    const coordinator = await getCoordinator(req.user, { allowMarketplaceVendor: req.marketplaceVendorCompliance === true });
     const profile = await getOrMigrateProfile(coordinator);
     if (!profile) throw buildError('Save coordinator compliance information before running OCR.', 409);
     const queued = [];
@@ -534,7 +563,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
 
 exports.startExternalVerification = async (req, res, next) => {
   try {
-    const coordinator = await getCoordinator(req.user);
+    const coordinator = await getCoordinator(req.user, { allowMarketplaceVendor: req.marketplaceVendorCompliance === true });
     if (!requiresPayoutCompliance(coordinator)) {
       throw buildError('Enable ticket sales or vendor-fee payouts before requesting verification.', 409);
     }
@@ -705,7 +734,7 @@ exports.ocrResult = async (req, res, next) => {
 
 exports.startW9Signing = async (req, res, next) => {
   try {
-    const coordinator = await getCoordinator(req.user);
+    const coordinator = await getCoordinator(req.user, { allowMarketplaceVendor: req.marketplaceVendorCompliance === true });
     if (!requiresPayoutCompliance(coordinator)) {
       throw buildError('Enable ticket sales or vendor-fee payouts before signing a W-9.', 409);
     }
@@ -756,7 +785,7 @@ exports.startW9Signing = async (req, res, next) => {
 
 exports.completeW9Signing = async (req, res, next) => {
   try {
-    const coordinator = await getCoordinator(req.user);
+    const coordinator = await getCoordinator(req.user, { allowMarketplaceVendor: req.marketplaceVendorCompliance === true });
     const envelopeId = String(req.body?.envelope_id || '').trim();
     if (!envelopeId) throw buildError('W-9 signing session is required.');
     const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
