@@ -109,9 +109,9 @@ const toSafeProfile = (profile) => {
   };
 };
 
-// Never return the signed W-9 URL/key or OCR extraction data to the mobile
-// client. The screen only needs lifecycle state and the envelope identifier
-// needed to complete a signing session.
+// The signed W-9 URL is the same limited document link exposed by the existing
+// coordinator compliance flow so Marketplace Vendors can open the completed
+// document from their compliance card. OCR extraction data remains private.
 const toSafeSession = (session) => {
   if (!session) return null;
   const value = typeof session.toObject === 'function' ? session.toObject() : session;
@@ -122,6 +122,7 @@ const toSafeSession = (session) => {
     verification_status: value.verification_status,
     ocr_status: value.ocr_status,
     ocr_error_message: value.ocr_error_message,
+    signed_document_url: value.signed_document_url,
     completed_at: value.completed_at,
   };
 };
@@ -709,10 +710,12 @@ exports.startW9Signing = async (req, res, next) => {
       throw buildError('Add your EIN or SSN in MarketplaceVendor Compliance before signing a W-9.', 409);
     }
 
-    const signerName = [vendor.firstName, vendor.lastName]
+    // The legal compliance name, not the account's consumer-profile name,
+    // must be the DocuSign recipient name and prefilled W-9 signer.
+    const signerName = profile.legal_name || [vendor.firstName, vendor.lastName]
       .filter(Boolean)
       .join(' ')
-      .trim() || profile.legal_name || 'Event MarketplaceVendor';
+      .trim() || 'Marketplace Vendor';
     const envelope = await DocuSignHelper.createVendorComplianceW9Envelope({
       vendorName: signerName,
       vendorEmail: vendor.email,
@@ -732,7 +735,7 @@ exports.startW9Signing = async (req, res, next) => {
       signerEmail: vendor.email,
       vendorUserId: vendor._id,
       recipientId: signer.recipientId,
-      returnUrl: docusign.customerReturnUrl,
+      returnUrl: 'rounddacornervendor://docusign/return?status=completed',
     });
     const session = await MarketplaceVendorComplianceW9EnvelopeModel.create({
       vendor_user_id: vendor._id,
