@@ -398,7 +398,10 @@ const startMarketplaceVendorComplyCubeSsnCheck = async ({ vendor, profile }) => 
   }).exec();
   if (existing?.status === 'PENDING') return refreshPendingComplyCubeCheck(existing);
   if (activeOrTerminalRecord(existing)) return existing;
-  const name = vendorNameParts(profile.legal_name);
+  // Marketplace Vendors use the same legal-name split required by the
+  // existing coordinator ComplyCube SSN check. Keep the request shape and
+  // validation identical; only the persistence model differs.
+  const name = coordinatorNameParts(profile.legal_name);
   const ssn = formatSsnForComplyCube(EncryptionService.decrypt(profile.tax_id_encrypted));
   if (!name || !ssn || !vendor?.email) throw new Error('SSN verification profile is incomplete');
   const previous = await MarketplaceVendorComplianceProviderVerificationModel.findOne({
