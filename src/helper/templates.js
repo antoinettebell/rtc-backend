@@ -33,23 +33,11 @@ exports.FORGOT_PASSWORD_TEMPLATE = `<html>
             <table border="0" cellpadding="0" cellspacing="0" width="480" >
               <tr>
                 <td bgcolor="#fc7b03" align="left" style="padding: 20px 15px 40px 15px; color: #ebebeb; font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 400; line-height: 25px;" >
-                  <p style="margin: 0 0 20px 0; color: #ffffff">
-                    Use the button below to choose a new password.
-                  </p>
-                  <table border="0" cellpadding="0" cellspacing="0" role="presentation" style="margin: 0 0 24px 0;">
-                    <tr>
-                      <td bgcolor="#0A1026" style="border-radius: 6px;">
-                        <a href="####url####" target="_blank" style="background-color: #0A1026; border: 1px solid #0A1026; border-radius: 6px; color: #ffffff; display: inline-block; font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 700; line-height: 22px; padding: 14px 24px; text-align: center; text-decoration: none;">
-                          Reset password
-                        </a>
-                      </td>
-                    </tr>
-                  </table>
                   <p style="margin: 0; color: #ffffff">
-                    If the button does not open, copy and paste this link into your browser:
+                    Use this link to choose a new password:
                   </p> <br />
-                  <p style="margin: 0; color: #ffffff; word-break: break-all;">
-                    <a href="####url####" target="_blank" style="color: #0A1026; text-decoration: underline; word-break: break-all;">####url####</a>
+                  <p style="margin: 0;">
+                    <a href="####url####" target="_blank" style="color: #0A1026; font-family: Helvetica, Arial, sans-serif; font-size: 20px; font-weight: 700; text-decoration: underline;">Reset password</a>
                   </p>
                 </td>
               </tr>
