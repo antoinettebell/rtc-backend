@@ -17,30 +17,21 @@ const jwt = require('jsonwebtoken');
 
 sgMail.setApiKey(sendgridSetting.secret);
 
-exports.sendMail = async (to, subject, html, options = {}) => {
+exports.sendMail = async (to, subject, html) => {
   const msg = {
     to,
     from: sendgridSetting.email, // Use the email address or domain you verified with SendGrid
     subject,
     html,
   };
-  if (options.text) {
-    msg.text = options.text;
-  }
-  if (options.trackingSettings) {
-    msg.trackingSettings = options.trackingSettings;
-  }
-
   if (!sendgridSetting.email || !sendgridSetting.secret) {
     throw new Error('Feature not available');
     return;
   }
   try{
-    const result = await sgMail.send(msg);
-    return { sent: true, result };
+    await sgMail.send(msg);
   }catch(error){
     console.error("SendGrid Error:", error?.response?.body || error.message);
-    return { sent: false, failed: true, reason: error.message };
   }
 };
 
