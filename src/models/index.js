@@ -2,6 +2,9 @@
 exports.UserModel = require('./user');
 exports.CoordinatorComplianceProfileModel = require('./coordinator-compliance-profile');
 exports.CoordinatorComplianceProviderVerificationModel = require('./coordinator-compliance-provider-verification');
+exports.MarketplaceVendorComplianceProfileModel = require('./marketplace-vendor-compliance-profile');
+exports.MarketplaceVendorComplianceW9EnvelopeModel = require('./marketplace-vendor-compliance-w9-envelope');
+exports.MarketplaceVendorComplianceProviderVerificationModel = require('./marketplace-vendor-compliance-provider-verification');
 
 /** Define food-truck model */
 exports.FoodTruckModel = require('./food-truck');

@@ -6,6 +6,7 @@ const {
   VendorComplianceProviderVerificationModel,
   CoordinatorComplianceProviderVerificationModel,
   CoordinatorComplianceProfileModel,
+  MarketplaceVendorComplianceProviderVerificationModel,
 } = require('../models');
 const EncryptionService = require('./encryption');
 
@@ -386,6 +387,156 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile, checkType
   return [tinRecord, sosRecord];
 };
 
+const startMarketplaceVendorComplyCubeSsnCheck = async ({ vendor, profile }) => {
+  if (!enabled() || !process.env.COMPLYCUBE_API_KEY) return null;
+  const verificationCycle = Math.max(1, Number(profile.external_verification_cycle || 1));
+  const existing = await MarketplaceVendorComplianceProviderVerificationModel.findOne({
+    vendor_user_id: vendor._id,
+    verification_cycle: verificationCycle,
+    provider: 'COMPLYCUBE',
+    check_type: 'SSN',
+  }).exec();
+  if (existing?.status === 'PENDING') return refreshPendingComplyCubeCheck(existing);
+  if (activeOrTerminalRecord(existing)) return existing;
+  const name = vendorNameParts(profile.legal_name);
+  const ssn = formatSsnForComplyCube(EncryptionService.decrypt(profile.tax_id_encrypted));
+  if (!name || !ssn || !vendor?.email) throw new Error('SSN verification profile is incomplete');
+  const previous = await MarketplaceVendorComplianceProviderVerificationModel.findOne({
+    vendor_user_id: vendor._id,
+    provider: 'COMPLYCUBE',
+    check_type: 'SSN',
+    provider_client_reference: { $ne: null },
+  }).sort({ created_at: -1 }).lean();
+  const clientPayload = {
+    type: 'person',
+    email: vendor.email,
+    externalId: `rtc-marketplace-vendor-${vendor._id}`,
+    personDetails: { ...name, ssn },
+  };
+  const requestOptions = { headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000 };
+  const clientResponse = previous?.provider_client_reference
+    ? await axios.patch(`https://api.complycube.com/v1/clients/${previous.provider_client_reference}`, clientPayload, requestOptions)
+    : await axios.post('https://api.complycube.com/v1/clients', clientPayload, requestOptions);
+  const clientId = clientResponse.data?.id || previous?.provider_client_reference;
+  const checkResponse = await axios.post('https://api.complycube.com/v1/checks', {
+    clientId,
+    type: 'ssn_check',
+  }, { headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000 });
+  const check = checkResponse.data || {};
+  return MarketplaceVendorComplianceProviderVerificationModel.findOneAndUpdate(
+    { vendor_user_id: vendor._id, verification_cycle: verificationCycle, provider: 'COMPLYCUBE', check_type: 'SSN' },
+    {
+      $set: {
+        marketplace_vendor_profile_id: profile.marketplace_vendor_profile_id,
+        status: normalizeComplyCube(check),
+        provider_reference: check.id || null,
+        provider_client_reference: clientId || null,
+        request_fingerprint: fingerprint(`SSN:${profile.tax_id_masked}`),
+        submitted_at: new Date(),
+      },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+};
+
+
+const startMarketplaceVendorCobaltEinChecks = async ({ vendor, profile, checkType = null }) => {
+  if (!enabled() || !process.env.COBALT_API_KEY) return [];
+  if (String(process.env.COBALT_ALLOW_EIN_QUERY_TRANSMISSION || 'false').toLowerCase() !== 'true') {
+    throw new Error('Cobalt EIN query transmission requires explicit authorization');
+  }
+  const verificationCycle = Math.max(1, Number(profile.external_verification_cycle || 1));
+  const recordFor = (checkType) => MarketplaceVendorComplianceProviderVerificationModel.findOne({
+    vendor_user_id: vendor._id,
+    verification_cycle: verificationCycle,
+    provider: 'COBALT',
+    check_type: checkType,
+  }).exec();
+  const [existingTin, existingSos] = await Promise.all([recordFor('TIN'), recordFor('SOS')]);
+  const shouldStartTin = checkType !== 'SOS'
+    && (!activeOrTerminalRecord(existingTin) || stalePendingCobaltTin(existingTin));
+  const shouldStartSos = checkType !== 'TIN'
+    && (!existingSos || ['FAILED', 'RETRYABLE_ERROR'].includes(existingSos.status));
+  if (!shouldStartTin && !shouldStartSos) {
+    if (existingSos?.status === 'PENDING' && existingSos.provider_reference) {
+      try {
+        const response = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
+          params: { retryId: existingSos.provider_reference },
+          headers: { Accept: 'application/json', 'x-api-key': process.env.COBALT_API_KEY },
+          timeout: 35000,
+        });
+        const result = response.data || {};
+        existingSos.status = normalizeCobaltSos(result, {
+          legal_business_name: profile.legal_name,
+          dba: profile.dba_name,
+          business_registration_state: profile.registration_state,
+        });
+        existingSos.provider_reference = result.retryId || existingSos.provider_reference;
+        existingSos.retry_count = Number(existingSos.retry_count || 0) + 1;
+        existingSos.safe_reason = cobaltSosSafeReason(existingSos.status);
+        if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(existingSos.status)) existingSos.completed_at = new Date();
+        await existingSos.save();
+      } catch (_) {
+        // Preserve the retry ID and avoid creating another State search.
+      }
+    }
+    return [existingTin, existingSos];
+  }
+  const tin = formatEinForCobalt(EncryptionService.decrypt(profile.tax_id_encrypted));
+  const businessName = profile.legal_name;
+  if (!tin || !businessName || !profile.registration_state || !profile.entity_type) {
+    throw new Error('EIN verification profile is incomplete');
+  }
+  const headers = { Accept: 'application/json', 'x-api-key': process.env.COBALT_API_KEY };
+  const save = (checkType, values) => MarketplaceVendorComplianceProviderVerificationModel.findOneAndUpdate(
+    {
+      vendor_user_id: vendor._id,
+      verification_cycle: verificationCycle,
+      provider: 'COBALT',
+      check_type: checkType,
+    },
+    { $set: { marketplace_vendor_profile_id: profile.marketplace_vendor_profile_id, ...values } },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  let tinRecord = existingTin;
+  if (shouldStartTin) {
+    const tinResponse = await axios.get('https://apigateway.cobaltintelligence.com/tinVerification', {
+      params: { tin, businessName }, headers, timeout: 20000,
+    });
+    const tinResult = tinResponse.data || {};
+    tinRecord = await save('TIN', {
+      status: normalizeCobaltTin(tinResult),
+      request_fingerprint: fingerprint(`EIN:${profile.tax_id_masked}`),
+      safe_result_code: tinResult.irsCode === undefined ? null : String(tinResult.irsCode),
+      safe_reason: safeReason(tinResult.irsReason),
+      submitted_at: new Date(),
+    });
+  }
+  let sosRecord = existingSos;
+  if (shouldStartSos) {
+    const sosResponse = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
+      params: cobaltSosParams(businessName, profile.registration_state),
+      headers,
+      timeout: 35000,
+    });
+    const sos = sosResponse.data || {};
+    const sosStatus = normalizeCobaltSos(sos, {
+      legal_business_name: profile.legal_name,
+      dba: profile.dba_name,
+      business_registration_state: profile.registration_state,
+    });
+    sosRecord = await save('SOS', {
+      status: sosStatus,
+      provider_reference: sos.retryId || sos.requestId || null,
+      safe_reason: cobaltSosSafeReason(sosStatus),
+      submitted_at: new Date(),
+    });
+  }
+  return [tinRecord, sosRecord];
+};
+
+
+
 const pollPendingCobaltSosChecks = async () => {
   if (!enabled() || !process.env.COBALT_API_KEY) return 0;
   if (String(process.env.COBALT_ALLOW_EIN_QUERY_TRANSMISSION || 'false').toLowerCase() !== 'true') return 0;
@@ -484,4 +635,19 @@ const applyCoordinatorProviderResult = async ({ provider, providerReference, sta
   return record;
 };
 
-module.exports = { enabled, normalizeComplyCube, normalizeCobaltTin, normalizeCobaltSos, startComplyCubeSsnCheck, startCoordinatorComplyCubeSsnCheck, startCobaltEinChecks, startCoordinatorCobaltEinChecks, pollPendingCobaltSosChecks, applyProviderResult, applyCoordinatorProviderResult };
+const applyMarketplaceVendorProviderResult = async ({ provider, providerReference, status, safeResultCode = null, safeReason = null, webhookEventReference = null }) => {
+  const record = await MarketplaceVendorComplianceProviderVerificationModel.findOne({
+    provider: String(provider || '').toUpperCase(),
+    provider_reference: providerReference,
+  });
+  if (!record) return null;
+  record.status = String(status || '').toUpperCase();
+  record.safe_result_code = safeResultCode || null;
+  record.safe_reason = safeReason || null;
+  record.webhook_event_reference = webhookEventReference || null;
+  if (['PASSED', 'FAILED', 'MANUAL_REVIEW', 'RETRYABLE_ERROR'].includes(record.status)) record.completed_at = new Date();
+  await record.save();
+  return record;
+};
+
+module.exports = { enabled, normalizeComplyCube, normalizeCobaltTin, normalizeCobaltSos, startComplyCubeSsnCheck, startCoordinatorComplyCubeSsnCheck, startMarketplaceVendorComplyCubeSsnCheck, startCobaltEinChecks, startCoordinatorCobaltEinChecks, startMarketplaceVendorCobaltEinChecks, pollPendingCobaltSosChecks, applyProviderResult, applyCoordinatorProviderResult, applyMarketplaceVendorProviderResult };

@@ -61,7 +61,7 @@ const {
   getCoordinatorNotSelectTransition,
 } = require('../../helper/marketplace-submission-lifecycle');
 const { resolveEventVendorParticipationPath } = require('../../helper/event-vendor-participation-helper');
-const { getMarketplaceVendorCompliance } = require('./coordinator-compliance-controller');
+const { getMarketplaceVendorCompliance } = require('./marketplace-vendor-compliance-controller');
 const { normalizeExternalWebLink, normalizeExternalWebLinks } = require('../../helper/external-web-link');
 const {
   hasMarketplaceVendorAwardCapacity,

@@ -4,6 +4,7 @@ const { FoodTruckModel, UserModel, VendorEmployeeModel, EmployeeSessionModel } =
 const CustomNotification = require('../../helper/custom-notification');
 const VendorComplianceService = require('../services/vendor-compliance-service');
 const CoordinatorComplianceController = require('./coordinator-compliance-controller');
+const MarketplaceVendorComplianceController = require('./marketplace-vendor-compliance-controller');
 const ProviderVerification = require('../../helper/vendor-compliance-provider-helper');
 const EmployeeSessionService = require('../services/employee-session-service');
 const {
@@ -561,6 +562,18 @@ exports.coordinatorComplianceOcrResult = async (req, res) => {
   }
 };
 
+exports.marketplaceVendorComplianceOcrResult = async (req, res) => {
+  if (!authorizeBackendWebhook(req, res)) return;
+  try {
+    return await MarketplaceVendorComplianceController.ocrResult(req, res, (error) => { throw error; });
+  } catch (error) {
+    return res.status(error?.code || 500).json({
+      success: false,
+      message: error?.message || 'Marketplace Vendor compliance OCR result failed',
+    });
+  }
+};
+
 exports.vendorComplianceProviderResult = async (req, res) => {
   if (!authorizeBackendWebhook(req, res)) return;
   try {
@@ -579,7 +592,8 @@ exports.vendorComplianceProviderResult = async (req, res) => {
       webhookEventReference: req.body?.webhook_event_reference,
     };
     const result = await ProviderVerification.applyProviderResult(payload) ||
-      await ProviderVerification.applyCoordinatorProviderResult(payload);
+      await ProviderVerification.applyCoordinatorProviderResult(payload) ||
+      await ProviderVerification.applyMarketplaceVendorProviderResult(payload);
     if (!result) return res.status(404).json({ success: false, message: 'Verification record not found' });
     return res.data({ verification: result }, 'Provider verification result processed');
   } catch (error) {

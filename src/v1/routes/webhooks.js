@@ -24,6 +24,11 @@ router.post(
 );
 
 router.post(
+  '/marketplace-vendor-compliance/documents/:documentId/ocr-result',
+  WebhookController.marketplaceVendorComplianceOcrResult
+);
+
+router.post(
   '/vendor-compliance/providers/result',
   WebhookController.vendorComplianceProviderResult
 );
