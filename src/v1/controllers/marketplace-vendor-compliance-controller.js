@@ -109,6 +109,23 @@ const toSafeProfile = (profile) => {
   };
 };
 
+// Never return the signed W-9 URL/key or OCR extraction data to the mobile
+// client. The screen only needs lifecycle state and the envelope identifier
+// needed to complete a signing session.
+const toSafeSession = (session) => {
+  if (!session) return null;
+  const value = typeof session.toObject === 'function' ? session.toObject() : session;
+  return {
+    session_id: value.session_id,
+    envelope_id: value.envelope_id,
+    status: value.status,
+    verification_status: value.verification_status,
+    ocr_status: value.ocr_status,
+    ocr_error_message: value.ocr_error_message,
+    completed_at: value.completed_at,
+  };
+};
+
 const getExternalVerification = async (profile) => {
   if (!profile?.tax_id_type) return { provider: null, status: 'NOT_STARTED', passed: false, checks: [] };
   const provider = String(profile.tax_id_type).toUpperCase() === 'SSN' ? 'COMPLYCUBE' : 'COBALT';
