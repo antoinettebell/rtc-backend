@@ -34,10 +34,10 @@ exports.FORGOT_PASSWORD_TEMPLATE = `<html>
               <tr>
                 <td bgcolor="#fc7b03" align="left" style="padding: 20px 15px 40px 15px; color: #ebebeb; font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 400; line-height: 25px;" >
                   <p style="margin: 0; color: #ffffff">
-                    Use this link to choose a new password:
+                    Copy and paste this link into your browser to choose a new password:
                   </p> <br />
-                  <p style="margin: 0;">
-                    <a href="####url####" target="_blank" style="color: #0A1026; font-family: Helvetica, Arial, sans-serif; font-size: 20px; font-weight: 700; text-decoration: underline;">Reset password</a>
+                  <p style="margin: 0; color: #ffffff; word-break: break-all;">
+                    <a href="####url####" target="_blank" style="color: #0A1026; font-family: Helvetica, Arial, sans-serif; font-size: 16px; font-weight: 700; text-decoration: underline; word-break: break-all;">####url####</a>
                   </p>
                 </td>
               </tr>
