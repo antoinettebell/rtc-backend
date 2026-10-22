@@ -750,7 +750,13 @@ exports.forgotPassword = async (req, res, next) => {
 
       const template = FORGOT_PASSWORD_TEMPLATE.replaceAll('####url####', url);
 
-      await MailHelper.sendMail(email, 'Change password', template);
+      await MailHelper.sendMail(email, 'Change password', template, {
+        // Password links are security-sensitive and must arrive as the direct
+        // Admin URL, not a provider-tracked redirect.
+        trackingSettings: {
+          clickTracking: { enable: false, enableText: false },
+        },
+      });
       await user.save();
 
       return res.message('Mail has been sent to your email');
