@@ -24,14 +24,8 @@ exports.sendMail = async (to, subject, html, options = {}) => {
     subject,
     html,
   };
-  if (options.text) {
-    msg.text = options.text;
-  }
   if (Array.isArray(options.attachments) && options.attachments.length) {
     msg.attachments = options.attachments;
-  }
-  if (options.trackingSettings) {
-    msg.trackingSettings = options.trackingSettings;
   }
 
   if (!sendgridSetting.email || !sendgridSetting.secret) {
