@@ -34,13 +34,10 @@ exports.FORGOT_PASSWORD_TEMPLATE = `<html>
               <tr>
                 <td bgcolor="#fc7b03" align="left" style="padding: 20px 15px 40px 15px; color: #ebebeb; font-family: Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 400; line-height: 25px;" >
                   <p style="margin: 0; color: #ffffff">
-                    You can change your password by clicking <b><a href="####url####" target="_blank">Here</a></b>.
+                    Use this link to choose a new password:
                   </p> <br />
-                  <p style="margin: 0; color: #ffffff">
-                    If that doesn't work, Copy and paste the below URL into your browser.
-                  </p> <br />
-                  <p style="margin: 0; color: #ffffff">
-                    <a href="####url####" target="_blank">####url####</a>.
+                  <p style="margin: 0;">
+                    <a href="####url####" target="_blank" style="color: #0A1026; font-family: Helvetica, Arial, sans-serif; font-size: 20px; font-weight: 700; text-decoration: underline;">Reset password</a>
                   </p>
                 </td>
               </tr>
