@@ -59,6 +59,20 @@ const mSchema = mongoose.Schema(
       type: String,
       required: false,
     },
+    // Browser password-reset tokens are deliberately stored only as hashes.
+    // The mobile OTP reset flow continues to use changePassToken.
+    webPasswordResetTokenHash: {
+      type: String,
+      required: false,
+      default: null,
+      select: false,
+    },
+    webPasswordResetExpiresAt: {
+      type: Date,
+      required: false,
+      default: null,
+      select: false,
+    },
     reasonForRejection: {
       type: String,
       default: null,

@@ -5,6 +5,7 @@ const {
   VendorEmployeeService,
 } = require('../services');
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { server, JWT } = require('../../config');
 const MailHelper = require('../../helper/mail-helper');
@@ -17,6 +18,52 @@ const {
 const disposableDomains = require('disposable-email-domains');
 const { addObject } = require('../../helper/aws');
 const fs = require('fs');
+const { UserModel } = require('../../models');
+
+const WEB_PASSWORD_RESET_TTL_MS = 3 * 60 * 60 * 1000;
+
+const hashBrowserPasswordResetToken = (token) =>
+  crypto.createHash('sha256').update(token).digest('hex');
+
+const findBrowserPasswordResetUser = async (token) => {
+  if (!token || typeof token !== 'string') return null;
+
+  return UserModel.findOne({
+    webPasswordResetTokenHash: hashBrowserPasswordResetToken(token),
+    webPasswordResetExpiresAt: { $gt: new Date() },
+  }).select('+webPasswordResetTokenHash +webPasswordResetExpiresAt');
+};
+
+const findLegacyPasswordResetUser = async (token) => {
+  const verifyToken = jwt.verify(token, JWT.secret);
+  if (!verifyToken.fp) {
+    const error = new Error('Unsupported token');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const user = await Service.getById(verifyToken._id);
+  if (!user) {
+    const error = new Error('Invalid token');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (user.changePassToken !== token) {
+    const error = new Error('Token expired');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return user;
+};
+
+const findPasswordResetUser = async (token) => {
+  const browserUser = await findBrowserPasswordResetUser(token);
+  if (browserUser) return { user: browserUser, resetType: 'browser' };
+
+  return { user: await findLegacyPasswordResetUser(token), resetType: 'legacy' };
+};
 
 /**
  * To add new entry to given collection
@@ -737,6 +784,39 @@ exports.forgotPassword = async (req, res, next) => {
       return res.error(new Error('User not found'), 409);
     }
 
+    if (forFe) {
+      // Keep browser reset links short enough for mail clients to preserve and
+      // recognize as tappable links. The raw value is sent once; only its hash
+      // is retained, so a database record cannot be used as a reset link.
+      const browserResetToken = crypto.randomBytes(24).toString('base64url');
+      user.webPasswordResetTokenHash = hashBrowserPasswordResetToken(browserResetToken);
+      user.webPasswordResetExpiresAt = new Date(
+        Date.now() + WEB_PASSWORD_RESET_TTL_MS
+      );
+      user.changePassToken = null;
+
+      const url = `${server.frontendBaseURL}/auth/change-password?token=${browserResetToken}`;
+
+      const template = FORGOT_PASSWORD_TEMPLATE.replaceAll('####url####', url);
+
+      await user.save();
+      const delivery = await MailHelper.sendMail(email, 'Change password', template, {
+        // Password links are security-sensitive and must arrive as the direct
+        // Admin URL, not a provider-tracked redirect.
+        trackingSettings: {
+          clickTracking: { enable: false, enableText: false },
+        },
+      });
+      if (!delivery?.sent) {
+        return res.error(
+          new Error('Password reset email could not be sent. Please try again.'),
+          502
+        );
+      }
+
+      return res.message('Mail has been sent to your email');
+    }
+
     user.changePassToken = await jwt.sign(
       { _id: user._id, fp: true },
       JWT.secret,
@@ -744,23 +824,6 @@ exports.forgotPassword = async (req, res, next) => {
         expiresIn: '3h',
       }
     );
-
-    if (forFe) {
-      const url = `${server.frontendBaseURL}/auth/change-password?token=${user.changePassToken}`;
-
-      const template = FORGOT_PASSWORD_TEMPLATE.replaceAll('####url####', url);
-
-      await MailHelper.sendMail(email, 'Change password', template, {
-        // Password links are security-sensitive and must arrive as the direct
-        // Admin URL, not a provider-tracked redirect.
-        trackingSettings: {
-          clickTracking: { enable: false, enableText: false },
-        },
-      });
-      await user.save();
-
-      return res.message('Mail has been sent to your email');
-    }
     const otpVerificationToken = await MailHelper.sendOTP(
       'change-password',
       { userId: user._id },
@@ -794,19 +857,7 @@ exports.validateToken = async (req, res, next) => {
       query: { token },
     } = req;
 
-    const verifyToken = jwt.verify(token, JWT.secret);
-    if (!verifyToken.fp) {
-      return res.error(new Error('Unsupported token'), 409);
-    }
-
-    const user = await Service.getById(verifyToken._id);
-    if (!user) {
-      return res.error(new Error('Invalid token'), 409);
-    }
-
-    if (user.changePassToken !== token) {
-      return res.error(new Error('Token expired'), 409);
-    }
+    await findPasswordResetUser(token);
 
     return res.data({ isValidToken: true }, 'token is valid');
   } catch (e) {
@@ -826,22 +877,15 @@ exports.changePassword = async (req, res, next) => {
       body: { token, password },
     } = req;
 
-    const verifyToken = jwt.verify(token, JWT.secret);
-    if (!verifyToken.fp) {
-      return res.error(new Error('Unsupported token'), 409);
-    }
-
-    const user = await Service.getById(verifyToken._id);
-    if (!user) {
-      return res.error(new Error('Invalid token'), 409);
-    }
-
-    if (user.changePassToken !== token) {
-      return res.error(new Error('Token expired'), 409);
-    }
+    const { user, resetType } = await findPasswordResetUser(token);
 
     user.password = password;
-    user.changePassToken = null;
+    if (resetType === 'browser') {
+      user.webPasswordResetTokenHash = null;
+      user.webPasswordResetExpiresAt = null;
+    } else {
+      user.changePassToken = null;
+    }
 
     await user.save();
 
@@ -864,19 +908,7 @@ exports.validateChangePasswordToken = async (req, res, next) => {
     const {
       query: { token },
     } = req;
-    const verifyToken = jwt.verify(token, JWT.secret);
-    if (!verifyToken.fp) {
-      return res.error(new Error('Unsupported token'), 409);
-    }
-
-    const user = await Service.getById(verifyToken._id);
-    if (!user) {
-      return res.error(new Error('Invalid token'), 409);
-    }
-
-    if (user.changePassToken !== token) {
-      return res.error(new Error('Token expired'), 409);
-    }
+    await findPasswordResetUser(token);
 
     return res.data({ isValidToken: true }, 'token is valid');
   } catch (e) {
