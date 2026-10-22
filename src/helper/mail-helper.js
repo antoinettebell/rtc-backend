@@ -24,6 +24,9 @@ exports.sendMail = async (to, subject, html, options = {}) => {
     subject,
     html,
   };
+  if (options.text) {
+    msg.text = options.text;
+  }
   if (options.trackingSettings) {
     msg.trackingSettings = options.trackingSettings;
   }
@@ -33,9 +36,11 @@ exports.sendMail = async (to, subject, html, options = {}) => {
     return;
   }
   try{
-    await sgMail.send(msg);
+    const result = await sgMail.send(msg);
+    return { sent: true, result };
   }catch(error){
     console.error("SendGrid Error:", error?.response?.body || error.message);
+    return { sent: false, failed: true, reason: error.message };
   }
 };
 

@@ -798,9 +798,18 @@ exports.forgotPassword = async (req, res, next) => {
       const url = `${server.frontendBaseURL}/auth/change-password?token=${browserResetToken}`;
 
       const template = FORGOT_PASSWORD_TEMPLATE.replaceAll('####url####', url);
+      const plainText = [
+        'Round The Corner password reset',
+        '',
+        'Use this link to choose a new password:',
+        url,
+        '',
+        'If you did not request this, you can safely ignore this email.',
+      ].join('\n');
 
       await user.save();
       const delivery = await MailHelper.sendMail(email, 'Change password', template, {
+        text: plainText,
         // Password links are security-sensitive and must arrive as the direct
         // Admin URL, not a provider-tracked redirect.
         trackingSettings: {
