@@ -6,7 +6,7 @@ const FIREBASE_PROJECTS = {
   CUSTOMER: {
     appName: 'rtc-customer-push',
     credentialPathEnv: 'FIREBASE_CUSTOMER_SERVICE_ACCOUNT_PATH',
-    expectedProjectId: 'rtc-app-59500',
+    expectedProjectId: 'rtccustomermobile',
   },
   VENDOR: {
     appName: 'rtc-vendor-push',
