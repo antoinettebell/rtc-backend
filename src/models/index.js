@@ -5,6 +5,7 @@ exports.CoordinatorComplianceProviderVerificationModel = require('./coordinator-
 exports.MarketplaceVendorComplianceProfileModel = require('./marketplace-vendor-compliance-profile');
 exports.MarketplaceVendorComplianceW9EnvelopeModel = require('./marketplace-vendor-compliance-w9-envelope');
 exports.MarketplaceVendorComplianceProviderVerificationModel = require('./marketplace-vendor-compliance-provider-verification');
+exports.MarketplaceVendorBankDetailModel = require('./marketplace-vendor-bank-detail');
 
 /** Define food-truck model */
 exports.FoodTruckModel = require('./food-truck');

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const MarketplaceVendorComplianceController = require('../controllers/marketplace-vendor-compliance-controller');
+const MarketplaceVendorBankDetailController = require('../controllers/marketplace-vendor-bank-detail-controller');
 const CoordinatorComplianceUpload = require('../../middleware/coordinator-compliance-upload');
 const {
   MarketplaceController: Controller,
@@ -8,13 +9,20 @@ const {
   MarketplaceTicketStaffController: TicketStaffController,
   EventVendorController,
 } = require('../controllers');
-const { validate, MarketplaceValidation: Validation } = require('../validations');
+const { validate, MarketplaceValidation: Validation, UserValidation } = require('../validations');
 const { allowedTo } = require('../../middleware/allow-route');
 const MarketplaceUpload = require('../../middleware/marketplace-upload');
 
 router.get('/event-vendor/profile', allowedTo(['VENDOR']), EventVendorController.getProfile);
 router.put('/event-vendor/profile', allowedTo(['VENDOR']), EventVendorController.saveProfile);
 router.post('/event-vendor/profile/submit', allowedTo(['VENDOR']), EventVendorController.submitProfile);
+router.get('/event-vendor/payment-details', allowedTo(['VENDOR']), MarketplaceVendorBankDetailController.get);
+router.post(
+  '/event-vendor/payment-details',
+  allowedTo(['VENDOR']),
+  validate(UserValidation.bankDetail),
+  MarketplaceVendorBankDetailController.save,
+);
 router.get('/event-vendor/compliance', allowedTo(['VENDOR']), MarketplaceVendorComplianceController.status);
 router.put('/event-vendor/compliance/profile', allowedTo(['VENDOR']), MarketplaceVendorComplianceController.saveProfile);
 router.post('/event-vendor/compliance/documents', allowedTo(['VENDOR']), CoordinatorComplianceUpload.single(), MarketplaceVendorComplianceController.uploadDocument);
