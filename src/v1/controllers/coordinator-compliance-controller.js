@@ -1,6 +1,6 @@
 const { docusign } = require('../../config');
 const fs = require('fs');
-const { addObjectFromBufferWithKey, addObjectWithKey } = require('../../helper/aws');
+const { addObjectFromBufferWithKey, addObjectWithKey, removeObject } = require('../../helper/aws');
 const EncryptionService = require('../../helper/encryption');
 const DocuSignHelper = require('../../helper/docusign-helper');
 const { enqueueComplianceOcr } = require('../../helper/vendor-compliance-ocr-helper');
@@ -82,6 +82,7 @@ const w9ComparisonSnapshot = (profile) => ({
 const snapshotMatches = (savedSnapshot, currentSnapshot) => (
   Boolean(savedSnapshot) && JSON.stringify(savedSnapshot) === JSON.stringify(currentSnapshot)
 );
+const activeDocuments = (profile = {}) => (profile.documents || []).filter((document) => !document.archived_at);
 
 // A government ID may show a middle name and may place the surname first,
 // while an individual's signed W-9 commonly uses first and last name only.
@@ -116,7 +117,7 @@ const toSafeProfile = (profile) => {
     business_address: value.business_address,
     tax_id_type: value.tax_id_type,
     tax_id_masked: value.tax_id_masked,
-    documents: (value.documents || []).map((document) => ({
+    documents: activeDocuments(value).map((document) => ({
       document_id: document.document_id,
       document_type: document.document_type,
       file_url: document.file_url,
@@ -155,7 +156,7 @@ const buildComplianceSummary = ({ profile, session, requiresPayout, externalVeri
   const requiredDocumentType = profile?.party_type === 'BUSINESS'
     ? 'BUSINESS_LICENSE'
     : 'DRIVER_LICENSE_FRONT';
-  const hasRequiredDocument = (profile?.documents || []).some(
+  const hasRequiredDocument = activeDocuments(profile).some(
     (document) => document.document_type === requiredDocumentType && document.ocr_status === 'completed'
   );
   const hasProfile = Boolean(profile?.party_type && profile?.legal_name);
@@ -187,7 +188,7 @@ const buildComplianceSummary = ({ profile, session, requiresPayout, externalVeri
       });
     }
   }
-  const hasPendingReview = (profile?.documents || []).some((document) =>
+  const hasPendingReview = activeDocuments(profile).some((document) =>
     document.review_status === 'pending_review' || ['queued', 'processing'].includes(document.ocr_status)
   ) || (requiresPayout && (
     session?.verification_status === 'PENDING' || ['queued', 'processing'].includes(session?.ocr_status) || externalVerification?.status === 'PENDING'
@@ -207,6 +208,49 @@ const buildComplianceSummary = ({ profile, session, requiresPayout, externalVeri
   };
 };
 
+// Coordinator legal-payee replacement mirrors the food-vendor contract. The
+// current app confirms the decision, and this backend rule keeps old clients
+// and direct callers from retaining incompatible active evidence.
+const replaceCoordinatorLegalPayeeForAccountTypeChange = async ({ coordinator, profile, priorSummary }) => {
+  const documents = activeDocuments(profile);
+  const sessions = await CoordinatorComplianceW9EnvelopeModel.find({
+    coordinator_user_id: coordinator._id,
+    archived_at: null,
+  });
+  const now = new Date();
+  const completed = Number(priorSummary?.score) === 100;
+
+  if (completed) {
+    documents.forEach((document) => {
+      document.archived_at = now;
+      document.archived_reason = 'Archived after legal payee account type change.';
+    });
+    profile.markModified('documents');
+    await profile.save();
+    await CoordinatorComplianceW9EnvelopeModel.updateMany(
+      { coordinator_user_id: coordinator._id, archived_at: null },
+      { $set: { status: 'VOIDED', archived_at: now, archived_reason: 'Archived after legal payee account type change.' } }
+    );
+    await CoordinatorComplianceProviderVerificationModel.updateMany(
+      { coordinator_user_id: coordinator._id, status: { $in: ['NOT_STARTED', 'PENDING', 'PASSED', 'RETRYABLE_ERROR'] } },
+      { $set: { status: 'SUPERSEDED', completed_at: now } }
+    );
+    return;
+  }
+
+  for (const document of documents) {
+    if (document.file_key) await removeObject(document.file_key);
+  }
+  for (const session of sessions) {
+    if (session.signed_document_key) await removeObject(session.signed_document_key);
+  }
+  profile.documents = (profile.documents || []).filter((document) => document.archived_at);
+  profile.markModified('documents');
+  await profile.save();
+  await CoordinatorComplianceW9EnvelopeModel.deleteMany({ coordinator_user_id: coordinator._id, archived_at: null });
+  await CoordinatorComplianceProviderVerificationModel.deleteMany({ coordinator_user_id: coordinator._id });
+};
+
 // Marketplace Vendors deliberately share the coordinator compliance evidence
 // contract: one identity document, a DocuSign W-9, OCR, and provider checks.
 // Their records remain keyed to their own authenticated user IDs.
@@ -217,6 +261,7 @@ exports.getMarketplaceVendorCompliance = async (userId) => {
   const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
     coordinator_user_id: userId,
     status: 'SIGNED',
+    archived_at: null,
   }).sort({ created_at: -1 });
   return buildComplianceSummary({
     profile,
@@ -328,6 +373,7 @@ exports.status = async (req, res, next) => {
     const coordinator = await getCoordinator(req.user, { allowMarketplaceVendor: req.marketplaceVendorCompliance === true });
     const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
       coordinator_user_id: coordinator._id,
+      archived_at: null,
     }).sort({ created_at: -1 });
     const profile = await getOrMigrateProfile(coordinator);
     const requiresPayout = requiresPayoutCompliance(coordinator);
@@ -384,6 +430,22 @@ exports.saveProfile = async (req, res, next) => {
     const previousProfile = await CoordinatorComplianceProfileModel.findOne({
       coordinator_user_id: coordinator._id,
     });
+    const partyTypeChanged = Boolean(previousProfile && previousProfile.party_type !== partyType);
+    const priorSession = previousProfile
+      ? await CoordinatorComplianceW9EnvelopeModel.findOne({
+        coordinator_user_id: coordinator._id,
+        status: 'SIGNED',
+        archived_at: null,
+      }).sort({ created_at: -1 })
+      : null;
+    const priorSummary = previousProfile
+      ? buildComplianceSummary({
+        profile: previousProfile,
+        session: priorSession,
+        requiresPayout: requiresPayoutCompliance(coordinator),
+        externalVerification: await getExternalVerification(previousProfile),
+      })
+      : null;
     const previousTaxId = previousProfile?.tax_id_encrypted
       ? taxDigits(EncryptionService.decrypt(previousProfile.tax_id_encrypted))
       : '';
@@ -407,6 +469,11 @@ exports.saveProfile = async (req, res, next) => {
           // This is the coordinator compliance mailing address. It is kept
           // isolated from customer delivery/discovery addresses.
           business_address: formattedMailingAddress || null,
+          ...(partyTypeChanged ? {
+            tax_id_type: null,
+            tax_id_encrypted: null,
+            tax_id_masked: null,
+          } : {}),
         },
       },
       { new: true, upsert: true, setDefaultsOnInsert: true }
@@ -428,6 +495,14 @@ exports.saveProfile = async (req, res, next) => {
       await profile.save();
     }
 
+    if (partyTypeChanged) {
+      await replaceCoordinatorLegalPayeeForAccountTypeChange({
+        coordinator,
+        profile,
+        priorSummary,
+      });
+    }
+
     const identityChanged = Boolean(previousProfile) && (
       previousProfile.party_type !== partyType ||
       normalizeIdentity(previousProfile.legal_name) !== normalizeIdentity(legalName)
@@ -446,7 +521,7 @@ exports.saveProfile = async (req, res, next) => {
       );
     }
     const requiredDocumentType = partyType === 'BUSINESS' ? 'BUSINESS_LICENSE' : 'DRIVER_LICENSE_FRONT';
-    const document = (profile.documents || []).find((item) => item.document_type === requiredDocumentType);
+    const document = activeDocuments(profile).find((item) => item.document_type === requiredDocumentType);
     const documentComparisonChanged = Boolean(document) && !snapshotMatches(
       document.ocr_comparison_snapshot,
       driverLicenseComparisonSnapshot(profile)
@@ -466,6 +541,7 @@ exports.saveProfile = async (req, res, next) => {
     const signedW9 = await CoordinatorComplianceW9EnvelopeModel.findOne({
       coordinator_user_id: coordinator._id,
       status: 'SIGNED',
+      archived_at: null,
     }).sort({ created_at: -1 });
     const w9ComparisonChanged = Boolean(signedW9) && !snapshotMatches(
       signedW9.ocr_comparison_snapshot,
@@ -508,7 +584,7 @@ exports.uploadDocument = async (req, res, next) => {
       throw buildError('Businesses must upload a business license.');
     }
     const { url, key } = await addObjectWithKey(req.file, `coordinator-compliance/${coordinator._id}/${documentType}`);
-    profile.documents = (profile.documents || []).filter((item) => item.document_type !== documentType);
+    profile.documents = (profile.documents || []).filter((item) => item.archived_at || item.document_type !== documentType);
     profile.documents.push({
       document_type: documentType,
       file_url: url,
@@ -520,6 +596,7 @@ exports.uploadDocument = async (req, res, next) => {
     await profile.save();
     const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
       coordinator_user_id: coordinator._id,
+      archived_at: null,
     }).sort({ created_at: -1 });
     await reconcilePayoutEligibility({ coordinator, profile, session });
     fs.unlink(req.file.path, () => {});
@@ -543,7 +620,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
     const requiredDocumentType = profile.party_type === 'BUSINESS'
       ? 'BUSINESS_LICENSE'
       : 'DRIVER_LICENSE_FRONT';
-    const requiredDocument = (profile.documents || []).find(
+    const requiredDocument = activeDocuments(profile).find(
       (document) => document.document_type === requiredDocumentType
     );
     if (shouldSubmitCoordinatorOcr(requiredDocument)) {
@@ -571,6 +648,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
       const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
         coordinator_user_id: coordinator._id,
         status: 'SIGNED',
+        archived_at: null,
       }).sort({ created_at: -1 });
       if (shouldSubmitCoordinatorOcr(session)) {
         session.ocr_comparison_snapshot = w9ComparisonSnapshot(profile);
@@ -585,6 +663,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
       ? await CoordinatorComplianceW9EnvelopeModel.findOne({
         coordinator_user_id: coordinator._id,
         status: 'SIGNED',
+        archived_at: null,
       }).sort({ created_at: -1 })
       : null;
     const externalVerification = await getExternalVerification(profile);
@@ -609,6 +688,7 @@ exports.startExternalVerification = async (req, res, next) => {
     const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
       coordinator_user_id: coordinator._id,
       status: 'SIGNED',
+      archived_at: null,
     }).sort({ created_at: -1 });
     const before = buildComplianceSummary({
       profile,
@@ -655,7 +735,8 @@ exports.ocrResult = async (req, res, next) => {
     });
 
     if (profile) {
-      const document = profile.documents.find((item) => item.document_id === documentId);
+      const document = activeDocuments(profile).find((item) => item.document_id === documentId);
+      if (!document) throw buildError('Coordinator compliance document not found.', 404);
       const extractedName = profile.party_type === 'BUSINESS'
         ? extractedFields.business_name || extractedFields.legal_business_name || extractedFields.name
         : extractedFields.name || extractedFields.legal_name || extractedFields.full_name;
@@ -685,12 +766,13 @@ exports.ocrResult = async (req, res, next) => {
       const coordinator = await UserModel.findById(profile.coordinator_user_id);
       const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
         coordinator_user_id: profile.coordinator_user_id,
+        archived_at: null,
       }).sort({ created_at: -1 });
       if (coordinator) await reconcilePayoutEligibility({ coordinator, profile, session });
       return res.data({ profile: toSafeProfile(profile) }, 'Coordinator driver license OCR result processed');
     }
 
-    const session = await CoordinatorComplianceW9EnvelopeModel.findOne({ ocr_document_id: documentId });
+    const session = await CoordinatorComplianceW9EnvelopeModel.findOne({ ocr_document_id: documentId, archived_at: null });
     if (!session) throw buildError('Coordinator compliance document not found.', 404);
     const w9Profile = await CoordinatorComplianceProfileModel.findOne({ coordinator_user_id: session.coordinator_user_id });
     if (!w9Profile) {
@@ -829,6 +911,7 @@ exports.completeW9Signing = async (req, res, next) => {
     const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
       coordinator_user_id: coordinator._id,
       envelope_id: envelopeId,
+      archived_at: null,
     });
     if (!session) throw buildError('Coordinator W-9 signing session not found.', 404);
     if (session.signed_document_key) {

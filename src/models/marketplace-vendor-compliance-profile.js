@@ -20,6 +20,10 @@ const documentSchema = new mongoose.Schema({
   extracted_fields: { type: mongoose.Schema.Types.Mixed, default: {} },
   ocr_comparison_snapshot: { type: mongoose.Schema.Types.Mixed, default: null },
   ocr_comparison_rule_version: { type: Number, default: null },
+  // Retained only when a fully compliant legal payee is deliberately replaced.
+  // Archived evidence is excluded from all active compliance calculations.
+  archived_at: { type: Date, default: null, index: true },
+  archived_reason: { type: String, default: null },
 }, { _id: false });
 
 const schema = new mongoose.Schema({

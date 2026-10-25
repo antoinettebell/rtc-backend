@@ -44,6 +44,8 @@ const mSchema = mongoose.Schema({
   revalidation_attempt: { type: Number, default: 0, min: 0 },
   completed_at: { type: Date, default: null },
   error_message: { type: String, default: null },
+  archived_at: { type: Date, default: null, index: true },
+  archived_reason: { type: String, default: null },
 }, { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } });
 
 module.exports = mongoose.model('coordinator_compliance_w9_envelopes', mSchema);

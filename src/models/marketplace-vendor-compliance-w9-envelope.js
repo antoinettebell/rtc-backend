@@ -15,6 +15,7 @@ const schema = new mongoose.Schema({
   ocr_requested_at: { type: Date, default: null }, ocr_completed_at: { type: Date, default: null }, ocr_error_message: { type: String, default: null },
   extracted_fields: { type: mongoose.Schema.Types.Mixed, default: {} }, ocr_comparison_snapshot: { type: mongoose.Schema.Types.Mixed, default: null },
   ocr_comparison_rule_version: { type: Number, default: null }, revalidation_attempt: { type: Number, default: 0, min: 0 }, completed_at: { type: Date, default: null }, error_message: { type: String, default: null },
+  archived_at: { type: Date, default: null, index: true }, archived_reason: { type: String, default: null },
 }, { timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' } });
 
 schema.index({ vendor_user_id: 1, marketplace_vendor_profile_id: 1, created_at: -1 });

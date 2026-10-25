@@ -1,6 +1,6 @@
 const { docusign } = require('../../config');
 const fs = require('fs');
-const { addObjectFromBufferWithKey, addObjectWithKey } = require('../../helper/aws');
+const { addObjectFromBufferWithKey, addObjectWithKey, removeObject } = require('../../helper/aws');
 const EncryptionService = require('../../helper/encryption');
 const DocuSignHelper = require('../../helper/docusign-helper');
 const { enqueueComplianceOcr } = require('../../helper/vendor-compliance-ocr-helper');
@@ -97,6 +97,7 @@ const w9ComparisonSnapshot = (profile) => ({
 const snapshotMatches = (savedSnapshot, currentSnapshot) => (
   Boolean(savedSnapshot) && JSON.stringify(savedSnapshot) === JSON.stringify(currentSnapshot)
 );
+const activeDocuments = (profile = {}) => (profile.documents || []).filter((document) => !document.archived_at);
 
 // A government ID may show a middle name and may place the surname first,
 // while an individual's signed W-9 commonly uses first and last name only.
@@ -124,7 +125,7 @@ const toSafeProfile = (profile) => {
     mailing_address: getProfileMailingAddressFields(value),
     tax_id_type: value.tax_id_type,
     tax_id_masked: value.tax_id_masked,
-    documents: (value.documents || []).map((document) => ({
+    documents: activeDocuments(value).map((document) => ({
       document_id: document.document_id,
       document_type: document.document_type,
       file_url: document.file_url,
@@ -181,7 +182,7 @@ const buildComplianceSummary = ({ profile, session, requiresPayout, externalVeri
   const requiredDocumentType = profile?.party_type === 'BUSINESS'
     ? 'BUSINESS_LICENSE'
     : 'DRIVER_LICENSE_FRONT';
-  const hasRequiredDocument = (profile?.documents || []).some(
+  const hasRequiredDocument = activeDocuments(profile).some(
     (document) => document.document_type === requiredDocumentType && document.ocr_status === 'completed'
   );
   const hasProfile = Boolean(profile?.party_type && profile?.legal_name);
@@ -213,7 +214,7 @@ const buildComplianceSummary = ({ profile, session, requiresPayout, externalVeri
       });
     }
   }
-  const hasPendingReview = (profile?.documents || []).some((document) =>
+  const hasPendingReview = activeDocuments(profile).some((document) =>
     document.review_status === 'pending_review' || ['queued', 'processing'].includes(document.ocr_status)
   ) || (requiresPayout && (
     session?.verification_status === 'PENDING' || ['queued', 'processing'].includes(session?.ocr_status) || externalVerification?.status === 'PENDING'
@@ -233,6 +234,50 @@ const buildComplianceSummary = ({ profile, session, requiresPayout, externalVeri
   };
 };
 
+// Marketplace legal-payee replacement follows the food-vendor contract:
+// retain a completed legal-payee record as history, but permanently remove
+// incomplete evidence. This is server-enforced so an older app cannot bypass
+// the confirmation shown by the current app.
+const replaceMarketplaceLegalPayeeForAccountTypeChange = async ({ vendor, profile, priorSummary }) => {
+  const documents = activeDocuments(profile);
+  const sessions = await MarketplaceVendorComplianceW9EnvelopeModel.find({
+    vendor_user_id: vendor._id,
+    archived_at: null,
+  });
+  const now = new Date();
+  const completed = Number(priorSummary?.score) === 100;
+
+  if (completed) {
+    documents.forEach((document) => {
+      document.archived_at = now;
+      document.archived_reason = 'Archived after legal payee account type change.';
+    });
+    profile.markModified('documents');
+    await profile.save();
+    await MarketplaceVendorComplianceW9EnvelopeModel.updateMany(
+      { vendor_user_id: vendor._id, archived_at: null },
+      { $set: { status: 'VOIDED', archived_at: now, archived_reason: 'Archived after legal payee account type change.' } }
+    );
+    await MarketplaceVendorComplianceProviderVerificationModel.updateMany(
+      { vendor_user_id: vendor._id, status: { $in: ['NOT_STARTED', 'PENDING', 'PASSED', 'RETRYABLE_ERROR'] } },
+      { $set: { status: 'SUPERSEDED', completed_at: now } }
+    );
+    return;
+  }
+
+  for (const document of documents) {
+    if (document.file_key) await removeObject(document.file_key);
+  }
+  for (const session of sessions) {
+    if (session.signed_document_key) await removeObject(session.signed_document_key);
+  }
+  profile.documents = (profile.documents || []).filter((document) => document.archived_at);
+  profile.markModified('documents');
+  await profile.save();
+  await MarketplaceVendorComplianceW9EnvelopeModel.deleteMany({ vendor_user_id: vendor._id, archived_at: null });
+  await MarketplaceVendorComplianceProviderVerificationModel.deleteMany({ vendor_user_id: vendor._id });
+};
+
 // Marketplace Vendors deliberately share the vendor compliance evidence
 // contract: one identity document, a DocuSign W-9, OCR, and provider checks.
 // Their records remain keyed to their own authenticated user IDs.
@@ -243,6 +288,7 @@ exports.getMarketplaceVendorCompliance = async (userId) => {
   const session = await MarketplaceVendorComplianceW9EnvelopeModel.findOne({
     vendor_user_id: userId,
     status: 'SIGNED',
+    archived_at: null,
   }).sort({ created_at: -1 });
   return buildComplianceSummary({
     profile,
@@ -305,6 +351,7 @@ exports.status = async (req, res, next) => {
     const vendor = await getMarketplaceVendor(req.user);
     const session = await MarketplaceVendorComplianceW9EnvelopeModel.findOne({
       vendor_user_id: vendor._id,
+      archived_at: null,
     }).sort({ created_at: -1 });
     const profile = await getOrMigrateProfile(vendor);
     const requiresPayout = requiresPayoutCompliance(vendor);
@@ -377,6 +424,22 @@ exports.saveProfile = async (req, res, next) => {
     const previousProfile = await MarketplaceVendorComplianceProfileModel.findOne({
       vendor_user_id: vendor._id,
     });
+    const partyTypeChanged = Boolean(previousProfile && previousProfile.party_type !== partyType);
+    const priorSession = previousProfile
+      ? await MarketplaceVendorComplianceW9EnvelopeModel.findOne({
+        vendor_user_id: vendor._id,
+        status: 'SIGNED',
+        archived_at: null,
+      }).sort({ created_at: -1 })
+      : null;
+    const priorSummary = previousProfile
+      ? buildComplianceSummary({
+        profile: previousProfile,
+        session: priorSession,
+        requiresPayout: true,
+        externalVerification: await getExternalVerification(previousProfile),
+      })
+      : null;
     const previousTaxId = previousProfile?.tax_id_encrypted
       ? taxDigits(EncryptionService.decrypt(previousProfile.tax_id_encrypted))
       : '';
@@ -394,6 +457,11 @@ exports.saveProfile = async (req, res, next) => {
           // address for both business and individual Marketplace Vendors.
           business_address: businessAddress,
           ...mailingAddressFields,
+          ...(partyTypeChanged ? {
+            tax_id_type: null,
+            tax_id_encrypted: null,
+            tax_id_masked: null,
+          } : {}),
         },
       },
       { new: true, upsert: true, setDefaultsOnInsert: true }
@@ -415,6 +483,14 @@ exports.saveProfile = async (req, res, next) => {
       await profile.save();
     }
 
+    if (partyTypeChanged) {
+      await replaceMarketplaceLegalPayeeForAccountTypeChange({
+        vendor,
+        profile,
+        priorSummary,
+      });
+    }
+
     const identityChanged = Boolean(previousProfile) && (
       previousProfile.party_type !== partyType ||
       normalizeIdentity(previousProfile.legal_name) !== normalizeIdentity(legalName)
@@ -433,7 +509,7 @@ exports.saveProfile = async (req, res, next) => {
       );
     }
     const requiredDocumentType = partyType === 'BUSINESS' ? 'BUSINESS_LICENSE' : 'DRIVER_LICENSE_FRONT';
-    const document = (profile.documents || []).find((item) => item.document_type === requiredDocumentType);
+    const document = activeDocuments(profile).find((item) => item.document_type === requiredDocumentType);
     const documentComparisonChanged = Boolean(document) && !snapshotMatches(
       document.ocr_comparison_snapshot,
       driverLicenseComparisonSnapshot(profile)
@@ -453,6 +529,7 @@ exports.saveProfile = async (req, res, next) => {
     const signedW9 = await MarketplaceVendorComplianceW9EnvelopeModel.findOne({
       vendor_user_id: vendor._id,
       status: 'SIGNED',
+      archived_at: null,
     }).sort({ created_at: -1 });
     const w9ComparisonChanged = Boolean(signedW9) && !snapshotMatches(
       signedW9.ocr_comparison_snapshot,
@@ -495,7 +572,7 @@ exports.uploadDocument = async (req, res, next) => {
       throw buildError('Businesses must upload a business license.');
     }
     const { url, key } = await addObjectWithKey(req.file, `marketplace-vendor-compliance/${vendor._id}/${documentType}`);
-    profile.documents = (profile.documents || []).filter((item) => item.document_type !== documentType);
+    profile.documents = (profile.documents || []).filter((item) => item.archived_at || item.document_type !== documentType);
     profile.documents.push({
       document_type: documentType,
       file_url: url,
@@ -507,6 +584,7 @@ exports.uploadDocument = async (req, res, next) => {
     await profile.save();
     const session = await MarketplaceVendorComplianceW9EnvelopeModel.findOne({
       vendor_user_id: vendor._id,
+      archived_at: null,
     }).sort({ created_at: -1 });
     await reconcilePayoutEligibility({ vendor, profile, session });
     fs.unlink(req.file.path, () => {});
@@ -530,7 +608,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
     const requiredDocumentType = profile.party_type === 'BUSINESS'
       ? 'BUSINESS_LICENSE'
       : 'DRIVER_LICENSE_FRONT';
-    const requiredDocument = (profile.documents || []).find(
+    const requiredDocument = activeDocuments(profile).find(
       (document) => document.document_type === requiredDocumentType
     );
     if (shouldSubmitMarketplaceVendorOcr(requiredDocument)) {
@@ -558,6 +636,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
       const session = await MarketplaceVendorComplianceW9EnvelopeModel.findOne({
         vendor_user_id: vendor._id,
         status: 'SIGNED',
+        archived_at: null,
       }).sort({ created_at: -1 });
       if (shouldSubmitMarketplaceVendorOcr(session)) {
         session.ocr_comparison_snapshot = w9ComparisonSnapshot(profile);
@@ -572,6 +651,7 @@ exports.submitDocumentsForOcr = async (req, res, next) => {
       ? await MarketplaceVendorComplianceW9EnvelopeModel.findOne({
         vendor_user_id: vendor._id,
         status: 'SIGNED',
+        archived_at: null,
       }).sort({ created_at: -1 })
       : null;
     const externalVerification = await getExternalVerification(profile);
@@ -596,6 +676,7 @@ exports.startExternalVerification = async (req, res, next) => {
     const session = await MarketplaceVendorComplianceW9EnvelopeModel.findOne({
       vendor_user_id: vendor._id,
       status: 'SIGNED',
+      archived_at: null,
     }).sort({ created_at: -1 });
     const before = buildComplianceSummary({
       profile,
@@ -642,7 +723,8 @@ exports.ocrResult = async (req, res, next) => {
     });
 
     if (profile) {
-      const document = profile.documents.find((item) => item.document_id === documentId);
+      const document = activeDocuments(profile).find((item) => item.document_id === documentId);
+      if (!document) throw buildError('MarketplaceVendor compliance document not found.', 404);
       const extractedName = profile.party_type === 'BUSINESS'
         ? extractedFields.business_name || extractedFields.legal_business_name || extractedFields.name
         : extractedFields.name || extractedFields.legal_name || extractedFields.full_name;
@@ -672,12 +754,13 @@ exports.ocrResult = async (req, res, next) => {
       const vendor = await UserModel.findById(profile.vendor_user_id);
       const session = await MarketplaceVendorComplianceW9EnvelopeModel.findOne({
         vendor_user_id: profile.vendor_user_id,
+        archived_at: null,
       }).sort({ created_at: -1 });
       if (vendor) await reconcilePayoutEligibility({ vendor, profile, session });
       return res.data({ profile: toSafeProfile(profile) }, 'MarketplaceVendor driver license OCR result processed');
     }
 
-    const session = await MarketplaceVendorComplianceW9EnvelopeModel.findOne({ ocr_document_id: documentId });
+    const session = await MarketplaceVendorComplianceW9EnvelopeModel.findOne({ ocr_document_id: documentId, archived_at: null });
     if (!session) throw buildError('MarketplaceVendor compliance document not found.', 404);
     const w9Profile = await MarketplaceVendorComplianceProfileModel.findOne({ vendor_user_id: session.vendor_user_id });
     if (!w9Profile) {
@@ -819,6 +902,7 @@ exports.completeW9Signing = async (req, res, next) => {
     const session = await MarketplaceVendorComplianceW9EnvelopeModel.findOne({
       vendor_user_id: vendor._id,
       envelope_id: envelopeId,
+      archived_at: null,
     });
     if (!session) throw buildError('MarketplaceVendor W-9 signing session not found.', 404);
     if (session.signed_document_key) {
