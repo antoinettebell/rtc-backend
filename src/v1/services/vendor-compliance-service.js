@@ -159,10 +159,7 @@ const hasEncryptedTaxIdentifier = (foodTruck, type) =>
   String(foodTruck?.tax_identifier_type || '').toUpperCase() === type &&
   !!foodTruck?.tax_identifier_masked;
 
-const getTaxProofType = (foodTruck = {}) =>
-  String(foodTruck.tax_identifier_type || '').toUpperCase() === 'SSN'
-    ? 'SSN_CARD'
-    : null;
+const CORE_IDENTITY_DOCUMENT_TYPE = 'DRIVER_LICENSE_FRONT';
 
 const getVerificationCycle = (foodTruck = {}) =>
   Math.max(1, Number(foodTruck.compliance_verification_cycle || 1));
@@ -493,10 +490,7 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
       : null;
     const verified = isVerifiedActiveDocument(document, now);
     const expired = days_until_expiration !== null && days_until_expiration < 0;
-    const isTaxProof = requirement.type === 'SSN_CARD';
-    const isOptionalDocument = !requirement.required && !(
-      isTaxProof && requirement.type === getTaxProofType(foodTruck)
-    );
+    const isOptionalDocument = !requirement.required;
     const profileTaxIdentifierVerified = false;
     let status = 'missing';
 
@@ -577,15 +571,15 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
             : 'NOT_STARTED';
   const businessLicenseVerified = isVerifiedActiveDocument(latestByType.BUSINESS_LICENSE, now);
   const w9Verified = isVerifiedActiveDocument(latestByType.W9, now);
-  const taxProofType = getTaxProofType(foodTruck);
-  const taxProofVerified = taxProofType && isVerifiedActiveDocument(latestByType[taxProofType], now);
+  const driverLicenseVerified = isVerifiedActiveDocument(
+    latestByType[CORE_IDENTITY_DOCUMENT_TYPE],
+    now
+  );
   const coreComponents = [
     { type: 'BUSINESS_LICENSE', label: 'Business License / Permit', verified: businessLicenseVerified },
     { type: 'W9', label: 'Completed W-9', verified: w9Verified },
+    { type: CORE_IDENTITY_DOCUMENT_TYPE, label: 'Driver License Front', verified: driverLicenseVerified },
   ];
-  if (taxProofType) {
-    coreComponents.push({ type: 'SSN_CARD', label: 'Social Security Card', verified: taxProofVerified });
-  }
   if (selectedTaxIdentifierType === 'SSN') {
     coreComponents.push({
       type: 'EXTERNAL_IDENTITY_VERIFICATION',
@@ -705,16 +699,15 @@ const beginProfileRevalidation = async ({ foodTruck, actor = null, previousIdent
       food_truck_id: foodTruck._id,
       review_status: 'verified',
       archived_at: null,
-      document_type: { $in: ['BUSINESS_LICENSE', 'W9', 'SSN_CARD'] },
+      document_type: { $in: ['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE] },
     },
     { sort: { created_at: -1 } }
   );
   const affected = [];
-  const taxProofType = getTaxProofType(foodTruck);
   const revalidationCycle = getVerificationCycle(foodTruck) + 1;
   for (const document of documents) {
-    const affectsTax = ['W9', taxProofType].includes(document.document_type);
-    const isIdentityEvidence = ['BUSINESS_LICENSE', 'W9', 'SSN_CARD'].includes(document.document_type);
+    const affectsTax = document.document_type === 'W9';
+    const isIdentityEvidence = ['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE].includes(document.document_type);
     if ((taxChanged && affectsTax) || (nameChanged && isIdentityEvidence)) {
       document.review_status = 'revalidation_needed';
       document.ocr_status = 'revalidation_needed';
@@ -757,13 +750,12 @@ const startExternalVerificationWhenInternalChecksPass = async (foodTruckId, { ch
     .exec();
   if (!foodTruck) return null;
 
-  const taxProofType = getTaxProofType(foodTruck);
   const documents = await getCurrentDocuments(foodTruck._id);
   const latestByType = {};
   for (const document of documents || []) {
     if (!latestByType[document.document_type]) latestByType[document.document_type] = document;
   }
-  const internalChecksPass = ['BUSINESS_LICENSE', 'W9', taxProofType].filter(Boolean)
+  const internalChecksPass = ['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE]
     .every((documentType) => isVerifiedActiveDocument(latestByType[documentType]));
   if (!internalChecksPass) return null;
 
@@ -1071,7 +1063,7 @@ const uploadComplianceDocument = async ({
   });
 
   const isSanitationGrade = documentType === 'HEALTH_PERMIT';
-  const automatedCoreDocument = ['BUSINESS_LICENSE', 'W9', 'SSN_CARD'].includes(documentType);
+  const automatedCoreDocument = ['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE].includes(documentType);
   const adminRequestedPendingReview =
     user.userType === 'SUPER_ADMIN' && body.review_status === 'pending_review';
   const vendorEnteredIssueDate = asDate(body.issue_date);
@@ -1427,7 +1419,7 @@ const reviewComplianceDocument = async ({
 
   if (
     reviewStatus === 'verified' &&
-    ['BUSINESS_LICENSE', 'W9', 'SSN_CARD'].includes(document.document_type)
+    ['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE].includes(document.document_type)
   ) {
     throw buildComplianceError(
       'This core compliance document is verified only by the automated OCR and profile-matching workflow.',
@@ -1589,19 +1581,16 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     }
   }
 
-  const requiresIdentityValidation = ['BUSINESS_LICENSE', 'W9', 'SSN_CARD']
+  const requiresIdentityValidation = ['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE]
     .includes(document.document_type);
   const foodTruck = requiresIdentityValidation
     ? await FoodTruckModel.findById(document.food_truck_id)
       .select('+tax_identifier_encrypted tax_identifier_type tax_identifier_masked legal_business_name dba name compliance_verification_cycle')
       .exec()
     : null;
-  const selectedTaxProofType = getTaxProofType(foodTruck || {});
-  const isSelectedTaxProof = document.document_type === selectedTaxProofType;
-
-  // Identity-document OCR can include an EIN or SSN in raw text/word output.
+  // W-9 OCR can include an EIN or SSN in raw text/word output.
   // Preserve only purpose-built comparison outcomes, never the full OCR body.
-  if (['W9', 'SSN_CARD'].includes(document.document_type)) {
+  if (document.document_type === 'W9') {
     [
       'raw_text',
       'lines',
@@ -1613,7 +1602,7 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     ].forEach((key) => delete normalizedExtractedFields[key]);
   }
 
-  if (document.document_type === 'W9' || isSelectedTaxProof) {
+  if (document.document_type === 'W9') {
     const extractedTaxId = getFirstFieldValue(normalizedExtractedFields, [
       'ein', 'ssn', 'tax_id', 'tax_identifier', 'taxpayer_identification_number',
     ]);
@@ -1637,18 +1626,18 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
       if (taxIdentifierOcrOutcome === 'NOT_DETECTED') {
         automaticValidationFailure = document.document_type === 'W9'
           ? 'OCR could not read a complete nine-digit EIN or SSN from the W-9.'
-          : 'OCR could not read a complete nine-digit tax ID from the proof document.';
+          : 'OCR could not read a complete nine-digit tax ID from the W-9.';
       } else if (taxIdentifierOcrOutcome === 'PROFILE_UNAVAILABLE') {
         automaticValidationFailure = 'The vendor profile does not contain a usable encrypted tax ID for comparison.';
       } else {
         automaticValidationFailure = document.document_type === 'W9'
           ? 'OCR could not confirm that the W-9 EIN or SSN matches the vendor profile.'
-          : 'OCR could not confirm that the tax-ID proof matches the vendor profile.';
+          : 'OCR could not confirm that the W-9 tax ID matches the vendor profile.';
       }
     }
   }
 
-  if (['BUSINESS_LICENSE', 'W9'].includes(document.document_type)) {
+  if (['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE].includes(document.document_type)) {
     const extractedBusinessNames = getDocumentBusinessNames({
       extracted_fields: normalizedExtractedFields,
     });
@@ -1659,7 +1648,9 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     if (!normalizedExtractedFields.legal_business_name_match) {
       automaticValidationFailure = document.document_type === 'W9'
         ? 'OCR could not confirm that the W-9 legal business name matches the vendor profile.'
-        : 'OCR could not confirm that the business license name matches the vendor profile.';
+        : document.document_type === CORE_IDENTITY_DOCUMENT_TYPE
+          ? 'OCR could not confirm that the driver license name matches the vendor profile.'
+          : 'OCR could not confirm that the business license name matches the vendor profile.';
     }
   }
 
@@ -1754,7 +1745,7 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     document.reviewed_by_user_id = null;
     document.reviewed_at = new Date();
   }
-  const coreIdentityDocument = ['BUSINESS_LICENSE', 'W9', selectedTaxProofType]
+  const coreIdentityDocument = ['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE]
     .includes(document.document_type);
   const datesValidated = !expirationMismatch && !missingOcrExpiration &&
     !issueDateMismatch && !missingOcrIssueDate;

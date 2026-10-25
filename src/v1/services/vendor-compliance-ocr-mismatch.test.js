@@ -126,7 +126,7 @@ const coordinatorSource = fs.readFileSync(
 );
 assert.match(
   coordinatorSource,
-  /getDocumentBusinessNames\(\{\s*extracted_fields: extractedFields,\s*\}\)/,
+  /getDocumentBusinessNames\(\{\s*extracted_fields: extractedFields\s*\}\)/,
   'Coordinator W-9 OCR must use the vendor W-9 document-name extractor'
 );
 assert.match(

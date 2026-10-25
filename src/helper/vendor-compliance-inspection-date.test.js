@@ -19,7 +19,13 @@ assert.equal(getComplianceRequirement('EIN'), null);
 assert.equal(getComplianceRequirement('COI').required, false);
 assert.equal(getComplianceRequirement('COI').scoreWeight, 0);
 assert.equal(getComplianceRequirement('LIQUOR_LICENSE').scoreWeight, 0);
-assert.equal(getComplianceRequirement('SSN_CARD').scoreWeight, 0);
+assert.equal(getComplianceRequirement('SSN_CARD'), null);
+assert.equal(getComplianceRequirement('DRIVER_LICENSE_FRONT').required, true);
+assert.deepEqual(
+  getComplianceRequirement('DRIVER_LICENSE_FRONT').ocrFields,
+  ['name'],
+  'Driver License Front must require OCR name extraction'
+);
 assert.equal(
   sanitationRequirement.scoreWeight,
   0,
@@ -87,8 +93,18 @@ assert.match(
 );
 assert.match(
   serviceSource,
-  /getTaxProofType\(foodTruck\)/,
-  'A Social Security Card must be selected only when the profile uses an SSN'
+  /CORE_IDENTITY_DOCUMENT_TYPE = 'DRIVER_LICENSE_FRONT'/,
+  'A driver license must be the required food-vendor identity document'
+);
+assert.match(
+  serviceSource,
+  /const internalChecksPass = \['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE\]/,
+  'External verification must wait for the driver license, business license, and W-9'
+);
+assert.doesNotMatch(
+  serviceSource,
+  /SSN_CARD/,
+  'The standard food-vendor compliance service must not accept or score Social Security cards'
 );
 assert.match(
   serviceSource,
