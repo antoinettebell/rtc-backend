@@ -21,7 +21,11 @@ const EncryptionService = require('../../helper/encryption');
 const disposableDomains = require('disposable-email-domains');
 const { addObject } = require('../../helper/aws');
 const fs = require('fs');
-const { PlanModel, UserModel } = require('../../models');
+const {
+  PlanModel,
+  UserModel,
+  MarketplaceVendorComplianceProfileModel,
+} = require('../../models');
 const { hydrateEventVendorUser } = require('../../helper/event-vendor-user-hydration');
 const {
   normalizeCoordinatorSocialMedia,
@@ -442,6 +446,12 @@ exports.addVendor = async (req, res, next) => {
 	    if (fc) {
 	      fc.name = foodTruck.name;
 	      fc.legal_business_name = foodTruck.legal_business_name || null;
+	      fc.legal_payee_address_line1 = addressLine1 || null;
+	      fc.legal_payee_address_line2 = addressLine2 || null;
+	      fc.legal_payee_address_city = addressCity || null;
+	      fc.legal_payee_address_state = addressState || null;
+	      fc.legal_payee_address_postal = addressPostal || null;
+	      fc.legal_payee_address_country = addressCountry || 'US';
 	      Object.assign(fc, vendorTaxFields);
 	      fc.infoType = foodTruck.infoType;
 	      fc.planId = selectedPlan?._id || null;
@@ -453,12 +463,41 @@ exports.addVendor = async (req, res, next) => {
 	        userId: user._id,
 	        name: foodTruck.name,
 	        legal_business_name: foodTruck.legal_business_name || null,
+	        legal_payee_address_line1: addressLine1 || null,
+	        legal_payee_address_line2: addressLine2 || null,
+	        legal_payee_address_city: addressCity || null,
+	        legal_payee_address_state: addressState || null,
+	        legal_payee_address_postal: addressPostal || null,
+	        legal_payee_address_country: addressCountry || 'US',
 	        planId: selectedPlan?._id || null,
 	        ...vendorTaxFields,
 	        infoType: foodTruck.infoType,
         socialMedia: normalizeVendorSocialMedia(foodTruck.socialMedia),
       });
     }
+    }
+
+    // Marketplace signup seeds an isolated compliance record directly. The
+    // later compliance flow never needs to read an address from the user
+    // profile to prefill its legal-payee address.
+    if (resolvedVendorSubtype === 'EVENT_VENDOR') {
+      await MarketplaceVendorComplianceProfileModel.findOneAndUpdate(
+        { vendor_user_id: user._id },
+        {
+          $setOnInsert: {
+            vendor_user_id: user._id,
+            party_type: 'BUSINESS',
+            legal_name: eventVendorBusinessName || null,
+            mailing_address_line1: addressLine1 || null,
+            mailing_address_line2: addressLine2 || null,
+            mailing_city: addressCity || null,
+            mailing_state: addressState || null,
+            mailing_postal: addressPostal || null,
+            mailing_country: addressCountry || 'US',
+          },
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
     }
 
     const otpVerificationToken = await MailHelper.sendOTP(

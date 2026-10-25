@@ -1293,6 +1293,12 @@ exports.update = async (req, res, next) => {
 	        legal_business_type,
 	        taxed_as_s_corporation,
 	        business_registration_state,
+	        legal_payee_address_line1,
+	        legal_payee_address_line2,
+	        legal_payee_address_city,
+	        legal_payee_address_state,
+	        legal_payee_address_postal,
+	        legal_payee_address_country,
 	        addOns,
 	        documents,
 	        availabilityChangeDay,
@@ -1362,6 +1368,12 @@ exports.update = async (req, res, next) => {
     if (business_registration_state !== undefined) {
       item.business_registration_state = business_registration_state || null;
     }
+    if (legal_payee_address_line1 !== undefined) item.legal_payee_address_line1 = legal_payee_address_line1 || null;
+    if (legal_payee_address_line2 !== undefined) item.legal_payee_address_line2 = legal_payee_address_line2 || null;
+    if (legal_payee_address_city !== undefined) item.legal_payee_address_city = legal_payee_address_city || null;
+    if (legal_payee_address_state !== undefined) item.legal_payee_address_state = legal_payee_address_state || null;
+    if (legal_payee_address_postal !== undefined) item.legal_payee_address_postal = legal_payee_address_postal || null;
+    if (legal_payee_address_country !== undefined) item.legal_payee_address_country = legal_payee_address_country || 'US';
 
     // if (facebookLink) {
     //   item.facebookLink = facebookLink;

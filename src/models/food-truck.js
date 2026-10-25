@@ -456,6 +456,15 @@ const mSchema = mongoose.Schema(
       trim: true,
       uppercase: true,
     },
+    // Legal-payee mailing address belongs to compliance, not to the vendor's
+    // ordinary user profile. It is seeded at food-vendor signup and is used
+    // only by the Legal Payee Compliance workflow.
+    legal_payee_address_line1: { type: String, default: null, trim: true },
+    legal_payee_address_line2: { type: String, default: null, trim: true },
+    legal_payee_address_city: { type: String, default: null, trim: true },
+    legal_payee_address_state: { type: String, default: null, trim: true, uppercase: true },
+    legal_payee_address_postal: { type: String, default: null, trim: true },
+    legal_payee_address_country: { type: String, default: 'US', trim: true, uppercase: true },
     compliance_verification_cycle: {
       type: Number,
       default: 1,

@@ -31,6 +31,14 @@ const schema = new mongoose.Schema({
   entity_type: { type: String, enum: ['SOLE_PROPRIETOR', 'LLC', 'CORPORATION', 'PARTNERSHIP', 'S_CORPORATION', null], default: null },
   registration_state: { type: String, default: null },
   business_address: { type: String, default: null },
+  // Structured legal-payee mailing address. This is isolated from the user
+  // profile so Marketplace compliance never depends on profile data.
+  mailing_address_line1: { type: String, default: null },
+  mailing_address_line2: { type: String, default: null },
+  mailing_city: { type: String, default: null },
+  mailing_state: { type: String, default: null },
+  mailing_postal: { type: String, default: null },
+  mailing_country: { type: String, default: 'US' },
   tax_id_type: { type: String, enum: ['EIN', 'SSN', null], default: null },
   tax_id_encrypted: { type: String, default: null },
   tax_id_masked: { type: String, default: null },

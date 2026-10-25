@@ -52,17 +52,17 @@ const safeAddressPart = (value) => {
   return text && text.toUpperCase() !== 'NA' ? text : null;
 };
 
-const getVendorMailingAddressFields = (vendor = {}) => ({
-  address_line1: safeAddressPart(vendor.addressLine1),
-  address_line2: safeAddressPart(vendor.addressLine2),
-  city: safeAddressPart(vendor.addressCity),
-  state: safeAddressPart(vendor.addressState),
-  postal: safeAddressPart(vendor.addressPostal),
-  country: safeAddressPart(vendor.addressCountry) || 'US',
+const getProfileMailingAddressFields = (profile = {}) => ({
+  address_line1: safeAddressPart(profile.mailing_address_line1),
+  address_line2: safeAddressPart(profile.mailing_address_line2),
+  city: safeAddressPart(profile.mailing_city),
+  state: safeAddressPart(profile.mailing_state),
+  postal: safeAddressPart(profile.mailing_postal),
+  country: safeAddressPart(profile.mailing_country) || 'US',
 });
 
-const getVendorMailingAddress = (vendor = {}) => {
-  const address = getVendorMailingAddressFields(vendor);
+const getProfileMailingAddress = (profile = {}) => {
+  const address = getProfileMailingAddressFields(profile);
   const values = [
     address.address_line1,
     address.address_line2,
@@ -121,6 +121,7 @@ const toSafeProfile = (profile) => {
     entity_type: value.entity_type,
     registration_state: value.registration_state,
     business_address: value.business_address,
+    mailing_address: getProfileMailingAddressFields(value),
     tax_id_type: value.tax_id_type,
     tax_id_masked: value.tax_id_masked,
     documents: (value.documents || []).map((document) => ({
@@ -317,10 +318,8 @@ exports.status = async (req, res, next) => {
       requires_payout_compliance: requiresPayout,
       w9_session: toSafeSession(session),
       profile: toSafeProfile(profile),
-      // A Marketplace Vendor's ordinary mailing address remains on its user
-      // profile. The app uses this only as a compliance-form prefill.
-      mailing_address: getVendorMailingAddress(vendor),
-      mailing_address_fields: getVendorMailingAddressFields(vendor),
+      mailing_address: getProfileMailingAddress(profile),
+      mailing_address_fields: getProfileMailingAddressFields(profile),
       compliance,
     }, 'MarketplaceVendor compliance status');
   } catch (error) {
@@ -345,35 +344,31 @@ exports.saveProfile = async (req, res, next) => {
     const mailingAddress = req.body?.mailing_address || {};
     const hasStructuredMailingAddress = Object.keys(mailingAddress).length > 0;
     const mailingAddressFields = {
-      addressLine1: safeAddressPart(mailingAddress.address_line1),
-      addressLine2: safeAddressPart(mailingAddress.address_line2),
-      addressCity: safeAddressPart(mailingAddress.city),
-      addressState: safeAddressPart(mailingAddress.state),
-      addressPostal: safeAddressPart(mailingAddress.postal),
-      addressCountry: safeAddressPart(mailingAddress.country) || 'US',
+      mailing_address_line1: safeAddressPart(mailingAddress.address_line1),
+      mailing_address_line2: safeAddressPart(mailingAddress.address_line2),
+      mailing_city: safeAddressPart(mailingAddress.city),
+      mailing_state: safeAddressPart(mailingAddress.state),
+      mailing_postal: safeAddressPart(mailingAddress.postal),
+      mailing_country: safeAddressPart(mailingAddress.country) || 'US',
     };
     if (hasStructuredMailingAddress && (
-      !mailingAddressFields.addressLine1 || !mailingAddressFields.addressCity ||
-      !mailingAddressFields.addressState || !mailingAddressFields.addressPostal
+      !mailingAddressFields.mailing_address_line1 || !mailingAddressFields.mailing_city ||
+      !mailingAddressFields.mailing_state || !mailingAddressFields.mailing_postal
     )) {
       throw buildError('Mailing address, city, state, and ZIP code are required.');
     }
     const structuredBusinessAddress = hasStructuredMailingAddress
       ? [
-        mailingAddressFields.addressLine1,
-        mailingAddressFields.addressLine2,
-        [mailingAddressFields.addressCity, mailingAddressFields.addressState, mailingAddressFields.addressPostal]
+        mailingAddressFields.mailing_address_line1,
+        mailingAddressFields.mailing_address_line2,
+        [mailingAddressFields.mailing_city, mailingAddressFields.mailing_state, mailingAddressFields.mailing_postal]
           .filter(Boolean)
           .join(' '),
-        mailingAddressFields.addressCountry,
+        mailingAddressFields.mailing_country,
       ].filter(Boolean).join(', ')
       : null;
     const businessAddress = structuredBusinessAddress || String(req.body?.business_address || '').trim();
     if (!businessAddress) throw buildError('Mailing address is required.');
-    if (hasStructuredMailingAddress) {
-      Object.assign(vendor, mailingAddressFields);
-      await vendor.save();
-    }
     // A correction to the comparison data is a meaningful OCR change even
     // when the uploaded file itself is unchanged. Preserve the document, but
     // make the affected comparison eligible for the one shared Save & Run OCR
@@ -398,6 +393,7 @@ exports.saveProfile = async (req, res, next) => {
           // This legacy-named profile field is the verified legal mailing
           // address for both business and individual Marketplace Vendors.
           business_address: businessAddress,
+          ...mailingAddressFields,
         },
       },
       { new: true, upsert: true, setDefaultsOnInsert: true }
