@@ -309,10 +309,20 @@ const isVerifiedActiveDocument = (document, now = new Date()) => {
   return !expirationDate || expirationDate >= now;
 };
 
-const getCurrentDocuments = async (foodTruckId) =>
+const getCurrentDocuments = async (foodTruckId, { documentScope = 'PAYEE', truckUnitId = null } = {}) =>
   VendorComplianceDocumentService.getByData(
     {
       food_truck_id: foodTruckId,
+      ...(documentScope === 'TRUCK_UNIT'
+        ? { document_scope: 'TRUCK_UNIT', truck_unit_id: truckUnitId }
+        // Legacy documents predate document_scope and remain payee documents.
+        : {
+            $or: [
+              { document_scope: 'PAYEE' },
+              { document_scope: null },
+              { document_scope: { $exists: false } },
+            ],
+          }),
       review_status: { $ne: 'archived' },
       archived_at: null,
     },
@@ -448,6 +458,14 @@ const getSanitationGradeMap = async (foodTruckIds = []) => {
     {
       food_truck_id: { $in: ids },
       document_type: 'HEALTH_PERMIT',
+      // Existing customer-facing grade lookups are parent-business based.
+      // Do not let a selected truck unit's operational grade leak into that
+      // legacy aggregate until the consuming endpoint selects a unit too.
+      $or: [
+        { document_scope: 'PAYEE' },
+        { document_scope: null },
+        { document_scope: { $exists: false } },
+      ],
       review_status: 'verified',
       archived_at: null,
     },
@@ -466,7 +484,7 @@ const getSanitationGradeMap = async (foodTruckIds = []) => {
   }, {});
 };
 
-const calculateComplianceSummary = async (foodTruckOrId) => {
+const calculateComplianceSummary = async (foodTruckOrId, { truckUnitId = null } = {}) => {
   const foodTruck =
     typeof foodTruckOrId === 'object' && foodTruckOrId?._id
       ? foodTruckOrId
@@ -482,6 +500,18 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   const now = new Date();
   await archiveExpiredDocuments({ foodTruckId: foodTruck._id, now });
   const documents = await getCurrentDocuments(foodTruck._id);
+  const selectedTruckUnit = truckUnitId
+    ? (foodTruck.truck_units || []).find(
+        (unit) => String(unit?._id || '') === String(truckUnitId) && !unit?.is_archived
+      )
+    : null;
+  const operationalDocuments = selectedTruckUnit
+    ? await getCurrentDocuments(foodTruck._id, {
+        documentScope: 'TRUCK_UNIT',
+        truckUnitId: selectedTruckUnit._id,
+      })
+    : [];
+  const latestOperationalDocuments = selectLatestByType(operationalDocuments);
   const latestByType = selectLatestByType(documents);
   const sanitationGradeDocument = getLatestProvidedSanitationGradeDocument(documents, now);
   const sanitationGrade = getSanitationGradeFromDocument(sanitationGradeDocument);
@@ -603,7 +633,7 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
       type: requiredIdentityDocumentType,
       label: requiredIdentityDocumentType === 'DRIVER_LICENSE_FRONT'
         ? 'Driver License Front'
-        : 'Business License / Permit',
+        : 'Permit/Business License',
       verified: identityDocumentVerified,
     },
     { type: 'W9', label: 'Completed W-9', verified: w9Verified },
@@ -642,6 +672,18 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     ? 'Vendor core compliance is complete.'
     : `Vendor compliance must be completed. Contact support at ${SUPPORT_PHONE_NUMBER} if you need help.`;
 
+  const operationalSanitationDocument = getLatestProvidedSanitationGradeDocument(
+    operationalDocuments,
+    now
+  );
+  const operationalSanitationGrade = getSanitationGradeFromDocument(operationalSanitationDocument);
+  const serializedOperationalDocuments = Object.values(latestOperationalDocuments).map((document) => ({
+    ...document,
+    access_url: document?.file_key
+      ? getSignedObjectUrl(document.file_key)
+      : document?.file_url || null,
+  }));
+
   return {
     food_truck_id: foodTruck._id,
     vendor_user_id: foodTruck.userId,
@@ -662,6 +704,16 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
     sanitation_grade: sanitationGrade,
     sanitation_grade_eligible: sanitationGradeEligible,
     sanitation_grade_blocked: sanitationGradeBlocked,
+    // Operational records belong to the selected truck unit only.  They are
+    // intentionally excluded from the legal-payee score and verification.
+    operational_truck_unit: selectedTruckUnit
+      ? {
+          truck_unit_id: selectedTruckUnit._id,
+          name: selectedTruckUnit.name || selectedTruckUnit.food_truck_name || null,
+        }
+      : null,
+    operational_documents: serializedOperationalDocuments,
+    operational_sanitation_grade: operationalSanitationGrade,
     grandfathered,
     grandfather_cutoff_date: GRANDFATHER_CUTOFF_DATE,
     can_bid: coreCompliant && hasValidCoi,
@@ -988,6 +1040,8 @@ const purgeRejectedDocuments = async ({
 const retainOrDeleteExistingDocument = async ({
   foodTruckId,
   documentType,
+  documentScope = 'PAYEE',
+  truckUnitId = null,
   actorUserId,
   replacedByDocumentId,
   reason = 'Replaced by newer compliance document',
@@ -996,6 +1050,15 @@ const retainOrDeleteExistingDocument = async ({
     {
       food_truck_id: foodTruckId,
       document_type: documentType,
+      ...(documentScope === 'TRUCK_UNIT'
+        ? { document_scope: 'TRUCK_UNIT', truck_unit_id: truckUnitId }
+        : {
+            $or: [
+              { document_scope: 'PAYEE' },
+              { document_scope: null },
+              { document_scope: { $exists: false } },
+            ],
+          }),
       ...(replacedByDocumentId
         ? { document_id: { $ne: replacedByDocumentId } }
         : {}),
@@ -1038,7 +1101,7 @@ const reconcileActiveComplianceDocuments = async ({ foodTruckId = null } = {}) =
   );
   const newestByKey = new Map();
   for (const document of documents || []) {
-    const key = `${document.food_truck_id}:${document.document_type}`;
+    const key = `${document.food_truck_id}:${document.document_scope || 'PAYEE'}:${document.truck_unit_id || ''}:${document.document_type}`;
     if (!newestByKey.has(key)) {
       newestByKey.set(key, document);
       continue;
@@ -1073,6 +1136,10 @@ const uploadComplianceDocument = async ({
 }) => {
   const documentType = normalizeComplianceDocumentType(body.document_type);
   const requirement = getComplianceRequirement(documentType);
+  const documentScope = String(body.document_scope || 'PAYEE').toUpperCase() === 'TRUCK_UNIT'
+    ? 'TRUCK_UNIT'
+    : 'PAYEE';
+  const truckUnitId = documentScope === 'TRUCK_UNIT' ? body.truck_unit_id || null : null;
 
   if (!requirement) {
     throw buildComplianceError('Unsupported compliance document type', 400);
@@ -1081,16 +1148,24 @@ const uploadComplianceDocument = async ({
   const existingCount = await VendorComplianceDocumentService.getCount({
     food_truck_id: foodTruck._id,
     document_type: documentType,
+    document_scope: documentScope,
+    ...(documentScope === 'TRUCK_UNIT' ? { truck_unit_id: truckUnitId } : {}),
   });
   const revalidationAttempt = await VendorComplianceDocumentService.getCount({
     food_truck_id: foodTruck._id,
     document_type: documentType,
+    document_scope: documentScope,
+    ...(documentScope === 'TRUCK_UNIT' ? { truck_unit_id: truckUnitId } : {}),
     revalidation_cycle: getVerificationCycle(foodTruck),
     ocr_status: 'revalidation_needed',
   });
 
   const isSanitationGrade = documentType === 'HEALTH_PERMIT';
-  const automatedCoreDocument = AUTOMATED_CORE_DOCUMENT_TYPES.includes(documentType);
+  // A unit's operating permit is a recordkeeping/review document, never a
+  // second identity document.  OCR and core-compliance processing apply only
+  // to legal-payee uploads.
+  const automatedCoreDocument = documentScope === 'PAYEE' &&
+    AUTOMATED_CORE_DOCUMENT_TYPES.includes(documentType);
   const adminRequestedPendingReview =
     user.userType === 'SUPER_ADMIN' && body.review_status === 'pending_review';
   const vendorEnteredIssueDate = asDate(body.issue_date);
@@ -1100,6 +1175,8 @@ const uploadComplianceDocument = async ({
   const document = await VendorComplianceDocumentService.create({
     food_truck_id: foodTruck._id,
     vendor_user_id: foodTruck.userId,
+    document_scope: documentScope,
+    truck_unit_id: truckUnitId,
     document_type: documentType,
     version: Number(existingCount || 0) + 1,
     revalidation_cycle: getVerificationCycle(foodTruck),
@@ -1144,6 +1221,8 @@ const uploadComplianceDocument = async ({
   await retainOrDeleteExistingDocument({
     foodTruckId: foodTruck._id,
     documentType,
+    documentScope,
+    truckUnitId,
     actorUserId: user._id,
     replacedByDocumentId: document.document_id,
   });
@@ -1353,6 +1432,13 @@ const submitComplianceDocumentsForOcr = async ({ foodTruck, user, documentTypes 
   const documents = await VendorComplianceDocumentService.getByData(
     {
       food_truck_id: foodTruck._id,
+      // Per-truck operating records are deliberately excluded: they do not
+      // participate in payee OCR or identity verification.
+      $or: [
+        { document_scope: 'PAYEE' },
+        { document_scope: null },
+        { document_scope: { $exists: false } },
+      ],
       review_status: { $ne: 'archived' },
       archived_at: null,
     },
@@ -1370,6 +1456,7 @@ const submitComplianceDocumentsForOcr = async ({ foodTruck, user, documentTypes 
   for (const document of Object.values(latestByType)) {
     const requirement = getComplianceRequirement(document.document_type);
     if (!requirement) continue;
+    if (!AUTOMATED_CORE_DOCUMENT_TYPES.includes(document.document_type)) continue;
     if (isExplicitDocumentRetry && !requestedDocumentTypes.has(document.document_type)) {
       continue;
     }

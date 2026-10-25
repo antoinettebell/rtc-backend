@@ -47,6 +47,18 @@ const getMarketplaceVendor = async (user) => {
 
 const requiresPayoutCompliance = () => true;
 
+const getVendorMailingAddress = (vendor = {}) => {
+  const values = [
+    vendor.addressLine1,
+    vendor.addressLine2,
+    [vendor.addressCity, vendor.addressState, vendor.addressPostal]
+      .filter((value) => value && String(value).toUpperCase() !== 'NA')
+      .join(' '),
+    vendor.addressCountry,
+  ].filter((value) => value && String(value).trim() && String(value).toUpperCase() !== 'NA');
+  return values.join(', ') || null;
+};
+
 const maskTaxId = (value, type) => {
   const digits = String(value || '').replace(/\D/g, '');
   if (digits.length !== 9) return null;
@@ -290,6 +302,9 @@ exports.status = async (req, res, next) => {
       requires_payout_compliance: requiresPayout,
       w9_session: toSafeSession(session),
       profile: toSafeProfile(profile),
+      // A Marketplace Vendor's ordinary mailing address remains on its user
+      // profile. The app uses this only as a compliance-form prefill.
+      mailing_address: getVendorMailingAddress(vendor),
       compliance,
     }, 'MarketplaceVendor compliance status');
   } catch (error) {

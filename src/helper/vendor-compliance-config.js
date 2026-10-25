@@ -15,7 +15,7 @@ const DOCUMENT_TYPES = {
   },
   BUSINESS_LICENSE: {
     type: 'BUSINESS_LICENSE',
-    label: 'Business License/Permit',
+    label: 'Permit/Business License',
     required: true,
     scoreWeight: 1,
     ocrFields: [

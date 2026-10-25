@@ -345,8 +345,12 @@ exports.saveProfile = async (req, res, next) => {
     }
     const legalName = String(req.body?.legal_name || '').trim();
     if (!legalName) throw buildError('Legal name is required.');
-    if (partyType === 'BUSINESS' && !String(req.body?.business_address || '').trim()) {
-      throw buildError('Business address is required.');
+    const mailingAddress = String(req.body?.business_address || '').trim();
+    if (requiresPayoutCompliance(coordinator) && !mailingAddress) {
+      throw buildError('Mailing address is required for payout compliance.');
+    }
+    if (partyType === 'BUSINESS' && !String(req.body?.registration_state || '').trim()) {
+      throw buildError('Registration state is required for a business coordinator.');
     }
     // A correction to the comparison data is a meaningful OCR change even
     // when the uploaded file itself is unchanged. Preserve the document, but
@@ -368,7 +372,9 @@ exports.saveProfile = async (req, res, next) => {
           dba_name: partyType === 'BUSINESS' ? String(req.body?.dba_name || '').trim() || null : null,
           entity_type: partyType === 'BUSINESS' ? String(req.body?.entity_type || '').toUpperCase() || null : null,
           registration_state: partyType === 'BUSINESS' ? String(req.body?.registration_state || '').toUpperCase() || null : null,
-          business_address: partyType === 'BUSINESS' ? String(req.body?.business_address || '').trim() : null,
+          // This is the coordinator compliance mailing address. It is kept
+          // isolated from customer delivery/discovery addresses.
+          business_address: mailingAddress || null,
         },
       },
       { new: true, upsert: true, setDefaultsOnInsert: true }

@@ -26,6 +26,21 @@ const mSchema = mongoose.Schema(
       required: true,
       index: true,
     },
+    // Payee documents belong to the vendor business. Operational documents can
+    // additionally belong to one embedded truck unit without affecting the
+    // vendor's legal-payee compliance score.
+    document_scope: {
+      type: String,
+      enum: ['PAYEE', 'TRUCK_UNIT'],
+      default: 'PAYEE',
+      required: true,
+      index: true,
+    },
+    truck_unit_id: {
+      type: mongoose.Schema.Types.ObjectId,
+      default: null,
+      index: true,
+    },
     document_type: {
       type: String,
       enum: Object.keys(DOCUMENT_TYPES),
@@ -160,6 +175,8 @@ const mSchema = mongoose.Schema(
 
 mSchema.index({
   food_truck_id: 1,
+  document_scope: 1,
+  truck_unit_id: 1,
   document_type: 1,
   review_status: 1,
   archived_at: 1,

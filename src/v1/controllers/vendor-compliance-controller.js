@@ -163,6 +163,21 @@ const saveUploadedDocumentToFoodTruck = async ({
   return null;
 };
 
+const getSelectedTruckUnitId = (foodTruck, value) => {
+  const truckUnitId = String(value || '').trim();
+  if (!truckUnitId) return null;
+
+  const unitExists = (foodTruck.truck_units || []).some(
+    (unit) => String(unit?._id || '') === truckUnitId && !unit?.is_archived
+  );
+  if (!unitExists) {
+    const error = new Error('Selected food truck is not active.');
+    error.code = 400;
+    throw error;
+  }
+  return truckUnitId;
+};
+
 exports.requirements = async (req, res, next) => {
   try {
     return res.data(
@@ -179,7 +194,8 @@ exports.requirements = async (req, res, next) => {
 exports.mySummary = async (req, res, next) => {
   try {
     const foodTruck = await getVendorFoodTruck(req.user, req.query.food_truck_id);
-    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
+    const truckUnitId = getSelectedTruckUnitId(foodTruck, req.query.truck_unit_id);
+    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck, { truckUnitId });
     return res.data({ compliance: summary }, 'Vendor compliance summary');
   } catch (e) {
     return handleError(e, next);
@@ -189,7 +205,8 @@ exports.mySummary = async (req, res, next) => {
 exports.foodTruckSummary = async (req, res, next) => {
   try {
     const foodTruck = await getVendorFoodTruck(req.user, req.params.foodTruckId);
-    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
+    const truckUnitId = getSelectedTruckUnitId(foodTruck, req.query.truck_unit_id);
+    const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck, { truckUnitId });
     return res.data({ compliance: summary }, 'Vendor compliance summary');
   } catch (e) {
     return handleError(e, next);
@@ -204,9 +221,30 @@ exports.uploadDocument = async (req, res, next) => {
 
     const foodTruck = await getVendorFoodTruck(req.user, req.params.foodTruckId);
     const documentType = normalizeComplianceDocumentType(req.body.document_type);
+    const documentScope = String(req.body.document_scope || 'PAYEE').toUpperCase() === 'TRUCK_UNIT'
+      ? 'TRUCK_UNIT'
+      : 'PAYEE';
+    const truckUnitId = String(req.body.truck_unit_id || '').trim();
+    if (documentScope === 'TRUCK_UNIT') {
+      try {
+        getSelectedTruckUnitId(foodTruck, truckUnitId);
+      } catch (error) {
+        if (!truckUnitId) {
+          error.message = 'Select an active food truck before uploading an operational document.';
+        }
+        throw error;
+      }
+      if (!['BUSINESS_LICENSE', 'HEALTH_PERMIT'].includes(documentType)) {
+        const error = new Error('Truck operational uploads must be a Permit/Business License or Sanitation Grade.');
+        error.code = 400;
+        throw error;
+      }
+    }
+    req.body.document_scope = documentScope;
+    req.body.truck_unit_id = documentScope === 'TRUCK_UNIT' ? truckUnitId : null;
     const { url, key } = await addObjectWithKey(
       req.file,
-      `vendor-compliance/${foodTruck._id}/${documentType}`
+      `vendor-compliance/${foodTruck._id}/${documentScope === 'TRUCK_UNIT' ? `truck-unit/${truckUnitId}` : 'payee'}/${documentType}`
     );
 
     const document = await VendorComplianceService.uploadComplianceDocument({
@@ -218,19 +256,24 @@ exports.uploadDocument = async (req, res, next) => {
       fileKey: key,
     });
 
-    const updatedFoodTruck = await saveUploadedDocumentToFoodTruck({
-      foodTruckId: foodTruck._id,
-      document,
-      documentType,
-      req,
-      url,
-      key,
-    });
+    // `food_trucks.documents` is the old profile repository.  It has no unit
+    // identifier, so never mirror a per-truck operational document into it.
+    const updatedFoodTruck = documentScope === 'PAYEE'
+      ? await saveUploadedDocumentToFoodTruck({
+          foodTruckId: foodTruck._id,
+          document,
+          documentType,
+          req,
+          url,
+          key,
+        })
+      : foodTruck;
 
     fs.unlink(req.file.path, () => {});
 
     const summary = await VendorComplianceService.calculateComplianceSummary(
-      updatedFoodTruck
+      updatedFoodTruck,
+      { truckUnitId: documentScope === 'TRUCK_UNIT' ? truckUnitId : null }
     );
     return res.data(
       { complianceDocument: document, compliance: summary },
