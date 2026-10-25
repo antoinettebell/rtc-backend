@@ -4,6 +4,10 @@ const path = require('path');
 const {
   getComplianceRequirement,
 } = require('./vendor-compliance-config');
+const {
+  getRequiredIdentityDocumentType,
+  getInternalCoreDocumentTypes,
+} = require('../v1/services/vendor-compliance-service');
 
 const sanitationRequirement = getComplianceRequirement('HEALTH_PERMIT');
 assert.ok(sanitationRequirement.ocrFields.includes('issue_date'));
@@ -20,7 +24,6 @@ assert.equal(getComplianceRequirement('COI').required, false);
 assert.equal(getComplianceRequirement('COI').scoreWeight, 0);
 assert.equal(getComplianceRequirement('LIQUOR_LICENSE').scoreWeight, 0);
 assert.equal(getComplianceRequirement('SSN_CARD'), null);
-assert.equal(getComplianceRequirement('DRIVER_LICENSE_FRONT').required, true);
 assert.deepEqual(
   getComplianceRequirement('DRIVER_LICENSE_FRONT').ocrFields,
   ['name'],
@@ -91,15 +94,25 @@ assert.match(
   /const coreComponentWeight = 100 \/ coreComponents\.length/,
   'Core compliance must divide 100 percent among the documents required for that vendor'
 );
-assert.match(
-  serviceSource,
-  /CORE_IDENTITY_DOCUMENT_TYPE = 'DRIVER_LICENSE_FRONT'/,
-  'A driver license must be the required food-vendor identity document'
+assert.equal(
+  getRequiredIdentityDocumentType({ tax_identifier_type: 'SSN', tax_identifier_masked: '***-**-6789' }),
+  'DRIVER_LICENSE_FRONT',
+  'SSN food vendors must use a driver license as their identity document'
 );
-assert.match(
-  serviceSource,
-  /const internalChecksPass = \['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE\]/,
-  'External verification must wait for the driver license, business license, and W-9'
+assert.equal(
+  getRequiredIdentityDocumentType({ tax_identifier_type: 'EIN', tax_identifier_masked: '**-3456789' }),
+  'BUSINESS_LICENSE',
+  'EIN food vendors must use a business license as their identity document'
+);
+assert.deepEqual(
+  getInternalCoreDocumentTypes({ tax_identifier_type: 'SSN', tax_identifier_masked: '***-**-6789' }),
+  ['DRIVER_LICENSE_FRONT', 'W9'],
+  'SSN external verification must wait only for the driver license and W-9'
+);
+assert.deepEqual(
+  getInternalCoreDocumentTypes({ tax_identifier_type: 'EIN', tax_identifier_masked: '**-3456789' }),
+  ['BUSINESS_LICENSE', 'W9'],
+  'EIN external verification must wait only for the business license and W-9'
 );
 assert.doesNotMatch(
   serviceSource,

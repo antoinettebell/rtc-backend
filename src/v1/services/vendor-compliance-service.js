@@ -159,7 +159,33 @@ const hasEncryptedTaxIdentifier = (foodTruck, type) =>
   String(foodTruck?.tax_identifier_type || '').toUpperCase() === type &&
   !!foodTruck?.tax_identifier_masked;
 
-const CORE_IDENTITY_DOCUMENT_TYPE = 'DRIVER_LICENSE_FRONT';
+const hasSsnTaxIdentifier = (foodTruck = {}) =>
+  hasValidTaxIdentifier(foodTruck.ssn) ||
+  hasMaskedTaxIdentifier(foodTruck.ssn) ||
+  hasEncryptedTaxIdentifier(foodTruck, 'SSN');
+
+const getSelectedTaxIdentifierType = (foodTruck = {}) => {
+  const hasSsnOnProfile = hasSsnTaxIdentifier(foodTruck);
+  return String(foodTruck.tax_identifier_type || '').toUpperCase() === 'SSN' || hasSsnOnProfile
+    ? 'SSN'
+    : 'EIN';
+};
+
+// Food-vendor identity evidence follows the same rule as coordinators and
+// marketplace vendors: individuals using an SSN provide a driver license;
+// businesses using an EIN provide a business license.
+const getRequiredIdentityDocumentType = (foodTruck = {}) =>
+  getSelectedTaxIdentifierType(foodTruck) === 'SSN'
+    ? 'DRIVER_LICENSE_FRONT'
+    : 'BUSINESS_LICENSE';
+
+const getInternalCoreDocumentTypes = (foodTruck = {}) => [
+  getRequiredIdentityDocumentType(foodTruck),
+  'W9',
+];
+
+const AUTOMATED_IDENTITY_DOCUMENT_TYPES = ['BUSINESS_LICENSE', 'DRIVER_LICENSE_FRONT'];
+const AUTOMATED_CORE_DOCUMENT_TYPES = [...AUTOMATED_IDENTITY_DOCUMENT_TYPES, 'W9'];
 
 const getVerificationCycle = (foodTruck = {}) =>
   Math.max(1, Number(foodTruck.compliance_verification_cycle || 1));
@@ -461,28 +487,26 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   const sanitationGrade = getSanitationGradeFromDocument(sanitationGradeDocument);
   const sanitationGradeEligible = isSanitationGradeEligible(sanitationGrade);
   const sanitationGradeBlocked = !!sanitationGrade && !sanitationGradeEligible;
-  const hasSsnOnProfile =
-    hasValidTaxIdentifier(foodTruck.ssn) ||
-    hasMaskedTaxIdentifier(foodTruck.ssn) ||
-    hasEncryptedTaxIdentifier(foodTruck, 'SSN');
-  const selectedTaxIdentifierType =
-    String(foodTruck.tax_identifier_type || '').toUpperCase() === 'SSN' ||
-    hasSsnOnProfile
-      ? 'SSN'
-      : 'EIN';
+  const hasSsnOnProfile = hasSsnTaxIdentifier(foodTruck);
+  const selectedTaxIdentifierType = getSelectedTaxIdentifierType(foodTruck);
+  const requiredIdentityDocumentType = getRequiredIdentityDocumentType(foodTruck);
   const grandfathered = isGrandfatheredVendor(foodTruck);
   const complianceRequirements = getComplianceRequirements();
-  const totalScoreWeight = complianceRequirements.reduce(
-    (total, requirement) => total + Number(requirement.scoreWeight || 0),
-    0
-  );
   let score = 0;
   const missingRequirements = [];
   const expiringRequirements = [];
   const pendingRequirements = [];
   const rejectedRequirements = [];
 
-  const requirements = complianceRequirements.map((requirement) => {
+  const requirements = complianceRequirements.map((configuredRequirement) => {
+    const isIdentityDocument = ['BUSINESS_LICENSE', 'DRIVER_LICENSE_FRONT']
+      .includes(configuredRequirement.type);
+    const requirement = {
+      ...configuredRequirement,
+      required: isIdentityDocument
+        ? configuredRequirement.type === requiredIdentityDocumentType
+        : configuredRequirement.required,
+    };
     const document = latestByType[requirement.type] || null;
     const tracksExpiration = requirement.type !== 'HEALTH_PERMIT';
     const days_until_expiration = tracksExpiration
@@ -502,7 +526,7 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
       score += requirement.scoreWeight;
     } else if (['pending_review', 'manual_review', 'revalidation_needed'].includes(document?.review_status)) {
       status = document.review_status;
-      pendingRequirements.push(requirement.type);
+      if (!isOptionalDocument) pendingRequirements.push(requirement.type);
     } else if (document?.review_status === 'rejected') {
       status = 'rejected';
       if (!isOptionalDocument) {
@@ -569,16 +593,20 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
         : externalStatuses.includes('MANUAL_REVIEW') ? 'MANUAL_REVIEW'
           : externalStatuses.includes('FAILED') ? 'FAILED'
             : 'NOT_STARTED';
-  const businessLicenseVerified = isVerifiedActiveDocument(latestByType.BUSINESS_LICENSE, now);
   const w9Verified = isVerifiedActiveDocument(latestByType.W9, now);
-  const driverLicenseVerified = isVerifiedActiveDocument(
-    latestByType[CORE_IDENTITY_DOCUMENT_TYPE],
+  const identityDocumentVerified = isVerifiedActiveDocument(
+    latestByType[requiredIdentityDocumentType],
     now
   );
   const coreComponents = [
-    { type: 'BUSINESS_LICENSE', label: 'Business License / Permit', verified: businessLicenseVerified },
+    {
+      type: requiredIdentityDocumentType,
+      label: requiredIdentityDocumentType === 'DRIVER_LICENSE_FRONT'
+        ? 'Driver License Front'
+        : 'Business License / Permit',
+      verified: identityDocumentVerified,
+    },
     { type: 'W9', label: 'Completed W-9', verified: w9Verified },
-    { type: CORE_IDENTITY_DOCUMENT_TYPE, label: 'Driver License Front', verified: driverLicenseVerified },
   ];
   if (selectedTaxIdentifierType === 'SSN') {
     coreComponents.push({
@@ -600,9 +628,8 @@ const calculateComplianceSummary = async (foodTruckOrId) => {
   coreComponents.filter((component) => !component.verified).forEach((component) => {
     if (!missingRequirements.includes(component.type)) missingRequirements.push(component.type);
   });
-  const internalCoreCompliant = coreComponents
-    .filter((component) => !['EXTERNAL_IDENTITY_VERIFICATION', 'COBALT_TIN', 'COBALT_SOS'].includes(component.type))
-    .every((component) => component.verified) &&
+  const internalCoreCompliant = getInternalCoreDocumentTypes(foodTruck)
+    .every((documentType) => isVerifiedActiveDocument(latestByType[documentType], now)) &&
     rejectedRequirements.length === 0 && pendingRequirements.length === 0;
   const coreCompliant = internalCoreCompliant && externalPassed;
   const hasValidCoi = isVerifiedActiveDocument(latestByType.COI, now);
@@ -699,7 +726,7 @@ const beginProfileRevalidation = async ({ foodTruck, actor = null, previousIdent
       food_truck_id: foodTruck._id,
       review_status: 'verified',
       archived_at: null,
-      document_type: { $in: ['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE] },
+      document_type: { $in: getInternalCoreDocumentTypes(foodTruck) },
     },
     { sort: { created_at: -1 } }
   );
@@ -707,7 +734,7 @@ const beginProfileRevalidation = async ({ foodTruck, actor = null, previousIdent
   const revalidationCycle = getVerificationCycle(foodTruck) + 1;
   for (const document of documents) {
     const affectsTax = document.document_type === 'W9';
-    const isIdentityEvidence = ['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE].includes(document.document_type);
+    const isIdentityEvidence = getInternalCoreDocumentTypes(foodTruck).includes(document.document_type);
     if ((taxChanged && affectsTax) || (nameChanged && isIdentityEvidence)) {
       document.review_status = 'revalidation_needed';
       document.ocr_status = 'revalidation_needed';
@@ -741,7 +768,7 @@ const beginProfileRevalidation = async ({ foodTruck, actor = null, previousIdent
   return { affected: [...new Set(affected)] };
 };
 
-// Provider calls are deliberately deferred until the three internal core
+// Provider calls are deliberately deferred until the two applicable internal
 // documents have passed their own OCR comparisons. This is idempotent: the
 // adapter reuses the active record for the current verification cycle.
 const startExternalVerificationWhenInternalChecksPass = async (foodTruckId, { checkType = null } = {}) => {
@@ -755,7 +782,7 @@ const startExternalVerificationWhenInternalChecksPass = async (foodTruckId, { ch
   for (const document of documents || []) {
     if (!latestByType[document.document_type]) latestByType[document.document_type] = document;
   }
-  const internalChecksPass = ['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE]
+  const internalChecksPass = getInternalCoreDocumentTypes(foodTruck)
     .every((documentType) => isVerifiedActiveDocument(latestByType[documentType]));
   if (!internalChecksPass) return null;
 
@@ -1063,7 +1090,7 @@ const uploadComplianceDocument = async ({
   });
 
   const isSanitationGrade = documentType === 'HEALTH_PERMIT';
-  const automatedCoreDocument = ['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE].includes(documentType);
+  const automatedCoreDocument = AUTOMATED_CORE_DOCUMENT_TYPES.includes(documentType);
   const adminRequestedPendingReview =
     user.userType === 'SUPER_ADMIN' && body.review_status === 'pending_review';
   const vendorEnteredIssueDate = asDate(body.issue_date);
@@ -1419,7 +1446,7 @@ const reviewComplianceDocument = async ({
 
   if (
     reviewStatus === 'verified' &&
-    ['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE].includes(document.document_type)
+    AUTOMATED_CORE_DOCUMENT_TYPES.includes(document.document_type)
   ) {
     throw buildComplianceError(
       'This core compliance document is verified only by the automated OCR and profile-matching workflow.',
@@ -1581,8 +1608,7 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     }
   }
 
-  const requiresIdentityValidation = ['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE]
-    .includes(document.document_type);
+  const requiresIdentityValidation = AUTOMATED_CORE_DOCUMENT_TYPES.includes(document.document_type);
   const foodTruck = requiresIdentityValidation
     ? await FoodTruckModel.findById(document.food_truck_id)
       .select('+tax_identifier_encrypted tax_identifier_type tax_identifier_masked legal_business_name dba name compliance_verification_cycle')
@@ -1637,7 +1663,7 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     }
   }
 
-  if (['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE].includes(document.document_type)) {
+  if (AUTOMATED_CORE_DOCUMENT_TYPES.includes(document.document_type)) {
     const extractedBusinessNames = getDocumentBusinessNames({
       extracted_fields: normalizedExtractedFields,
     });
@@ -1648,7 +1674,7 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     if (!normalizedExtractedFields.legal_business_name_match) {
       automaticValidationFailure = document.document_type === 'W9'
         ? 'OCR could not confirm that the W-9 legal business name matches the vendor profile.'
-        : document.document_type === CORE_IDENTITY_DOCUMENT_TYPE
+        : document.document_type === 'DRIVER_LICENSE_FRONT'
           ? 'OCR could not confirm that the driver license name matches the vendor profile.'
           : 'OCR could not confirm that the business license name matches the vendor profile.';
     }
@@ -1745,8 +1771,7 @@ const applyOcrResult = async ({ documentId, ocrStatus, extractedFields, errorMes
     document.reviewed_by_user_id = null;
     document.reviewed_at = new Date();
   }
-  const coreIdentityDocument = ['BUSINESS_LICENSE', 'W9', CORE_IDENTITY_DOCUMENT_TYPE]
-    .includes(document.document_type);
+  const coreIdentityDocument = AUTOMATED_CORE_DOCUMENT_TYPES.includes(document.document_type);
   const datesValidated = !expirationMismatch && !missingOcrExpiration &&
     !issueDateMismatch && !missingOcrIssueDate;
   if (
@@ -1884,6 +1909,9 @@ module.exports = {
   startExternalVerificationWhenInternalChecksPass,
   getSanitationGradeMap,
   getSanitationGradeFromFields,
+  getSelectedTaxIdentifierType,
+  getRequiredIdentityDocumentType,
+  getInternalCoreDocumentTypes,
   taxDigits,
   getTaxIdentifierOcrOutcome,
   getDocumentBusinessNames,
