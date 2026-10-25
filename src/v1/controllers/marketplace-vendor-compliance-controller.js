@@ -99,6 +99,22 @@ const snapshotMatches = (savedSnapshot, currentSnapshot) => (
 );
 const activeDocuments = (profile = {}) => (profile.documents || []).filter((document) => !document.archived_at);
 
+// S3 cleanup must never keep a legal-payee update open indefinitely. A failed
+// or stalled cleanup is logged by the storage helper; the evidence is still
+// removed from the active compliance record so it cannot be used or exposed.
+const removeObjectForPayeeReplacement = async (key) => {
+  if (!key) return;
+  let timeout;
+  try {
+    await Promise.race([
+      removeObject(key),
+      new Promise((resolve) => { timeout = setTimeout(resolve, 10_000); }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 // A government ID may show a middle name and may place the surname first,
 // while an individual's signed W-9 commonly uses first and last name only.
 // For vendor personal identity we require the compliance form's first
@@ -266,10 +282,10 @@ const replaceMarketplaceLegalPayeeForAccountTypeChange = async ({ vendor, profil
   }
 
   for (const document of documents) {
-    if (document.file_key) await removeObject(document.file_key);
+    await removeObjectForPayeeReplacement(document.file_key);
   }
   for (const session of sessions) {
-    if (session.signed_document_key) await removeObject(session.signed_document_key);
+    await removeObjectForPayeeReplacement(session.signed_document_key);
   }
   profile.documents = (profile.documents || []).filter((document) => document.archived_at);
   profile.markModified('documents');
