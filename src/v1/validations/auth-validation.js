@@ -85,6 +85,10 @@ module.exports = {
       // }),
       foodTruck: Joi.object({
         name: Joi.string().required().min(2).trim(),
+        // New clients collect this at sign-up. Keep it optional at the API
+        // boundary so an already-released client can still register and
+        // complete the required legal identity on Compliance.
+        legal_business_name: Joi.string().trim().min(2).optional(),
         ein: Joi.string().allow(null),
         // snn: Joi.string().allow(null),
         ssn: Joi.string().allow(null),

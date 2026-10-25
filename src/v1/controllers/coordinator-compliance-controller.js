@@ -20,6 +20,10 @@ const {
 } = require('../../models');
 
 const buildError = (message, code = 400) => Object.assign(new Error(message), { code });
+const safeAddressPart = (value) => {
+  const text = String(value || '').trim();
+  return text && text.toUpperCase() !== 'NA' ? text : null;
+};
 
 const DRIVER_LICENSE_OCR_REQUIREMENT = { ocrFields: ['name'] };
 const BUSINESS_LICENSE_OCR_REQUIREMENT = getComplianceRequirement('BUSINESS_LICENSE');
@@ -101,6 +105,14 @@ const toSafeProfile = (profile) => {
     dba_name: value.dba_name,
     entity_type: value.entity_type,
     registration_state: value.registration_state,
+    mailing_address: {
+      address_line1: value.mailing_address_line1 || null,
+      address_line2: value.mailing_address_line2 || null,
+      city: value.mailing_city || null,
+      state: value.mailing_state || null,
+      postal: value.mailing_postal || null,
+      country: value.mailing_country || 'US',
+    },
     business_address: value.business_address,
     tax_id_type: value.tax_id_type,
     tax_id_masked: value.tax_id_masked,
@@ -345,9 +357,21 @@ exports.saveProfile = async (req, res, next) => {
     }
     const legalName = String(req.body?.legal_name || '').trim();
     if (!legalName) throw buildError('Legal name is required.');
-    const mailingAddress = String(req.body?.business_address || '').trim();
-    if (requiresPayoutCompliance(coordinator) && !mailingAddress) {
-      throw buildError('Mailing address is required for payout compliance.');
+    const mailingAddressInput = req.body?.mailing_address || {};
+    const hasStructuredMailingAddress = Object.keys(mailingAddressInput).length > 0;
+    const mailingAddress = {
+      address_line1: safeAddressPart(mailingAddressInput.address_line1),
+      address_line2: safeAddressPart(mailingAddressInput.address_line2),
+      city: safeAddressPart(mailingAddressInput.city),
+      state: safeAddressPart(mailingAddressInput.state),
+      postal: safeAddressPart(mailingAddressInput.postal),
+      country: safeAddressPart(mailingAddressInput.country) || 'US',
+    };
+    const formattedMailingAddress = hasStructuredMailingAddress
+      ? [mailingAddress.address_line1, mailingAddress.address_line2, [mailingAddress.city, mailingAddress.state, mailingAddress.postal].filter(Boolean).join(' '), mailingAddress.country].filter(Boolean).join(', ')
+      : String(req.body?.business_address || '').trim();
+    if (requiresPayoutCompliance(coordinator) && (!formattedMailingAddress || (hasStructuredMailingAddress && (!mailingAddress.address_line1 || !mailingAddress.city || !mailingAddress.state || !mailingAddress.postal)))) {
+      throw buildError('Mailing address, city, state, and ZIP code are required for payout compliance.');
     }
     if (partyType === 'BUSINESS' && !String(req.body?.registration_state || '').trim()) {
       throw buildError('Registration state is required for a business coordinator.');
@@ -372,9 +396,17 @@ exports.saveProfile = async (req, res, next) => {
           dba_name: partyType === 'BUSINESS' ? String(req.body?.dba_name || '').trim() || null : null,
           entity_type: partyType === 'BUSINESS' ? String(req.body?.entity_type || '').toUpperCase() || null : null,
           registration_state: partyType === 'BUSINESS' ? String(req.body?.registration_state || '').toUpperCase() || null : null,
+          ...(hasStructuredMailingAddress ? {
+            mailing_address_line1: mailingAddress.address_line1,
+            mailing_address_line2: mailingAddress.address_line2,
+            mailing_city: mailingAddress.city,
+            mailing_state: mailingAddress.state,
+            mailing_postal: mailingAddress.postal,
+            mailing_country: mailingAddress.country,
+          } : {}),
           // This is the coordinator compliance mailing address. It is kept
           // isolated from customer delivery/discovery addresses.
-          business_address: mailingAddress || null,
+          business_address: formattedMailingAddress || null,
         },
       },
       { new: true, upsert: true, setDefaultsOnInsert: true }

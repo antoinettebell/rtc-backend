@@ -47,15 +47,30 @@ const getMarketplaceVendor = async (user) => {
 
 const requiresPayoutCompliance = () => true;
 
+const safeAddressPart = (value) => {
+  const text = String(value || '').trim();
+  return text && text.toUpperCase() !== 'NA' ? text : null;
+};
+
+const getVendorMailingAddressFields = (vendor = {}) => ({
+  address_line1: safeAddressPart(vendor.addressLine1),
+  address_line2: safeAddressPart(vendor.addressLine2),
+  city: safeAddressPart(vendor.addressCity),
+  state: safeAddressPart(vendor.addressState),
+  postal: safeAddressPart(vendor.addressPostal),
+  country: safeAddressPart(vendor.addressCountry) || 'US',
+});
+
 const getVendorMailingAddress = (vendor = {}) => {
+  const address = getVendorMailingAddressFields(vendor);
   const values = [
-    vendor.addressLine1,
-    vendor.addressLine2,
-    [vendor.addressCity, vendor.addressState, vendor.addressPostal]
-      .filter((value) => value && String(value).toUpperCase() !== 'NA')
+    address.address_line1,
+    address.address_line2,
+    [address.city, address.state, address.postal]
+      .filter(Boolean)
       .join(' '),
-    vendor.addressCountry,
-  ].filter((value) => value && String(value).trim() && String(value).toUpperCase() !== 'NA');
+    address.country,
+  ].filter(Boolean);
   return values.join(', ') || null;
 };
 
@@ -305,6 +320,7 @@ exports.status = async (req, res, next) => {
       // A Marketplace Vendor's ordinary mailing address remains on its user
       // profile. The app uses this only as a compliance-form prefill.
       mailing_address: getVendorMailingAddress(vendor),
+      mailing_address_fields: getVendorMailingAddressFields(vendor),
       compliance,
     }, 'MarketplaceVendor compliance status');
   } catch (error) {
@@ -326,8 +342,37 @@ exports.saveProfile = async (req, res, next) => {
     }
     const legalName = String(req.body?.legal_name || '').trim();
     if (!legalName) throw buildError('Legal name is required.');
-    if (partyType === 'BUSINESS' && !String(req.body?.business_address || '').trim()) {
-      throw buildError('Business address is required.');
+    const mailingAddress = req.body?.mailing_address || {};
+    const hasStructuredMailingAddress = Object.keys(mailingAddress).length > 0;
+    const mailingAddressFields = {
+      addressLine1: safeAddressPart(mailingAddress.address_line1),
+      addressLine2: safeAddressPart(mailingAddress.address_line2),
+      addressCity: safeAddressPart(mailingAddress.city),
+      addressState: safeAddressPart(mailingAddress.state),
+      addressPostal: safeAddressPart(mailingAddress.postal),
+      addressCountry: safeAddressPart(mailingAddress.country) || 'US',
+    };
+    if (partyType === 'BUSINESS' && hasStructuredMailingAddress && (
+      !mailingAddressFields.addressLine1 || !mailingAddressFields.addressCity ||
+      !mailingAddressFields.addressState || !mailingAddressFields.addressPostal
+    )) {
+      throw buildError('Mailing address, city, state, and ZIP code are required.');
+    }
+    const structuredBusinessAddress = hasStructuredMailingAddress
+      ? [
+        mailingAddressFields.addressLine1,
+        mailingAddressFields.addressLine2,
+        [mailingAddressFields.addressCity, mailingAddressFields.addressState, mailingAddressFields.addressPostal]
+          .filter(Boolean)
+          .join(' '),
+        mailingAddressFields.addressCountry,
+      ].filter(Boolean).join(', ')
+      : null;
+    const businessAddress = structuredBusinessAddress || String(req.body?.business_address || '').trim();
+    if (partyType === 'BUSINESS' && !businessAddress) throw buildError('Mailing address is required.');
+    if (hasStructuredMailingAddress) {
+      Object.assign(vendor, mailingAddressFields);
+      await vendor.save();
     }
     // A correction to the comparison data is a meaningful OCR change even
     // when the uploaded file itself is unchanged. Preserve the document, but
@@ -350,7 +395,7 @@ exports.saveProfile = async (req, res, next) => {
           dba_name: partyType === 'BUSINESS' ? String(req.body?.dba_name || '').trim() || null : null,
           entity_type: partyType === 'BUSINESS' ? String(req.body?.entity_type || '').toUpperCase() || null : null,
           registration_state: partyType === 'BUSINESS' ? String(req.body?.registration_state || '').toUpperCase() || null : null,
-          business_address: partyType === 'BUSINESS' ? String(req.body?.business_address || '').trim() : null,
+          business_address: partyType === 'BUSINESS' ? businessAddress : null,
         },
       },
       { new: true, upsert: true, setDefaultsOnInsert: true }
