@@ -849,6 +849,16 @@ const startExternalVerificationWhenInternalChecksPass = async (foodTruckId, { ch
     const provider = String(foodTruck.tax_identifier_type || '').toUpperCase() === 'SSN'
       ? 'COMPLYCUBE'
       : 'COBALT';
+    // Keep diagnostics operationally useful without exposing tax data,
+    // credentials, provider payloads, or response bodies in application logs.
+    console.error('compliance_external_verification_start_failed', {
+      food_truck_id: String(foodTruck._id),
+      provider,
+      check_type: checkType || null,
+      error_name: error?.name || 'Error',
+      error_code: error?.code || null,
+      http_status: error?.response?.status || error?.status || null,
+    });
     const checkTypes = provider === 'COMPLYCUBE' ? ['SSN'] : ['TIN', 'SOS'];
     await Promise.all(checkTypes.map((checkType) =>
       VendorComplianceProviderVerificationModel.findOneAndUpdate(
