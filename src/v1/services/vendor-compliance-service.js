@@ -611,18 +611,24 @@ const calculateComplianceSummary = async (foodTruckOrId, { truckUnitId = null } 
     provider: externalProvider,
     check_type: { $in: requiredExternalChecks },
   }).lean();
+  // Older records may predate the no-manual-review provider contract. Keep
+  // their stored audit value intact, but expose them as retryable so the app
+  // can obtain a final provider result instead of presenting a manual queue.
+  const externalChecks = (externalRecords || []).map((record) => ({
+    ...record,
+    status: record.status === 'MANUAL_REVIEW' ? 'RETRYABLE_ERROR' : record.status,
+  }));
   const externalByType = Object.fromEntries(
-    (externalRecords || []).map((record) => [record.check_type, record])
+    externalChecks.map((record) => [record.check_type, record])
   );
   const externalPassed = requiredExternalChecks.every(
     (checkType) => externalByType[checkType]?.status === 'PASSED'
   );
-  const externalStatuses = externalRecords.map((record) => record.status);
+  const externalStatuses = externalChecks.map((record) => record.status);
   const externalStatus = externalPassed ? 'PASSED'
     : externalStatuses.includes('PENDING') ? 'PENDING'
       : externalStatuses.includes('RETRYABLE_ERROR') ? 'RETRYABLE_ERROR'
-        : externalStatuses.includes('MANUAL_REVIEW') ? 'MANUAL_REVIEW'
-          : externalStatuses.includes('FAILED') ? 'FAILED'
+        : externalStatuses.includes('FAILED') ? 'FAILED'
             : 'NOT_STARTED';
   const w9Verified = isVerifiedActiveDocument(latestByType.W9, now);
   const identityDocumentVerified = isVerifiedActiveDocument(
@@ -699,7 +705,7 @@ const calculateComplianceSummary = async (foodTruckOrId, { truckUnitId = null } 
     external_verification: {
       provider: externalProvider,
       status: externalStatus,
-      checks: externalRecords,
+      checks: externalChecks,
     },
     core_components: coreComponents.map((component) => ({ ...component, weight: coreComponentWeight })),
     sanitation_grade: sanitationGrade,

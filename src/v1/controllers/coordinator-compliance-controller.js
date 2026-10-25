@@ -156,16 +156,19 @@ const getExternalVerification = async (profile) => {
     provider,
     check_type: { $in: checkTypes },
   }).lean();
-  const byType = Object.fromEntries(checks.map((item) => [item.check_type, item]));
+  const safeChecks = checks.map((item) => ({
+    ...item,
+    status: item.status === 'MANUAL_REVIEW' ? 'RETRYABLE_ERROR' : item.status,
+  }));
+  const byType = Object.fromEntries(safeChecks.map((item) => [item.check_type, item]));
   const passed = checkTypes.every((type) => byType[type]?.status === 'PASSED');
-  const statuses = checks.map((item) => item.status);
+  const statuses = safeChecks.map((item) => item.status);
   const status = passed ? 'PASSED'
     : statuses.includes('PENDING') ? 'PENDING'
       : statuses.includes('RETRYABLE_ERROR') ? 'RETRYABLE_ERROR'
-        : statuses.includes('MANUAL_REVIEW') ? 'MANUAL_REVIEW'
-          : statuses.includes('FAILED') ? 'FAILED'
+        : statuses.includes('FAILED') ? 'FAILED'
             : 'NOT_STARTED';
-  return { provider, status, passed, checks };
+  return { provider, status, passed, checks: safeChecks };
 };
 
 const buildComplianceSummary = ({ profile, session, requiresPayout, externalVerification }) => {

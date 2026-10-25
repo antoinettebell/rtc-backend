@@ -7,6 +7,7 @@ const {
   CoordinatorComplianceProviderVerificationModel,
   CoordinatorComplianceProfileModel,
   MarketplaceVendorComplianceProviderVerificationModel,
+  MarketplaceVendorComplianceProfileModel,
 } = require('../models');
 const EncryptionService = require('./encryption');
 
@@ -16,6 +17,10 @@ const cobaltTestMode = () => String(process.env.COBALT_TEST_MODE || 'false').toL
 // pollable reference, so let an explicit later action recover only after the
 // provider's duplicate-submission window has had time to clear.
 const COBALT_TIN_STALE_RETRY_MS = 15 * 60 * 1000;
+// A State search can be asynchronous. Keep polling a Cobalt retry reference,
+// but never leave a vendor in an indefinite pending state when the provider
+// does not return a final result.
+const COBALT_SOS_PENDING_TIMEOUT_MS = 30 * 60 * 1000;
 const cobaltTestParams = () => cobaltTestMode() ? { test: 'complete' } : {};
 const cobaltSosParams = (businessName, state) => (cobaltTestMode()
   ? { searchQuery: businessName, state, test: 'complete' }
@@ -81,7 +86,10 @@ const normalizeComplyCube = (check = {}) => {
   const outcome = String(check?.result?.outcome || check?.outcome || '').toLowerCase();
   const status = String(check?.status || '').toLowerCase();
   if (status === 'complete' && outcome === 'clear') return 'PASSED';
-  if (status === 'complete' && outcome === 'attention') return 'MANUAL_REVIEW';
+  // A completed provider check has reached a final provider outcome. We do
+  // not expose a manual-review workflow in the apps; the vendor can correct
+  // their legal-payee data and submit a fresh verification cycle instead.
+  if (status === 'complete' && outcome === 'attention') return 'FAILED';
   if (['failed', 'rejected'].includes(status)) return 'FAILED';
   return 'PENDING';
 };
@@ -89,7 +97,7 @@ const normalizeCobaltTin = (result = {}) => {
   const status = String(result.status || '').toLowerCase();
   if (status === 'tin matched') return 'PASSED';
   if (status === 'did not match') return 'FAILED';
-  if (status === 'in review') return 'MANUAL_REVIEW';
+  if (status === 'in review') return 'PENDING';
   if (String(result.irsServiceStatus || '').toUpperCase().includes('OUTAGE')) return 'RETRYABLE_ERROR';
   return 'PENDING';
 };
@@ -124,7 +132,9 @@ const normalizeCobaltSos = (result = {}, foodTruck = {}) => {
   if (match) return 'PASSED';
   if (Array.isArray(result.results) && result.results.length) return 'FAILED';
   if (/failed|invalid|not found/i.test(providerMessage)) return 'FAILED';
-  return 'MANUAL_REVIEW';
+  // An empty non-error State response is not a decision. Cobalt normally
+  // follows it with a retry reference/result, which maintenance will poll.
+  return 'PENDING';
 };
 const cobaltSosSafeReason = (status) => {
   if (status === 'PENDING') return 'Secretary of State search is still pending.';
@@ -149,12 +159,31 @@ const currentRecord = ({ foodTruck, provider, checkType }) =>
   }).exec();
 
 const activeOrTerminalRecord = (record) =>
-  record && ['PENDING', 'PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(record.status);
+  record && ['PENDING', 'PASSED', 'FAILED'].includes(record.status);
 const stalePendingCobaltTin = (record, now = Date.now()) =>
   record?.status === 'PENDING'
   && !record.provider_reference
   && record.submitted_at
   && now - new Date(record.submitted_at).getTime() >= COBALT_TIN_STALE_RETRY_MS;
+const timedOutPendingCobaltSos = (record, now = Date.now()) =>
+  record?.status === 'PENDING'
+  && record.submitted_at
+  && now - new Date(record.submitted_at).getTime() >= COBALT_SOS_PENDING_TIMEOUT_MS;
+
+const saveCobaltSosPollResult = async ({ record, result, identity }) => {
+  const providerStatus = normalizeCobaltSos(result, identity);
+  record.status = providerStatus === 'PENDING' && timedOutPendingCobaltSos(record)
+    ? 'RETRYABLE_ERROR'
+    : providerStatus;
+  record.provider_reference = result.retryId || record.provider_reference;
+  record.retry_count = Number(record.retry_count || 0) + 1;
+  record.safe_reason = record.status === 'RETRYABLE_ERROR' && providerStatus === 'PENDING'
+    ? 'State verification timed out. A new State verification can be requested.'
+    : cobaltSosSafeReason(record.status);
+  if (['PASSED', 'FAILED', 'RETRYABLE_ERROR'].includes(record.status)) record.completed_at = new Date();
+  await record.save();
+  return record;
+};
 
 // A provider result normally arrives through the signed webhook. This manual
 // refresh is deliberately limited to an already-pending ComplyCube check so a
@@ -168,8 +197,8 @@ const refreshPendingComplyCubeCheck = async (record) => {
   const check = response.data || {};
   record.status = normalizeComplyCube(check);
   record.safe_result_code = String(check?.result?.outcome || check?.outcome || '').toLowerCase() || null;
-  record.safe_reason = record.status === 'MANUAL_REVIEW' ? 'ComplyCube requires attention.' : null;
-  if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(record.status)) record.completed_at = new Date();
+  record.safe_reason = record.status === 'FAILED' ? 'ComplyCube could not verify the submitted identity.' : null;
+  if (['PASSED', 'FAILED'].includes(record.status)) record.completed_at = new Date();
   await record.save();
   return record;
 };
@@ -273,7 +302,7 @@ const startCobaltEinChecks = async (foodTruck, { checkType = null } = {}) => {
   // A pending check without a reference becomes retryable only after the
   // bounded stale window above.
   const shouldStartSos = checkType !== 'TIN'
-    && (!existingSos || ['FAILED', 'RETRYABLE_ERROR'].includes(existingSos.status));
+    && (!existingSos || ['FAILED', 'RETRYABLE_ERROR', 'MANUAL_REVIEW'].includes(existingSos.status));
   if (!shouldStartTin && !shouldStartSos) {
     if (existingSos?.status === 'PENDING' && existingSos.provider_reference) {
       try {
@@ -283,12 +312,7 @@ const startCobaltEinChecks = async (foodTruck, { checkType = null } = {}) => {
           timeout: 35000,
         });
         const result = response.data || {};
-        existingSos.status = normalizeCobaltSos(result, foodTruck);
-        existingSos.provider_reference = result.retryId || existingSos.provider_reference;
-        existingSos.retry_count = Number(existingSos.retry_count || 0) + 1;
-        existingSos.safe_reason = cobaltSosSafeReason(existingSos.status);
-        if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(existingSos.status)) existingSos.completed_at = new Date();
-        await existingSos.save();
+        await saveCobaltSosPollResult({ record: existingSos, result, identity: foodTruck });
       } catch (_) {
         // Keep the existing pending retry ID. A manual refresh must not create
         // another State search when Cobalt is temporarily unavailable.
@@ -346,7 +370,7 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile, checkType
   const shouldStartTin = checkType !== 'SOS'
     && (!activeOrTerminalRecord(existingTin) || stalePendingCobaltTin(existingTin));
   const shouldStartSos = checkType !== 'TIN'
-    && (!existingSos || ['FAILED', 'RETRYABLE_ERROR'].includes(existingSos.status));
+    && (!existingSos || ['FAILED', 'RETRYABLE_ERROR', 'MANUAL_REVIEW'].includes(existingSos.status));
   if (!shouldStartTin && !shouldStartSos) {
     if (existingSos?.status === 'PENDING' && existingSos.provider_reference) {
       try {
@@ -356,16 +380,11 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile, checkType
           timeout: 35000,
         });
         const result = response.data || {};
-        existingSos.status = normalizeCobaltSos(result, {
+        await saveCobaltSosPollResult({ record: existingSos, result, identity: {
           legal_business_name: profile.legal_name,
           dba: profile.dba_name,
           business_registration_state: profile.registration_state,
-        });
-        existingSos.provider_reference = result.retryId || existingSos.provider_reference;
-        existingSos.retry_count = Number(existingSos.retry_count || 0) + 1;
-        existingSos.safe_reason = cobaltSosSafeReason(existingSos.status);
-        if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(existingSos.status)) existingSos.completed_at = new Date();
-        await existingSos.save();
+        } });
       } catch (_) {
         // Preserve the retry ID and avoid creating another State search.
       }
@@ -493,7 +512,7 @@ const startMarketplaceVendorCobaltEinChecks = async ({ vendor, profile, checkTyp
   const shouldStartTin = checkType !== 'SOS'
     && (!activeOrTerminalRecord(existingTin) || stalePendingCobaltTin(existingTin));
   const shouldStartSos = checkType !== 'TIN'
-    && (!existingSos || ['FAILED', 'RETRYABLE_ERROR'].includes(existingSos.status));
+    && (!existingSos || ['FAILED', 'RETRYABLE_ERROR', 'MANUAL_REVIEW'].includes(existingSos.status));
   if (!shouldStartTin && !shouldStartSos) {
     if (existingSos?.status === 'PENDING' && existingSos.provider_reference) {
       try {
@@ -503,16 +522,11 @@ const startMarketplaceVendorCobaltEinChecks = async ({ vendor, profile, checkTyp
           timeout: 35000,
         });
         const result = response.data || {};
-        existingSos.status = normalizeCobaltSos(result, {
+        await saveCobaltSosPollResult({ record: existingSos, result, identity: {
           legal_business_name: profile.legal_name,
           dba: profile.dba_name,
           business_registration_state: profile.registration_state,
-        });
-        existingSos.provider_reference = result.retryId || existingSos.provider_reference;
-        existingSos.retry_count = Number(existingSos.retry_count || 0) + 1;
-        existingSos.safe_reason = cobaltSosSafeReason(existingSos.status);
-        if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(existingSos.status)) existingSos.completed_at = new Date();
-        await existingSos.save();
+        } });
       } catch (_) {
         // Preserve the retry ID and avoid creating another State search.
       }
@@ -578,7 +592,7 @@ const pollPendingCobaltSosChecks = async () => {
   if (!enabled() || !process.env.COBALT_API_KEY) return 0;
   if (String(process.env.COBALT_ALLOW_EIN_QUERY_TRANSMISSION || 'false').toLowerCase() !== 'true') return 0;
   const pending = await VendorComplianceProviderVerificationModel.find({
-    provider: 'COBALT', check_type: 'SOS', status: 'PENDING', provider_reference: { $ne: null },
+    provider: 'COBALT', check_type: 'SOS', status: { $in: ['PENDING', 'MANUAL_REVIEW'] }, provider_reference: { $ne: null },
   }).limit(50).exec();
   let processed = 0;
   for (const record of pending) {
@@ -593,19 +607,14 @@ const pollPendingCobaltSosChecks = async () => {
         timeout: 35000,
       });
       const result = response.data || {};
-      record.status = normalizeCobaltSos(result, foodTruck);
-      record.provider_reference = result.retryId || record.provider_reference;
-      record.retry_count = Number(record.retry_count || 0) + 1;
-      record.safe_reason = cobaltSosSafeReason(record.status);
-      if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(record.status)) record.completed_at = new Date();
-      await record.save();
+      await saveCobaltSosPollResult({ record, result, identity: foodTruck });
       processed += 1;
     } catch (_) {
       // The retry record remains pending; do not persist provider error bodies.
     }
   }
   const pendingCoordinatorChecks = await CoordinatorComplianceProviderVerificationModel.find({
-    provider: 'COBALT', check_type: 'SOS', status: 'PENDING', provider_reference: { $ne: null },
+    provider: 'COBALT', check_type: 'SOS', status: { $in: ['PENDING', 'MANUAL_REVIEW'] }, provider_reference: { $ne: null },
   }).limit(50).exec();
   for (const record of pendingCoordinatorChecks) {
     try {
@@ -619,18 +628,38 @@ const pollPendingCobaltSosChecks = async () => {
         timeout: 35000,
       });
       const result = response.data || {};
-      record.status = normalizeCobaltSos(result, {
+      await saveCobaltSosPollResult({ record, result, identity: {
         legal_business_name: profile.legal_name,
         dba: profile.dba_name,
         business_registration_state: profile.registration_state,
-      });
-      record.provider_reference = result.retryId || record.provider_reference;
-      record.safe_reason = cobaltSosSafeReason(record.status);
-      if (['PASSED', 'FAILED', 'MANUAL_REVIEW'].includes(record.status)) record.completed_at = new Date();
-      await record.save();
+      } });
       processed += 1;
     } catch (_) {
       // The retry record remains pending; do not persist provider error bodies.
+    }
+  }
+  const pendingMarketplaceChecks = await MarketplaceVendorComplianceProviderVerificationModel.find({
+    provider: 'COBALT', check_type: 'SOS', status: { $in: ['PENDING', 'MANUAL_REVIEW'] }, provider_reference: { $ne: null },
+  }).limit(50).exec();
+  for (const record of pendingMarketplaceChecks) {
+    try {
+      const profile = await MarketplaceVendorComplianceProfileModel.findOne({
+        vendor_user_id: record.vendor_user_id,
+      }).select('legal_name dba_name registration_state').lean();
+      if (!profile) continue;
+      const response = await axios.get('https://apigateway.cobaltintelligence.com/v1/search', {
+        params: { retryId: record.provider_reference },
+        headers: { Accept: 'application/json', 'x-api-key': process.env.COBALT_API_KEY },
+        timeout: 35000,
+      });
+      await saveCobaltSosPollResult({ record, result: response.data || {}, identity: {
+        legal_business_name: profile.legal_name,
+        dba: profile.dba_name,
+        business_registration_state: profile.registration_state,
+      } });
+      processed += 1;
+    } catch (_) {
+      // Keep the retry record pending until Cobalt returns a final result.
     }
   }
   return processed;
@@ -643,13 +672,14 @@ const applyProviderResult = async ({ provider, providerReference, status, safeRe
   });
   if (!record) return null;
   if (webhookEventReference && record.webhook_event_reference === webhookEventReference) return record;
-  const terminal = ['PASSED', 'FAILED', 'MANUAL_REVIEW'];
-  if (terminal.includes(record.status) && record.status !== status) return record;
-  record.status = status;
+  const nextStatus = String(status || '').toUpperCase() === 'MANUAL_REVIEW' ? 'FAILED' : String(status || '').toUpperCase();
+  const terminal = ['PASSED', 'FAILED'];
+  if (terminal.includes(record.status) && record.status !== nextStatus) return record;
+  record.status = nextStatus;
   record.safe_result_code = safeResultCode || record.safe_result_code;
   record.safe_reason = safeReason || record.safe_reason;
   record.webhook_event_reference = webhookEventReference || record.webhook_event_reference;
-  if (terminal.includes(status)) record.completed_at = new Date();
+  if (terminal.includes(nextStatus)) record.completed_at = new Date();
   await record.save();
   return record;
 };
@@ -661,13 +691,14 @@ const applyCoordinatorProviderResult = async ({ provider, providerReference, sta
   });
   if (!record) return null;
   if (webhookEventReference && record.webhook_event_reference === webhookEventReference) return record;
-  const terminal = ['PASSED', 'FAILED', 'MANUAL_REVIEW'];
-  if (terminal.includes(record.status) && record.status !== status) return record;
-  record.status = status;
+  const nextStatus = String(status || '').toUpperCase() === 'MANUAL_REVIEW' ? 'FAILED' : String(status || '').toUpperCase();
+  const terminal = ['PASSED', 'FAILED'];
+  if (terminal.includes(record.status) && record.status !== nextStatus) return record;
+  record.status = nextStatus;
   record.safe_result_code = safeResultCode || record.safe_result_code;
   record.safe_reason = safeReason || record.safe_reason;
   record.webhook_event_reference = webhookEventReference || record.webhook_event_reference;
-  if (terminal.includes(status)) record.completed_at = new Date();
+  if (terminal.includes(nextStatus)) record.completed_at = new Date();
   await record.save();
   return record;
 };
@@ -678,11 +709,11 @@ const applyMarketplaceVendorProviderResult = async ({ provider, providerReferenc
     provider_reference: providerReference,
   });
   if (!record) return null;
-  record.status = String(status || '').toUpperCase();
+  record.status = String(status || '').toUpperCase() === 'MANUAL_REVIEW' ? 'FAILED' : String(status || '').toUpperCase();
   record.safe_result_code = safeResultCode || null;
   record.safe_reason = safeReason || null;
   record.webhook_event_reference = webhookEventReference || null;
-  if (['PASSED', 'FAILED', 'MANUAL_REVIEW', 'RETRYABLE_ERROR'].includes(record.status)) record.completed_at = new Date();
+  if (['PASSED', 'FAILED', 'RETRYABLE_ERROR'].includes(record.status)) record.completed_at = new Date();
   await record.save();
   return record;
 };
