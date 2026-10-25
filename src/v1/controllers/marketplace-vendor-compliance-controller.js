@@ -184,8 +184,8 @@ const buildComplianceSummary = ({ profile, session, requiresPayout, externalVeri
     (document) => document.document_type === requiredDocumentType && document.ocr_status === 'completed'
   );
   const hasProfile = Boolean(profile?.party_type && profile?.legal_name);
-  const hasBusinessFields = profile?.party_type !== 'BUSINESS' || Boolean(
-    profile?.business_address && profile?.registration_state && profile?.entity_type
+  const hasBusinessFields = Boolean(profile?.business_address) && (
+    profile?.party_type !== 'BUSINESS' || Boolean(profile?.registration_state && profile?.entity_type)
   );
   const requirements = [
     { key: 'PROFILE', label: 'Compliance profile', complete: hasProfile && hasBusinessFields },
@@ -352,7 +352,7 @@ exports.saveProfile = async (req, res, next) => {
       addressPostal: safeAddressPart(mailingAddress.postal),
       addressCountry: safeAddressPart(mailingAddress.country) || 'US',
     };
-    if (partyType === 'BUSINESS' && hasStructuredMailingAddress && (
+    if (hasStructuredMailingAddress && (
       !mailingAddressFields.addressLine1 || !mailingAddressFields.addressCity ||
       !mailingAddressFields.addressState || !mailingAddressFields.addressPostal
     )) {
@@ -369,7 +369,7 @@ exports.saveProfile = async (req, res, next) => {
       ].filter(Boolean).join(', ')
       : null;
     const businessAddress = structuredBusinessAddress || String(req.body?.business_address || '').trim();
-    if (partyType === 'BUSINESS' && !businessAddress) throw buildError('Mailing address is required.');
+    if (!businessAddress) throw buildError('Mailing address is required.');
     if (hasStructuredMailingAddress) {
       Object.assign(vendor, mailingAddressFields);
       await vendor.save();
@@ -395,7 +395,9 @@ exports.saveProfile = async (req, res, next) => {
           dba_name: partyType === 'BUSINESS' ? String(req.body?.dba_name || '').trim() || null : null,
           entity_type: partyType === 'BUSINESS' ? String(req.body?.entity_type || '').toUpperCase() || null : null,
           registration_state: partyType === 'BUSINESS' ? String(req.body?.registration_state || '').toUpperCase() || null : null,
-          business_address: partyType === 'BUSINESS' ? businessAddress : null,
+          // This legacy-named profile field is the verified legal mailing
+          // address for both business and individual Marketplace Vendors.
+          business_address: businessAddress,
         },
       },
       { new: true, upsert: true, setDefaultsOnInsert: true }
