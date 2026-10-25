@@ -434,7 +434,11 @@ exports.update = async (req, res, next) => {
     //   existRecord.mailing = mailing;
     // } 
     if (addressLine1) existRecord.addressLine1 = addressLine1;
-    if (addressLine2) existRecord.addressLine2 = addressLine2;
+    // Preserve Address Line 2 as an optional field and allow a vendor to
+    // clear an old apartment/suite value from Legal Payee Compliance.
+    if (Object.prototype.hasOwnProperty.call(req.body, 'addressLine2')) {
+      existRecord.addressLine2 = addressLine2 || '';
+    }
     const scheduleAddressChanged =
       (addressState && addressState !== existRecord.addressState) ||
       (addressCity && addressCity !== existRecord.addressCity) ||

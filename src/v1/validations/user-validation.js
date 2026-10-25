@@ -22,7 +22,9 @@ module.exports = {
       mobileNumber: Joi.string().trim(),
       password: Joi.string().min(8).max(16).trim(),
       addressLine1: Joi.string().trim().optional(),
-      addressLine2: Joi.string().trim().optional(),
+      // Apartment, suite, or unit is optional. The Compliance form submits
+      // null when it is intentionally blank.
+      addressLine2: Joi.string().trim().allow(null, '').optional(),
       addressCity: Joi.string().trim().optional(),
       addressState: Joi.string().trim().optional(),
       addressCountry: Joi.string().trim().optional(),
