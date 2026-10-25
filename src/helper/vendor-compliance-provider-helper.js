@@ -32,6 +32,51 @@ const formatEinForCobalt = (value) => {
   const digits = String(value || '').replace(/\D/g, '');
   return digits.length === 9 ? digits : null;
 };
+const complyCubeRequestOptions = () => ({
+  headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000,
+});
+const markProviderOperation = (error, operation) => {
+  // The caller logs only this operation label plus safe transport metadata.
+  // Do not attach request data, credentials, or provider response bodies.
+  error.compliance_provider_operation = operation;
+  return error;
+};
+const createComplyCubeClient = async (clientPayload) => {
+  try {
+    return await axios.post('https://api.complycube.com/v1/clients', clientPayload, complyCubeRequestOptions());
+  } catch (error) {
+    throw markProviderOperation(error, 'create_client');
+  }
+};
+const upsertComplyCubeClient = async ({ previousClientId, clientPayload }) => {
+  if (previousClientId) {
+    try {
+      const response = await axios.patch(
+        `https://api.complycube.com/v1/clients/${previousClientId}`,
+        clientPayload,
+        complyCubeRequestOptions()
+      );
+      return response.data?.id || previousClientId;
+    } catch (error) {
+      // A provider-side client can be removed independently of our historical
+      // record. Recreate it once on a genuine missing-client response.
+      if (error?.response?.status !== 404) throw markProviderOperation(error, 'update_client');
+    }
+  }
+  const response = await createComplyCubeClient(clientPayload);
+  const clientId = response.data?.id;
+  if (!clientId) throw new Error('ComplyCube did not return a client ID');
+  return clientId;
+};
+const createComplyCubeSsnCheck = async (clientId) => {
+  try {
+    return await axios.post('https://api.complycube.com/v1/checks', {
+      clientId, type: 'ssn_check',
+    }, complyCubeRequestOptions());
+  } catch (error) {
+    throw markProviderOperation(error, 'create_ssn_check');
+  }
+};
 const normalizeComplyCube = (check = {}) => {
   const outcome = String(check?.result?.outcome || check?.outcome || '').toLowerCase();
   const status = String(check?.status || '').toLowerCase();
@@ -147,14 +192,11 @@ const startComplyCubeSsnCheck = async (foodTruck) => {
     type: 'person', email: user.email, externalId: `rtc-vendor-${foodTruck._id}`,
     personDetails: { firstName: user.firstName, lastName: user.lastName, ssn },
   };
-  const requestOptions = { headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000 };
-  const clientResponse = previous?.provider_client_reference
-    ? await axios.patch(`https://api.complycube.com/v1/clients/${previous.provider_client_reference}`, clientPayload, requestOptions)
-    : await axios.post('https://api.complycube.com/v1/clients', clientPayload, requestOptions);
-  const clientId = clientResponse.data?.id || previous?.provider_client_reference;
-  const checkResponse = await axios.post('https://api.complycube.com/v1/checks', {
-    clientId, type: 'ssn_check',
-  }, { headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000 });
+  const clientId = await upsertComplyCubeClient({
+    previousClientId: previous?.provider_client_reference,
+    clientPayload,
+  });
+  const checkResponse = await createComplyCubeSsnCheck(clientId);
   const check = checkResponse.data || {};
   return upsert({ foodTruck, provider: 'COMPLYCUBE', checkType: 'SSN', values: {
     status: normalizeComplyCube(check), provider_reference: check.id || null, provider_client_reference: clientId || null,
@@ -194,15 +236,11 @@ const startCoordinatorComplyCubeSsnCheck = async ({ coordinator, profile }) => {
     externalId: `rtc-coordinator-${coordinator._id}`,
     personDetails: { ...name, ssn },
   };
-  const requestOptions = { headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000 };
-  const clientResponse = previous?.provider_client_reference
-    ? await axios.patch(`https://api.complycube.com/v1/clients/${previous.provider_client_reference}`, clientPayload, requestOptions)
-    : await axios.post('https://api.complycube.com/v1/clients', clientPayload, requestOptions);
-  const clientId = clientResponse.data?.id || previous?.provider_client_reference;
-  const checkResponse = await axios.post('https://api.complycube.com/v1/checks', {
-    clientId,
-    type: 'ssn_check',
-  }, { headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000 });
+  const clientId = await upsertComplyCubeClient({
+    previousClientId: previous?.provider_client_reference,
+    clientPayload,
+  });
+  const checkResponse = await createComplyCubeSsnCheck(clientId);
   const check = checkResponse.data || {};
   return CoordinatorComplianceProviderVerificationModel.findOneAndUpdate(
     { coordinator_user_id: coordinator._id, verification_cycle: verificationCycle, provider: 'COMPLYCUBE', check_type: 'SSN' },
@@ -416,15 +454,11 @@ const startMarketplaceVendorComplyCubeSsnCheck = async ({ vendor, profile }) => 
     externalId: `rtc-marketplace-vendor-${vendor._id}`,
     personDetails: { ...name, ssn },
   };
-  const requestOptions = { headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000 };
-  const clientResponse = previous?.provider_client_reference
-    ? await axios.patch(`https://api.complycube.com/v1/clients/${previous.provider_client_reference}`, clientPayload, requestOptions)
-    : await axios.post('https://api.complycube.com/v1/clients', clientPayload, requestOptions);
-  const clientId = clientResponse.data?.id || previous?.provider_client_reference;
-  const checkResponse = await axios.post('https://api.complycube.com/v1/checks', {
-    clientId,
-    type: 'ssn_check',
-  }, { headers: { Authorization: process.env.COMPLYCUBE_API_KEY }, timeout: 15000 });
+  const clientId = await upsertComplyCubeClient({
+    previousClientId: previous?.provider_client_reference,
+    clientPayload,
+  });
+  const checkResponse = await createComplyCubeSsnCheck(clientId);
   const check = checkResponse.data || {};
   return MarketplaceVendorComplianceProviderVerificationModel.findOneAndUpdate(
     { vendor_user_id: vendor._id, verification_cycle: verificationCycle, provider: 'COMPLYCUBE', check_type: 'SSN' },

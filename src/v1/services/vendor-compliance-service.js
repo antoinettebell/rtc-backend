@@ -855,6 +855,7 @@ const startExternalVerificationWhenInternalChecksPass = async (foodTruckId, { ch
       food_truck_id: String(foodTruck._id),
       provider,
       check_type: checkType || null,
+      operation: error?.compliance_provider_operation || null,
       error_name: error?.name || 'Error',
       error_code: error?.code || null,
       http_status: error?.response?.status || error?.status || null,
