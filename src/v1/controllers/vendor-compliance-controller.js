@@ -381,7 +381,7 @@ exports.completeW9Signing = async (req, res, next) => {
       vendor_user_id: req.user._id,
       envelope_id: envelopeId,
     });
-    if (!session) {
+    if (!session || session.archived_at) {
       const error = new Error('W-9 signing session not found.');
       error.code = 404;
       throw error;

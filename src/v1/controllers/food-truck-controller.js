@@ -1331,6 +1331,15 @@ exports.update = async (req, res, next) => {
       tax_identifier_type: item.tax_identifier_type || null,
       tax_identifier_masked: item.tax_identifier_masked || null,
     };
+    const requestedTaxIdentifierType = (taxDigits(ein) || taxDigits(ssn))
+      ? normalizeTaxIdType(ssn ? 'SSN' : 'EIN')
+      : priorComplianceIdentity.tax_identifier_type;
+    const legalPayeeAccountTypeChanged =
+      !!priorComplianceIdentity.tax_identifier_type &&
+      priorComplianceIdentity.tax_identifier_type !== requestedTaxIdentifierType;
+    const priorComplianceSummary = legalPayeeAccountTypeChanged
+      ? await VendorComplianceService.calculateComplianceSummary(item)
+      : null;
 
     if (name) {
       item.name = name;
@@ -1469,7 +1478,13 @@ exports.update = async (req, res, next) => {
       priorComplianceIdentity.dba !== (item.dba || null) ||
       priorComplianceIdentity.tax_identifier_type !== (item.tax_identifier_type || null) ||
       priorComplianceIdentity.tax_identifier_masked !== (item.tax_identifier_masked || null);
-    if (complianceIdentityChanged) {
+    if (legalPayeeAccountTypeChanged) {
+      await VendorComplianceService.replaceLegalPayeeComplianceForAccountTypeChange({
+        foodTruck: item,
+        actor: user,
+        priorComplianceSummary,
+      });
+    } else if (complianceIdentityChanged) {
       await VendorComplianceService.beginProfileRevalidation({
         foodTruck: item,
         actor: user,

@@ -19,6 +19,7 @@ const EncryptionService = require('../../helper/encryption');
 const {
   FoodTruckModel,
   VendorComplianceProviderVerificationModel,
+  VendorComplianceW9EnvelopeModel,
 } = require('../../models');
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -984,6 +985,66 @@ const archiveComplianceDocumentRecord = async ({
   });
 
   return document;
+};
+
+// A food vendor has exactly one legal payee, even when that payee operates
+// several truck units. Changing account type replaces that legal payee.
+// Completed evidence is archived; incomplete evidence is deliberately
+// destroyed. Only PAYEE-scope records are selected, so truck-unit permit and
+// sanitation records are never modified.
+const replaceLegalPayeeComplianceForAccountTypeChange = async ({
+  foodTruck,
+  actor = null,
+  priorComplianceSummary = null,
+}) => {
+  const documents = await getCurrentDocuments(foodTruck._id);
+  const wasFullyCompliant = Number(priorComplianceSummary?.score) === 100;
+  const now = new Date();
+
+  if (wasFullyCompliant) {
+    for (const document of documents) {
+      await archiveComplianceDocumentRecord({
+        document,
+        user: actor,
+        reason: 'Archived after legal payee account type change.',
+        action: 'LEGAL_PAYEE_ACCOUNT_TYPE_ARCHIVED',
+      });
+    }
+    await VendorComplianceW9EnvelopeModel.updateMany(
+      { food_truck_id: foodTruck._id, archived_at: null },
+      { $set: { status: 'VOIDED', archived_at: now, archived_reason: 'Archived after legal payee account type change.' } }
+    );
+    await VendorComplianceProviderVerificationModel.updateMany(
+      { food_truck_id: foodTruck._id, status: { $in: ['NOT_STARTED', 'PENDING', 'PASSED', 'RETRYABLE_ERROR'] } },
+      { $set: { status: 'SUPERSEDED', completed_at: now } }
+    );
+    await VendorComplianceAuditService.create({
+      food_truck_id: foodTruck._id,
+      vendor_user_id: foodTruck.userId,
+      actor_user_id: actor?._id || null,
+      actor_user_type: actor?.userType || 'SYSTEM',
+      action: 'LEGAL_PAYEE_ACCOUNT_TYPE_ARCHIVED',
+      notes: 'Completed legal-payee compliance archived after account type change.',
+      metadata: { archived_document_count: documents.length, prior_score: 100 },
+    });
+  } else {
+    // Do not retain partially completed legal-payee evidence, session data,
+    // or provider state when the vendor changes account type.
+    for (const document of documents) {
+      if (document.file_key) await removeObject(document.file_key);
+      await removeLinkedFoodTruckDocuments(document);
+      await VendorComplianceDocumentService.destroy({ document_id: document.document_id });
+    }
+    await VendorComplianceW9EnvelopeModel.deleteMany({ food_truck_id: foodTruck._id });
+    await VendorComplianceProviderVerificationModel.deleteMany({ food_truck_id: foodTruck._id });
+  }
+
+  foodTruck.compliance_verification_cycle = getVerificationCycle(foodTruck) + 1;
+  await foodTruck.save();
+  return {
+    disposition: wasFullyCompliant ? 'archived' : 'deleted',
+    affected_document_count: documents.length,
+  };
 };
 
 const deleteRejectedDocument = async ({ document, user, reason }) => {
@@ -2001,6 +2062,7 @@ module.exports = {
   calculateComplianceSummary,
   assertEligible,
   beginProfileRevalidation,
+  replaceLegalPayeeComplianceForAccountTypeChange,
   startExternalVerificationWhenInternalChecksPass,
   getSanitationGradeMap,
   getSanitationGradeFromFields,
