@@ -165,10 +165,10 @@ const hasSsnTaxIdentifier = (foodTruck = {}) =>
   hasEncryptedTaxIdentifier(foodTruck, 'SSN');
 
 const getSelectedTaxIdentifierType = (foodTruck = {}) => {
+  const configuredType = String(foodTruck.tax_identifier_type || '').toUpperCase();
+  if (['EIN', 'SSN'].includes(configuredType)) return configuredType;
   const hasSsnOnProfile = hasSsnTaxIdentifier(foodTruck);
-  return String(foodTruck.tax_identifier_type || '').toUpperCase() === 'SSN' || hasSsnOnProfile
-    ? 'SSN'
-    : 'EIN';
+  return hasSsnOnProfile ? 'SSN' : 'EIN';
 };
 
 // Food-vendor identity evidence follows the same rule as coordinators and
@@ -1445,6 +1445,7 @@ const submitComplianceDocumentsForOcr = async ({ foodTruck, user, documentTypes 
     { sort: { created_at: -1 } }
   );
   const latestByType = selectNewestByType(documents);
+  const requiredIdentityDocumentType = getRequiredIdentityDocumentType(foodTruck);
   const submittedDocuments = [];
   const requestedDocumentTypes = new Set(
     (Array.isArray(documentTypes) ? documentTypes : [])
@@ -1457,6 +1458,13 @@ const submitComplianceDocumentsForOcr = async ({ foodTruck, user, documentTypes 
     const requirement = getComplianceRequirement(document.document_type);
     if (!requirement) continue;
     if (!AUTOMATED_CORE_DOCUMENT_TYPES.includes(document.document_type)) continue;
+    // A legal payee has exactly one active identity route. A saved EIN means
+    // Business License + W-9; a saved SSN means Driver License + W-9. Older
+    // inactive identity uploads remain retained for audit/history but never
+    // enter a new OCR run or affect current compliance.
+    if (document.document_type !== 'W9' && document.document_type !== requiredIdentityDocumentType) {
+      continue;
+    }
     if (isExplicitDocumentRetry && !requestedDocumentTypes.has(document.document_type)) {
       continue;
     }

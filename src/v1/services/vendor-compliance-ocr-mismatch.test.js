@@ -7,6 +7,8 @@ const {
   getDocumentBusinessNames,
   nameMatchesProfile,
   taxDigits,
+  getSelectedTaxIdentifierType,
+  getRequiredIdentityDocumentType,
 } = require('./vendor-compliance-service');
 
 assert.equal(
@@ -50,6 +52,21 @@ assert.equal(
   ),
   false,
   'A populated Legal Business Name remains authoritative over the food-truck name'
+);
+assert.equal(
+  getSelectedTaxIdentifierType({ tax_identifier_type: 'EIN', ssn: '123-45-6789' }),
+  'EIN',
+  'The saved legal-payee account type must win over a stale legacy SSN field'
+);
+assert.equal(
+  getRequiredIdentityDocumentType({ tax_identifier_type: 'SSN' }),
+  'DRIVER_LICENSE_FRONT',
+  'SSN legal payees use only the Driver License identity route'
+);
+assert.equal(
+  getRequiredIdentityDocumentType({ tax_identifier_type: 'EIN' }),
+  'BUSINESS_LICENSE',
+  'EIN legal payees use only the Permit/Business License identity route'
 );
 
 const firstMismatch = getOcrMismatchOutcome({
@@ -118,6 +135,11 @@ assert.match(
   serviceSource,
   /!isExplicitDocumentRetry && document\.ocr_status !== 'not_configured'/,
   'Normal OCR submission must leave unchanged verified/reviewed documents untouched'
+);
+assert.match(
+  serviceSource,
+  /document\.document_type !== 'W9' && document\.document_type !== requiredIdentityDocumentType/,
+  'OCR submission must ignore an inactive legacy identity-document route'
 );
 
 const coordinatorSource = fs.readFileSync(
