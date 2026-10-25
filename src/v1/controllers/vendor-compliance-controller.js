@@ -337,7 +337,11 @@ exports.startW9Signing = async (req, res, next) => {
       error.code = 409;
       throw error;
     }
-    const vendorName = [req.user.firstName, req.user.lastName].filter(Boolean).join(' ').trim() || foodTruck.name;
+    // Match the marketplace/compliance contract: the W-9 is initiated for
+    // the legal payee, never the account display name or truck brand.
+    const vendorName = foodTruck.legal_business_name
+      || [req.user.firstName, req.user.lastName].filter(Boolean).join(' ').trim()
+      || foodTruck.name;
     const envelope = await DocuSignHelper.createVendorComplianceW9Envelope({
       vendorName,
       vendorEmail: req.user.email,

@@ -879,10 +879,11 @@ exports.startW9Signing = async (req, res, next) => {
       throw buildError('Add your EIN or SSN in Coordinator Compliance before signing a W-9.', 409);
     }
 
-    const signerName = [coordinator.firstName, coordinator.lastName]
-      .filter(Boolean)
-      .join(' ')
-      .trim() || profile.legal_name || 'Event Coordinator';
+    // Use the isolated compliance legal payee first, matching Marketplace
+    // Vendor and Food Vendor behavior rather than the customer profile name.
+    const signerName = profile.legal_name
+      || [coordinator.firstName, coordinator.lastName].filter(Boolean).join(' ').trim()
+      || 'Event Coordinator';
     const envelope = await DocuSignHelper.createVendorComplianceW9Envelope({
       vendorName: signerName,
       vendorEmail: coordinator.email,
