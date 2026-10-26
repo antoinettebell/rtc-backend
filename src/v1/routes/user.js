@@ -22,12 +22,12 @@ router.post(
 );
 
 /** [GET] /api/v1/user/bank-detail */
-router.get('/bank-detail', allowedTo(['VENDOR']), Controller.getBankDetail);
+router.get('/bank-detail', allowedTo(['VENDOR', 'CUSTOMER']), Controller.getBankDetail);
 
 /** [POST] /api/v1/user/bank-detail */
 router.post(
   '/bank-detail',
-  allowedTo(['VENDOR']),
+  allowedTo(['VENDOR', 'CUSTOMER']),
   validate(Validation.bankDetail),
   Controller.addBankDetail
 );

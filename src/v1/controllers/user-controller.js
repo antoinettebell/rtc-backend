@@ -31,6 +31,20 @@ const CustomNotification = require('../../helper/custom-notification');
 const { hydrateEventVendorUser } = require('../../helper/event-vendor-user-hydration');
 const { normalizeCoordinatorSocialMedia } = require('../../helper/social-media-handle');
 
+const assertBankDetailAccess = (user) => {
+  if (user?.userType === 'VENDOR') return;
+  if (
+    user?.userType === 'CUSTOMER' &&
+    user?.isEventCoordinator === true &&
+    user?.eventCoordinatorPayoutEligibility === 'ENABLED'
+  ) {
+    return;
+  }
+  const error = new Error('Bank details are available after coordinator payout eligibility is enabled.');
+  error.code = 403;
+  throw error;
+};
+
 const getPushTokenOwner = (user) =>
   user.userType === 'EMPLOYEE'
     ? VendorEmployeeService.getById(user._id)
@@ -105,6 +119,7 @@ exports.list = async (req, res, next) => {
             // Encrypt bank details before sending to frontend
             item.bankDetail = EncryptionService.encryptFields(bankDetail, [
               'accountHolderName',
+              'phoneNumber',
               'walletPaymentHandle',
               'bankName',
               'accountNumber',
@@ -913,6 +928,7 @@ exports.addAddress = async (req, res, next) => {
 exports.getBankDetail = async (req, res, next) => {
   try {
     let { user } = req;
+    assertBankDetailAccess(user);
 
     let data = await BankDetailService.getByData(
       { userId: user._id },
@@ -923,6 +939,7 @@ exports.getBankDetail = async (req, res, next) => {
       // decrypt bank details before sending to frontend
       data = EncryptionService.decryptFields(data, [
         'accountHolderName',
+        'phoneNumber',
         'walletPaymentHandle',
         'bankName',
         'accountNumber',
@@ -1023,6 +1040,7 @@ exports.addBankDetail = async (req, res, next) => {
     let {
       body: {
         accountHolderName,
+        phoneNumber,
         walletPaymentHandle,
         bankName,
         accountNumber,
@@ -1042,6 +1060,7 @@ exports.addBankDetail = async (req, res, next) => {
       },
       user,
     } = req;
+    assertBankDetailAccess(user);
 
     const customError = new Error();
     customError.code = 422;
@@ -1058,6 +1077,7 @@ exports.addBankDetail = async (req, res, next) => {
       user._id,
       buildBankDetailUpdate({
         accountHolderName,
+        phoneNumber,
         walletPaymentHandle,
         bankName,
         accountNumber,
@@ -1081,6 +1101,7 @@ exports.addBankDetail = async (req, res, next) => {
       data?.toObject ? data.toObject() : data,
       [
         'accountHolderName',
+        'phoneNumber',
         'walletPaymentHandle',
         'bankName',
         'accountNumber',

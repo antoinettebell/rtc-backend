@@ -19,6 +19,10 @@ const mSchema = mongoose.Schema(
       type: String,
       default: '',
     },
+    phoneNumber: {
+      type: String,
+      default: '',
+    },
     walletPaymentHandle: { type: String, default: '' },
     bankName: {
       type: String,

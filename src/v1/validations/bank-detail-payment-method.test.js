@@ -7,6 +7,7 @@ const {
 
 const bankValues = {
   accountHolderName: 'Vendor Name',
+  phoneNumber: '+15555550123',
   bankName: 'Bank',
   accountNumber: '12345678',
   routingNumber: '123456789',
@@ -52,6 +53,7 @@ const validate = (body) => UserValidation.bankDetail.body.validate(body);
   );
   assert.ok(validate({ paymentMethod, accountHolderName: 'Vendor Name' }).error);
 });
+assert.ok(validate({ paymentMethod: 'ACH', ...bankValues, phoneNumber: 'not a phone' }).error);
 assert.ok(validate({ paymentMethod: 'ACH', ...bankValues, swiftCode: 'bad' }).error);
 assert.ok(validate({ paymentMethod: 'CHECK', ...bankValues, iban: 'bad' }).error);
 
@@ -74,6 +76,7 @@ assert.equal(bankUpdate.bankName, bankValues.bankName);
 assert.equal(bankUpdate.accountHolderName, bankValues.accountHolderName);
 assert.equal(bankUpdate.swiftCode, 'BOFAUS3N');
 assert.equal(bankUpdate.iban, 'GB82WEST12345698765432');
+assert.equal(bankUpdate.phoneNumber, bankValues.phoneNumber);
 assert.equal('remittanceEmail' in bankUpdate, false);
 assert.deepEqual(
   hydrateLegacyWalletPaymentHandle({
