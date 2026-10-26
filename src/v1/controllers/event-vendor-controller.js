@@ -61,7 +61,10 @@ const {
   getCoordinatorNotSelectTransition,
 } = require('../../helper/marketplace-submission-lifecycle');
 const { resolveEventVendorParticipationPath } = require('../../helper/event-vendor-participation-helper');
-const { getMarketplaceVendorCompliance } = require('./marketplace-vendor-compliance-controller');
+const {
+  getMarketplaceVendorCompliance,
+  getAdminMarketplaceVendorComplianceSnapshot,
+} = require('./marketplace-vendor-compliance-controller');
 const { normalizeExternalWebLink, normalizeExternalWebLinks } = require('../../helper/external-web-link');
 const {
   hasMarketplaceVendorAwardCapacity,
@@ -1458,8 +1461,13 @@ exports.adminGetProfile = async (req, res, next) => {
       source: 'REPOSITORY',
       status: 'ACTIVE',
     }).sort({ category: 1, created_at: -1 }).lean();
-    const terminals = await TapToPayTerminalModel.find({ event_vendor_profile_id: profile.profile_id }).sort({ last_seen_at: -1 }).lean();
-    return res.data({ eventVendorProfile: profile, photoList: photos, tapToPayTerminals: terminals }, 'Marketplace Vendor profile review');
+    const [terminals, marketplaceCompliance] = await Promise.all([
+      TapToPayTerminalModel.find({ event_vendor_profile_id: profile.profile_id }).sort({ last_seen_at: -1 }).lean(),
+      getAdminMarketplaceVendorComplianceSnapshot({
+        vendorUserId: profile.vendor_user_id?._id || profile.vendor_user_id,
+      }),
+    ]);
+    return res.data({ eventVendorProfile: profile, photoList: photos, tapToPayTerminals: terminals, marketplaceCompliance }, 'Marketplace Vendor profile review');
   } catch (e) { return next(e); }
 };
 

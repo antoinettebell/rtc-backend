@@ -317,6 +317,34 @@ exports.getMarketplaceVendorCompliance = async (userId) => {
   });
 };
 
+// Admin consumers receive the exact same derived result as the vendor's
+// Compliance page. This intentionally returns only masked identity data and
+// document links already available to the vendor; it never exposes tax IDs or
+// OCR extraction payloads.
+exports.getAdminMarketplaceVendorComplianceSnapshot = async ({ vendorUserId }) => {
+  const profile = await MarketplaceVendorComplianceProfileModel.findOne({
+    vendor_user_id: vendorUserId,
+  });
+  const session = await MarketplaceVendorComplianceW9EnvelopeModel.findOne({
+    vendor_user_id: vendorUserId,
+    archived_at: null,
+  }).sort({ created_at: -1 });
+  const externalVerification = await getExternalVerification(profile);
+  const compliance = buildComplianceSummary({
+    profile,
+    session,
+    requiresPayout: true,
+    externalVerification,
+  });
+  return {
+    profile: toSafeProfile(profile),
+    w9_session: toSafeSession(session),
+    mailing_address: getProfileMailingAddress(profile),
+    mailing_address_fields: getProfileMailingAddressFields(profile),
+    compliance,
+  };
+};
+
 // Paid-event access is a separate, backend-owned user flag. Keep it in lockstep
 // with the same internal-compliance requirements shown to the vendor so a
 // completed W-9/license cannot leave the profile incorrectly limited to free

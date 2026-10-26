@@ -290,6 +290,35 @@ exports.getMarketplaceVendorCompliance = async (userId) => {
   });
 };
 
+// Super-admin read-only snapshot. It uses the coordinator Compliance page's
+// own scoring and provider-verification logic instead of recreating eligibility
+// from profile fields in an admin client.
+exports.adminStatus = async (req, res, next) => {
+  try {
+    const coordinator = await UserModel.findById(req.params.coordinatorId);
+    if (!coordinator || coordinator.userType !== 'CUSTOMER' || !coordinator.isEventCoordinator) {
+      throw buildError('Event coordinator not found.', 404);
+    }
+    const profile = await CoordinatorComplianceProfileModel.findOne({ coordinator_user_id: coordinator._id });
+    const session = await CoordinatorComplianceW9EnvelopeModel.findOne({
+      coordinator_user_id: coordinator._id,
+      archived_at: null,
+    }).sort({ created_at: -1 });
+    const externalVerification = await getExternalVerification(profile);
+    const requiresPayout = requiresPayoutCompliance(coordinator);
+    const compliance = buildComplianceSummary({ profile, session, requiresPayout, externalVerification });
+    return res.data({
+      payout_eligibility: coordinator.eventCoordinatorPayoutEligibility || 'DISABLED',
+      requires_payout_compliance: requiresPayout,
+      w9_session: toSafeSession(session),
+      profile: toSafeProfile(profile),
+      compliance,
+    }, 'Event coordinator compliance status');
+  } catch (error) {
+    return next(error);
+  }
+};
+
 // Paid-event access is a separate, backend-owned user flag. Keep it in lockstep
 // with the same internal-compliance requirements shown to the coordinator so a
 // completed W-9/license cannot leave the profile incorrectly limited to free

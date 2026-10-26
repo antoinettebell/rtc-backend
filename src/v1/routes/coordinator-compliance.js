@@ -5,6 +5,10 @@ const Upload = require('../../middleware/coordinator-compliance-upload');
 
 const router = express.Router();
 
+// Read-only Super Admin view. Keep this above /:id-style routes so it cannot
+// be mistaken for a customer-owned compliance request.
+router.get('/admin/:coordinatorId', allowedTo(['SUPER_ADMIN']), Controller.adminStatus);
+
 // Keep the root alias for clients built before the explicit /me contract.
 // Both routes return only the authenticated coordinator's isolated record.
 router.get('/', allowedTo(['CUSTOMER']), Controller.status);
