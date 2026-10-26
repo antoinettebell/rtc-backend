@@ -71,14 +71,14 @@ const run = async () => {
 
   const [counts, blockers] = await Promise.all([
     Promise.all([
-      collectionCount('address', { userId }),
+      collectionCount('addresses', { userId }),
       collectionCount('bank-details', { userId }),
       collectionCount('menu-categories', { userId }),
       collectionCount('menu-items', { userId }),
-      collectionCount('vendor-employees', { food_truck_id: foodTruckId }),
-      collectionCount('employee-sessions', { food_truck_id: foodTruckId }),
-      collectionCount('employee-refund-cancel-requests', { food_truck_id: foodTruckId }),
-      collectionCount('employee-item-availability-audits', { food_truck_id: foodTruckId }),
+      collectionCount('vendor_employees', { food_truck_id: foodTruckId }),
+      collectionCount('employee_sessions', { food_truck_id: foodTruckId }),
+      collectionCount('employee_refund_cancel_requests', { food_truck_id: foodTruckId }),
+      collectionCount('employee_item_availability_audits', { food_truck_id: foodTruckId }),
       collectionCount('vendor_compliance_documents', { food_truck_id: foodTruckId }),
       collectionCount('vendor_compliance_provider_verifications', { food_truck_id: foodTruckId }),
       collectionCount('vendor_compliance_w9_envelopes', { food_truck_id: foodTruckId }),
