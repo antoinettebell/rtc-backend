@@ -130,6 +130,16 @@ const normalizeName = (value) => String(value || '')
   .replace(/&/g, ' and ')
   .replace(/[^a-z0-9]+/g, ' ')
   .trim()
+  // Legal entity suffix punctuation and presence varies among State records,
+  // business licenses, and W-9s. Compare the underlying business name while
+  // keeping the exact tax ID and all other OCR checks unchanged.
+  .replace(/\bl\s+l\s+c\b/g, 'llc')
+  .replace(/\bp\s+l\s+l\s+c\b/g, 'pllc')
+  .replace(/\bl\s+l\s+p\b/g, 'llp')
+  .replace(/\bincorporated\b/g, 'inc')
+  .replace(/\bcorporation\b/g, 'corp')
+  .replace(/\blimited\b/g, 'ltd')
+  .replace(/\s+\b(?:llc|pllc|llp|inc|corp|ltd)\b$/g, '')
   .replace(/\s+/g, ' ');
 const profileBusinessNames = (foodTruck = {}) => {
   const complianceNames = [foodTruck.legal_business_name, foodTruck.dba]

@@ -106,6 +106,20 @@ const normalizeName = (value) => String(value || '')
   .replace(/&/g, ' and ')
   .replace(/[^a-z0-9]+/g, ' ')
   .trim()
+  .replace(/\s+/g, ' ')
+  // State registries commonly render legal suffixes with punctuation (for
+  // example, "L.L.C."), while the compliance form stores "LLC". Treat
+  // formatting-only variants as the same legal suffix without relaxing the
+  // actual business-name, State, or active/good-standing checks.
+  .replace(/\bl\s+l\s+c\b/g, 'llc')
+  .replace(/\bp\s+l\s+l\s+c\b/g, 'pllc')
+  .replace(/\bl\s+l\s+p\b/g, 'llp')
+  .replace(/\bincorporated\b/g, 'inc')
+  .replace(/\bcorporation\b/g, 'corp')
+  .replace(/\blimited\b/g, 'ltd')
+  // The entity designator identifies the legal form, not a different
+  // business. A license or State registry may omit it entirely.
+  .replace(/\s+\b(?:llc|pllc|llp|inc|corp|ltd)\b$/g, '')
   .replace(/\s+/g, ' ');
 const normalizeState = (value) => String(value || '').toLowerCase().replace(/[^a-z]/g, '');
 const normalizeCobaltSos = (result = {}, foodTruck = {}) => {

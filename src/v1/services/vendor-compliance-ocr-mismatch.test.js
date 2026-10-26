@@ -50,8 +50,16 @@ assert.equal(
     { name: 'Jazzy Fried Rice', legal_business_name: 'Jazzy Fried Rice LLC' },
     'Jazzy Fried Rice'
   ),
+  true,
+  'OCR may omit a legal entity suffix from an otherwise matching Legal Business Name'
+);
+assert.equal(
+  nameMatchesProfile(
+    { name: 'Jazzy Fried Rice', legal_business_name: 'Jazzy Fried Rice LLC' },
+    'Jazzy Fried Rice Kitchen'
+  ),
   false,
-  'A populated Legal Business Name remains authoritative over the food-truck name'
+  'OCR business-name matching must remain strict beyond the optional legal entity suffix'
 );
 assert.equal(
   getSelectedTaxIdentifierType({ tax_identifier_type: 'EIN', ssn: '123-45-6789' }),
