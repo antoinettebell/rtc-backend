@@ -9,6 +9,7 @@ const buildBankDetailUpdate = (values) => {
 
   return {
     paymentMethod: values.paymentMethod,
+    phoneNumber: values.phoneNumber || '',
     ...(requiresBankDetails
       ? {
           accountHolderName: values.accountHolderName,
