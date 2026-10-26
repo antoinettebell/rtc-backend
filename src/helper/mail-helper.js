@@ -17,6 +17,18 @@ const jwt = require('jsonwebtoken');
 
 sgMail.setApiKey(sendgridSetting.secret);
 
+const isDevelopmentOtpBypassEnabled = () => {
+  const environment = String(process.env.ENV || '').trim().toLowerCase();
+  const isDevelopmentEnvironment = ['dev', 'development'].includes(environment);
+  const configuredCode = String(process.env.DEV_OTP_BYPASS_CODE || '').trim();
+
+  return (
+    isDevelopmentEnvironment &&
+    String(process.env.DEV_OTP_BYPASS_ENABLED || '').toLowerCase() === 'true' &&
+    /^\d{6}$/.test(configuredCode)
+  );
+};
+
 exports.sendMail = async (to, subject, html, options = {}) => {
   const msg = {
     to,
@@ -67,16 +79,24 @@ exports.sendOTP = async (verificationType, payload, email, oldOTPs = []) => {
     throw new Error('Invalid type');
   }
 
-  const otp = Utils.generateOTP();
+  // This is not a verifier bypass: the normal short-lived JWT still contains
+  // only a bcrypt hash of the configured development code. It is impossible
+  // to enable outside an explicit dev environment.
+  const useDevelopmentOtp = isDevelopmentOtpBypassEnabled();
+  const otp = useDevelopmentOtp
+    ? String(process.env.DEV_OTP_BYPASS_CODE).trim()
+    : Utils.generateOTP();
 
   const template = OTP_VERIFICATION_TEMPLATE.replaceAll(
     '####description####',
     msg
   ).replaceAll('####OTP####', otp);
 
-  const delivery = await MailHelper.sendMail(email, subject, template);
-  if (!delivery?.sent) {
-    throw new Error('Verification email could not be sent. Please try again.');
+  if (!useDevelopmentOtp) {
+    const delivery = await MailHelper.sendMail(email, subject, template);
+    if (!delivery?.sent) {
+      throw new Error('Verification email could not be sent. Please try again.');
+    }
   }
 
   const newOTPs = [...oldOTPs, await bcrypt.hash(otp, 12)];
@@ -92,8 +112,6 @@ exports.sendOTP = async (verificationType, payload, email, oldOTPs = []) => {
       expiresIn: '3h',
     }
   );
-
-  console.log(`===================OTP-${verificationType}`, otp);
 
   return otpVerificationToken;
 };
