@@ -55,6 +55,13 @@ const run = async () => {
     .lean();
 
   if (foodTrucks.length !== 1 || foodTrucks[0].name !== TARGET.foodTruckName) {
+    console.log('\nFOOD TRUCKS OWNED BY THE MATCHED DEVELOPER TESTING ACCOUNT');
+    console.table(foodTrucks.map((truck) => ({
+      foodTruck: truck.name || '(blank)',
+      foodTruckId: String(truck._id),
+      inactive: Boolean(truck.inactive),
+      createdAt: truck.createdAt || null,
+    })));
     throw new Error('Expected exactly one Doggy Hotties food truck for this account. No data was changed.');
   }
 
