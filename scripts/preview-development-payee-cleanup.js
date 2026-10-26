@@ -67,6 +67,9 @@ const run = async () => {
       truck.name === retained.foodTruckName && truck.userId?.email === retained.email
     )
   );
+  const cleanupFoodTrucks = allFoodTrucks.filter(
+    (truck) => !keptFoodTrucks.some((retained) => String(retained._id) === String(truck._id))
+  );
 
   const allMarketplaceProfiles = await EventVendorProfileModel.find({})
     .select('_id profile_id business_name vendor_user_id status review_status')
@@ -106,7 +109,6 @@ const run = async () => {
     .filter(Boolean);
   const keptCoordinatorUserIds = ids(keptCoordinatorUsers);
   const retainedUserIds = [...keptFoodUserIds, ...keptMarketplaceUserIds, ...keptCoordinatorUserIds];
-  const retainedBankUserIds = [...keptFoodUserIds, ...keptCoordinatorUserIds];
 
   const candidateUsers = await UserModel.find({
     _id: { $nin: retainedUserIds },
@@ -119,9 +121,17 @@ const run = async () => {
   })
     .select('email firstName lastName userType vendorSubtype isEventCoordinator')
     .lean();
+  const candidateUserIds = ids(candidateUsers);
+  const unexpectedFoodTruckOwners = cleanupFoodTrucks.filter(
+    (truck) => !candidateUserIds.some((userId) => String(userId) === String(truck.userId?._id))
+  );
+
+  if (unexpectedFoodTruckOwners.length) {
+    throw new Error('A non-retained food truck has an owner outside the approved deletion-candidate users. Cleanup preview stopped.');
+  }
 
   const foodTruckCleanupFilter = { _id: { $nin: keptFoodTruckIds } };
-  const bankUserCleanupFilter = { userId: { $nin: retainedBankUserIds } };
+  const bankUserCleanupFilter = { userId: { $in: candidateUserIds } };
   const marketplaceUserCleanupFilter = { vendor_user_id: { $nin: keptMarketplaceUserIds } };
   const coordinatorUserCleanupFilter = { coordinator_user_id: { $nin: keptCoordinatorUserIds } };
 
@@ -164,6 +174,14 @@ const run = async () => {
 
   console.log('\nDELETE CANDIDATE VENDOR/COORDINATOR USERS');
   console.table(names(candidateUsers));
+  console.log('\nDELETE CANDIDATE FOOD TRUCKS');
+  console.table(cleanupFoodTrucks.map((truck) => ({
+    foodTruck: truck.name,
+    owner: `${truck.userId?.firstName || ''} ${truck.userId?.lastName || ''}`.trim(),
+    email: truck.userId?.email || '',
+    inactive: Boolean(truck.inactive),
+    foodTruckId: String(truck._id),
+  })));
 
   const labels = [
     'Food trucks',
@@ -171,7 +189,7 @@ const run = async () => {
     'Food-vendor provider verifications',
     'Food-vendor W-9 envelopes',
     'Food-vendor compliance audits',
-    'Food-vendor/coordinator bank details',
+    'Bank details belonging to delete candidates',
     'Marketplace vendor profiles',
     'Marketplace compliance profiles',
     'Marketplace provider verifications',
