@@ -18,6 +18,7 @@ const bankValues = {
   bankPostal: '07106',
 };
 const walletValues = {
+  phoneNumber: '+15555550123',
   walletPaymentHandle: '$truck',
   remittanceEmail: 'pay@example.com',
   currency: 'USD',
@@ -36,6 +37,7 @@ const validate = (body) => UserValidation.bankDetail.body.validate(body);
     walletPaymentHandle: '',
     accountHolderName: '',
   }).error);
+  assert.ok(validate({ paymentMethod, ...walletValues, phoneNumber: '' }).error);
 });
 
 ['ACH', 'CHECK'].forEach((paymentMethod) => {
@@ -52,6 +54,7 @@ const validate = (body) => UserValidation.bankDetail.body.validate(body);
     undefined,
   );
   assert.ok(validate({ paymentMethod, accountHolderName: 'Vendor Name' }).error);
+  assert.ok(validate({ paymentMethod, ...bankValues, phoneNumber: '' }).error);
 });
 assert.ok(validate({ paymentMethod: 'ACH', ...bankValues, phoneNumber: 'not a phone' }).error);
 assert.ok(validate({ paymentMethod: 'ACH', ...bankValues, swiftCode: 'bad' }).error);
