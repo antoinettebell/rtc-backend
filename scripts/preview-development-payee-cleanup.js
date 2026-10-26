@@ -126,9 +126,6 @@ const run = async () => {
     (truck) => !candidateUserIds.some((userId) => String(userId) === String(truck.userId?._id))
   );
 
-  if (unexpectedFoodTruckOwners.length) {
-    throw new Error('A non-retained food truck has an owner outside the approved deletion-candidate users. Cleanup preview stopped.');
-  }
 
   const foodTruckCleanupFilter = { _id: { $nin: keptFoodTruckIds } };
   const bankUserCleanupFilter = { userId: { $in: candidateUserIds } };
@@ -182,6 +179,18 @@ const run = async () => {
     inactive: Boolean(truck.inactive),
     foodTruckId: String(truck._id),
   })));
+  if (unexpectedFoodTruckOwners.length) {
+    console.log('\nREQUIRES A DECISION — FOOD TRUCKS NOT OWNED BY A DELETE-CANDIDATE USER');
+    console.table(unexpectedFoodTruckOwners.map((truck) => ({
+      foodTruck: truck.name,
+      owner: `${truck.userId?.firstName || ''} ${truck.userId?.lastName || ''}`.trim() || 'Missing user',
+      email: truck.userId?.email || 'Missing user',
+      ownerUserType: truck.userId?.userType || 'Unknown',
+      foodTruckId: String(truck._id),
+      ownerId: truck.userId?._id ? String(truck.userId._id) : 'Missing user',
+    })));
+    console.log('These records are excluded from any future delete operation until explicitly classified.');
+  }
 
   const labels = [
     'Food trucks',
