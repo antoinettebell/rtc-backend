@@ -152,8 +152,7 @@ module.exports = {
       phoneNumber: Joi.string()
         .trim()
         .pattern(/^\+?[0-9() .-]{7,25}$/)
-        .allow('', null)
-        .optional(),
+        .required(),
       walletPaymentHandle: Joi.string().trim().allow('', null).optional(),
       paymentMethod: Joi.string()
         .valid('CASHAPP', 'PAYPAL', 'VENMO', 'ACH', 'CHECK')
