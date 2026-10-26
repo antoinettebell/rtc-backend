@@ -17,7 +17,7 @@ const TARGET = Object.freeze({
   name: 'Developer Testing',
   userType: 'VENDOR',
   vendorSubtype: 'FOOD_VENDOR',
-  foodTruckName: 'Doggy Hotties',
+  foodTruckName: 'Doggy Hotdogs',
 });
 
 const normalizedName = (user) =>
@@ -62,7 +62,7 @@ const run = async () => {
       inactive: Boolean(truck.inactive),
       createdAt: truck.createdAt || null,
     })));
-    throw new Error('Expected exactly one Doggy Hotties food truck for this account. No data was changed.');
+    throw new Error('Expected exactly one Doggy Hotdogs food truck for this account. No data was changed.');
   }
 
   const foodTruck = foodTrucks[0];
