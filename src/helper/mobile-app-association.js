@@ -1,7 +1,13 @@
-const CUSTOMER_IOS_APP_ID =
+const CUSTOMER_IOS_APP_ID = '5G26GFF98P.com.ea.rtcuser';
+const LEGACY_CUSTOMER_IOS_APP_ID =
   '5G26GFF98P.com.rounddacorner.dev.customer';
-const CUSTOMER_ANDROID_PACKAGE = 'com.rounddacorner.dev.customer';
+const CUSTOMER_ANDROID_PACKAGE = 'com.ea.rtcuser';
 const CUSTOMER_ANDROID_CERTIFICATES = [
+  // Google Play app-signing certificate for the production Customer app.
+  '25:04:1E:97:01:02:5F:C2:62:CF:9D:33:DE:D0:55:60:2D:58:E6:8A:41:52:10:D7:B5:CE:59:8A:C3:0A:D4:0F',
+];
+const LEGACY_CUSTOMER_ANDROID_PACKAGE = 'com.rounddacorner.dev.customer';
+const LEGACY_CUSTOMER_ANDROID_CERTIFICATES = [
   // Direct development builds.
   'FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C',
   // Signed release builds produced by the repository release keystore.
@@ -16,6 +22,10 @@ const appleAppSiteAssociation = {
         appID: CUSTOMER_IOS_APP_ID,
         paths: ['/events/*', '/event-share/*'],
       },
+      {
+        appID: LEGACY_CUSTOMER_IOS_APP_ID,
+        paths: ['/events/*', '/event-share/*'],
+      },
     ],
   },
 };
@@ -27,6 +37,14 @@ const androidAssetLinks = [
       namespace: 'android_app',
       package_name: CUSTOMER_ANDROID_PACKAGE,
       sha256_cert_fingerprints: CUSTOMER_ANDROID_CERTIFICATES,
+    },
+  },
+  {
+    relation: ['delegate_permission/common.handle_all_urls'],
+    target: {
+      namespace: 'android_app',
+      package_name: LEGACY_CUSTOMER_ANDROID_PACKAGE,
+      sha256_cert_fingerprints: LEGACY_CUSTOMER_ANDROID_CERTIFICATES,
     },
   },
 ];
@@ -50,8 +68,11 @@ const sendAndroidAssetLinks = (req, res) => {
 
 module.exports = {
   CUSTOMER_IOS_APP_ID,
+  LEGACY_CUSTOMER_IOS_APP_ID,
   CUSTOMER_ANDROID_PACKAGE,
   CUSTOMER_ANDROID_CERTIFICATES,
+  LEGACY_CUSTOMER_ANDROID_PACKAGE,
+  LEGACY_CUSTOMER_ANDROID_CERTIFICATES,
   appleAppSiteAssociation,
   androidAssetLinks,
   sendAppleAppSiteAssociation,
