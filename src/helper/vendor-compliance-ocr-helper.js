@@ -20,7 +20,7 @@ const enqueueComplianceOcr = async ({ document, requirement, callbackType = null
       headers['x-functions-key'] = process.env.COMPLIANCE_OCR_API_KEY;
     }
 
-    axios.post(
+    await axios.post(
       process.env.COMPLIANCE_OCR_ENDPOINT,
       {
         document_id: document.document_id,
@@ -41,23 +41,22 @@ const enqueueComplianceOcr = async ({ document, requirement, callbackType = null
         timeout: Number(process.env.COMPLIANCE_OCR_TIMEOUT_MS || 60000),
         headers,
       }
-    ).catch((error) => {
-      console.error(
-        'Compliance OCR enqueue failed:',
-        document.document_id,
-        error?.response?.data || error.message || error
-      );
-    });
-
+    );
     return {
       ocr_status: 'queued',
       ocr_error_message: null,
       ocr_requested_at: new Date(),
     };
   } catch (error) {
+    console.error('Compliance OCR enqueue failed', {
+      document_id: document.document_id,
+      error_name: error?.name || null,
+      error_code: error?.code || null,
+      http_status: error?.response?.status || null,
+    });
     return {
       ocr_status: 'failed',
-      ocr_error_message: error.message || 'OCR request failed',
+      ocr_error_message: 'OCR could not be started. Please try again later.',
       ocr_requested_at: new Date(),
     };
   }
