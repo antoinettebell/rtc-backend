@@ -4,6 +4,17 @@ const { aws } = require('../config');
 const isOcrEnabled = () =>
   String(process.env.COMPLIANCE_OCR_ENABLED || 'false').toLowerCase() === 'true';
 
+const normalizeOcrCallbackEnvironment = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['production', 'prod'].includes(normalized)) return 'production';
+  if (['development', 'dev'].includes(normalized)) return 'development';
+  return null;
+};
+
+const getOcrCallbackEnvironment = () =>
+  normalizeOcrCallbackEnvironment(process.env.COMPLIANCE_OCR_CALLBACK_ENVIRONMENT) ||
+  normalizeOcrCallbackEnvironment(process.env.NODE_ENV);
+
 const enqueueComplianceOcr = async ({ document, requirement, callbackType = null }) => {
   if (!isOcrEnabled() || !process.env.COMPLIANCE_OCR_ENDPOINT) {
     return {
@@ -14,6 +25,7 @@ const enqueueComplianceOcr = async ({ document, requirement, callbackType = null
   }
 
   try {
+    const callbackEnvironment = getOcrCallbackEnvironment();
     const headers = {};
     if (process.env.COMPLIANCE_OCR_API_KEY) {
       headers.Authorization = `Bearer ${process.env.COMPLIANCE_OCR_API_KEY}`;
@@ -36,6 +48,7 @@ const enqueueComplianceOcr = async ({ document, requirement, callbackType = null
         bucket: aws.s3Bucket,
         expected_fields: requirement?.ocrFields || [],
         ...(callbackType ? { callback_type: callbackType } : {}),
+        ...(callbackEnvironment ? { callback_environment: callbackEnvironment } : {}),
       },
       {
         timeout: Number(process.env.COMPLIANCE_OCR_TIMEOUT_MS || 60000),
@@ -65,5 +78,7 @@ const enqueueComplianceOcr = async ({ document, requirement, callbackType = null
 
 module.exports = {
   isOcrEnabled,
+  normalizeOcrCallbackEnvironment,
+  getOcrCallbackEnvironment,
   enqueueComplianceOcr,
 };

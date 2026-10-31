@@ -155,6 +155,21 @@ assert.match(
   'OCR submission must ignore an inactive legacy identity-document route'
 );
 
+const ocrHelperSource = fs.readFileSync(
+  path.join(__dirname, '../../helper/vendor-compliance-ocr-helper.js'),
+  'utf8'
+);
+assert.match(
+  ocrHelperSource,
+  /COMPLIANCE_OCR_CALLBACK_ENVIRONMENT/,
+  'OCR requests must label their configured runtime environment for callback selection'
+);
+assert.match(
+  ocrHelperSource,
+  /callback_environment: callbackEnvironment/,
+  'OCR requests must send only the normalized environment label, not an arbitrary callback URL'
+);
+
 const coordinatorSource = fs.readFileSync(
   path.join(__dirname, '../controllers/coordinator-compliance-controller.js'),
   'utf8'
