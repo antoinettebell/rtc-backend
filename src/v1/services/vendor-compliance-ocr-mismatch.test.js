@@ -141,8 +141,13 @@ assert.match(
 );
 assert.match(
   serviceSource,
-  /!isExplicitDocumentRetry && document\.ocr_status !== 'not_configured'/,
-  'Normal OCR submission must leave unchanged verified/reviewed documents untouched'
+  /const staleQueuedRequest =\s*document\.ocr_status === 'queued' && ocrRequestAgeMs >= 2 \* 60 \* 1000/,
+  'OCR submission must identify a queued handoff that has been stuck for two minutes'
+);
+assert.match(
+  serviceSource,
+  /!isExplicitDocumentRetry &&[\s\S]*document\.ocr_status !== 'not_configured' &&[\s\S]*!staleQueuedRequest/,
+  'Normal OCR submission must leave unchanged verified/reviewed documents untouched while allowing stale queued handoffs to retry'
 );
 assert.match(
   serviceSource,

@@ -1557,21 +1557,27 @@ const submitComplianceDocumentsForOcr = async ({ foodTruck, user, documentTypes 
       continue;
     }
 
-    // The normal save action submits only newly uploaded/failed documents.
-    // A completed or verified document stays untouched unless the vendor
-    // explicitly retries that individual document.
-    if (!isExplicitDocumentRetry && document.ocr_status !== 'not_configured') {
-      continue;
-    }
-
     const ocrRequestAgeMs = document.ocr_requested_at
       ? Date.now() - new Date(document.ocr_requested_at).getTime()
       : Number.POSITIVE_INFINITY;
     // A normal OCR request completes through the Function callback quickly.
-    // Permit an explicit user retry for a queue record that has been stuck for
-    // two minutes, while still preventing duplicate active submissions.
+    // Permit a normal Save & Run OCR retry for a queue record that has been
+    // stuck for two minutes, while still preventing duplicate active
+    // submissions.
     const staleQueuedRequest =
       document.ocr_status === 'queued' && ocrRequestAgeMs >= 2 * 60 * 1000;
+
+    // The normal save action submits newly uploaded documents, plus a queued
+    // request that is demonstrably stale. Completed or verified documents stay
+    // untouched unless the vendor explicitly retries that individual document.
+    if (
+      !isExplicitDocumentRetry &&
+      document.ocr_status !== 'not_configured' &&
+      !staleQueuedRequest
+    ) {
+      continue;
+    }
+
     if (['queued', 'processing'].includes(document.ocr_status) && !staleQueuedRequest) {
       submittedDocuments.push(document);
       continue;
