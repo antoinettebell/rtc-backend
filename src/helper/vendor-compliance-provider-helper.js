@@ -221,7 +221,9 @@ const startComplyCubeSsnCheck = async (foodTruck) => {
   if (!enabled() || !process.env.COMPLYCUBE_API_KEY) return null;
   const existing = await currentRecord({ foodTruck, provider: 'COMPLYCUBE', checkType: 'SSN' });
   if (existing?.status === 'PENDING') return refreshPendingComplyCubeCheck(existing);
-  if (activeOrTerminalRecord(existing)) return existing;
+  // A user-triggered verification action may retry a failed provider check.
+  // Keep a passed result final for the current verification cycle.
+  if (existing?.status === 'PASSED') return existing;
   const user = await UserModel.findById(foodTruck.userId).lean();
   const ssn = formatSsnForComplyCube(EncryptionService.decrypt(foodTruck.tax_identifier_encrypted));
   if (!ssn || !user?.firstName || !user?.lastName || !user?.email) throw new Error('SSN verification profile is incomplete');
@@ -263,7 +265,9 @@ const startCoordinatorComplyCubeSsnCheck = async ({ coordinator, profile }) => {
     check_type: 'SSN',
   }).exec();
   if (existing?.status === 'PENDING') return refreshPendingComplyCubeCheck(existing);
-  if (activeOrTerminalRecord(existing)) return existing;
+  // A user-triggered verification action may retry a failed provider check.
+  // Keep a passed result final for the current verification cycle.
+  if (existing?.status === 'PASSED') return existing;
   const name = coordinatorNameParts(profile.legal_name);
   const ssn = formatSsnForComplyCube(EncryptionService.decrypt(profile.tax_id_encrypted));
   if (!name || !ssn || !coordinator?.email) throw new Error('SSN verification profile is incomplete');
@@ -310,7 +314,11 @@ const startCobaltEinChecks = async (foodTruck, { checkType = null } = {}) => {
     currentRecord({ foodTruck, provider: 'COBALT', checkType: 'SOS' }),
   ]);
   const shouldStartTin = checkType !== 'SOS'
-    && (!activeOrTerminalRecord(existingTin) || stalePendingCobaltTin(existingTin));
+    && (
+      !activeOrTerminalRecord(existingTin)
+      || ['FAILED', 'RETRYABLE_ERROR', 'MANUAL_REVIEW'].includes(existingTin?.status)
+      || stalePendingCobaltTin(existingTin)
+    );
   // A failed SOS lookup is safe to retry on an explicit user action.  Do not
   // resend an active TIN request: Cobalt flags duplicate TIN submissions.
   // A pending check without a reference becomes retryable only after the
@@ -382,7 +390,11 @@ const startCoordinatorCobaltEinChecks = async ({ coordinator, profile, checkType
   }).exec();
   const [existingTin, existingSos] = await Promise.all([recordFor('TIN'), recordFor('SOS')]);
   const shouldStartTin = checkType !== 'SOS'
-    && (!activeOrTerminalRecord(existingTin) || stalePendingCobaltTin(existingTin));
+    && (
+      !activeOrTerminalRecord(existingTin)
+      || ['FAILED', 'RETRYABLE_ERROR', 'MANUAL_REVIEW'].includes(existingTin?.status)
+      || stalePendingCobaltTin(existingTin)
+    );
   const shouldStartSos = checkType !== 'TIN'
     && (!existingSos || ['FAILED', 'RETRYABLE_ERROR', 'MANUAL_REVIEW'].includes(existingSos.status));
   if (!shouldStartTin && !shouldStartSos) {
@@ -468,7 +480,9 @@ const startMarketplaceVendorComplyCubeSsnCheck = async ({ vendor, profile }) => 
     check_type: 'SSN',
   }).exec();
   if (existing?.status === 'PENDING') return refreshPendingComplyCubeCheck(existing);
-  if (activeOrTerminalRecord(existing)) return existing;
+  // A user-triggered verification action may retry a failed provider check.
+  // Keep a passed result final for the current verification cycle.
+  if (existing?.status === 'PASSED') return existing;
   // Marketplace Vendors use the same legal-name split required by the
   // existing coordinator ComplyCube SSN check. Keep the request shape and
   // validation identical; only the persistence model differs.
@@ -524,7 +538,11 @@ const startMarketplaceVendorCobaltEinChecks = async ({ vendor, profile, checkTyp
   }).exec();
   const [existingTin, existingSos] = await Promise.all([recordFor('TIN'), recordFor('SOS')]);
   const shouldStartTin = checkType !== 'SOS'
-    && (!activeOrTerminalRecord(existingTin) || stalePendingCobaltTin(existingTin));
+    && (
+      !activeOrTerminalRecord(existingTin)
+      || ['FAILED', 'RETRYABLE_ERROR', 'MANUAL_REVIEW'].includes(existingTin?.status)
+      || stalePendingCobaltTin(existingTin)
+    );
   const shouldStartSos = checkType !== 'TIN'
     && (!existingSos || ['FAILED', 'RETRYABLE_ERROR', 'MANUAL_REVIEW'].includes(existingSos.status));
   if (!shouldStartTin && !shouldStartSos) {

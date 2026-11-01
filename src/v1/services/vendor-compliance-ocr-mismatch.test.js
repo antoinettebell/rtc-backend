@@ -146,8 +146,8 @@ assert.match(
 );
 assert.match(
   serviceSource,
-  /!isExplicitDocumentRetry &&[\s\S]*document\.ocr_status !== 'not_configured' &&[\s\S]*!staleQueuedRequest/,
-  'Normal OCR submission must leave unchanged verified/reviewed documents untouched while allowing stale queued handoffs to retry'
+  /!isExplicitDocumentRetry &&[\s\S]*document\.ocr_status !== 'not_configured' &&[\s\S]*document\.ocr_status !== 'failed' &&[\s\S]*!staleQueuedRequest/,
+  'Normal OCR submission must retry failed or stale queued handoffs while leaving verified/reviewed documents untouched'
 );
 assert.match(
   serviceSource,
@@ -191,8 +191,8 @@ assert.match(
 );
 assert.match(
   coordinatorSource,
-  /record\.ocr_status === 'not_configured'/,
-  'Coordinator Save & Run OCR must continue to submit new evidence only'
+  /\['not_configured', 'failed'\]\.includes\(record\.ocr_status\)/,
+  'Coordinator Save & Run OCR must retry failed evidence as well as newly uploaded evidence'
 );
 assert.match(
   coordinatorSource,
@@ -203,6 +203,31 @@ assert.doesNotMatch(
   coordinatorSource,
   /w9Profile\.party_type !== 'BUSINESS'/,
   'Individual coordinator W-9 OCR must not be rejected as a business-only document'
+);
+
+const marketplaceSource = fs.readFileSync(
+  path.join(__dirname, '../controllers/marketplace-vendor-compliance-controller.js'),
+  'utf8'
+);
+assert.match(
+  marketplaceSource,
+  /\['not_configured', 'failed'\]\.includes\(record\.ocr_status\)/,
+  'Marketplace Save & Run OCR must retry failed evidence as well as newly uploaded evidence'
+);
+
+const providerHelperSource = fs.readFileSync(
+  path.join(__dirname, '../../helper/vendor-compliance-provider-helper.js'),
+  'utf8'
+);
+assert.match(
+  providerHelperSource,
+  /existing\?\.status === 'PASSED'\) return existing/,
+  'External verification retries must preserve a passed result for its current verification cycle'
+);
+assert.match(
+  providerHelperSource,
+  /\['FAILED', 'RETRYABLE_ERROR', 'MANUAL_REVIEW'\]\.includes\(existingTin\?\.status\)/,
+  'External TIN verification must allow a user-triggered retry after a failed or retryable result'
 );
 
 console.log('vendor compliance OCR mismatch tests passed');

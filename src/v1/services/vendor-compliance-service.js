@@ -1567,12 +1567,14 @@ const submitComplianceDocumentsForOcr = async ({ foodTruck, user, documentTypes 
     const staleQueuedRequest =
       document.ocr_status === 'queued' && ocrRequestAgeMs >= 2 * 60 * 1000;
 
-    // The normal save action submits newly uploaded documents, plus a queued
-    // request that is demonstrably stale. Completed or verified documents stay
+    // The normal save action submits newly uploaded documents, a queued
+    // request that is demonstrably stale, or a request that failed before a
+    // final OCR result was recorded. Completed or verified documents stay
     // untouched unless the vendor explicitly retries that individual document.
     if (
       !isExplicitDocumentRetry &&
       document.ocr_status !== 'not_configured' &&
+      document.ocr_status !== 'failed' &&
       !staleQueuedRequest
     ) {
       continue;

@@ -328,13 +328,12 @@ const enqueueCoordinatorW9Ocr = async (session) => {
   return session;
 };
 
-// Mirror the vendor lifecycle: normal Save & Run OCR submits new evidence
-// only, but may recover a request that has remained queued for two minutes.
-// This prevents duplicate active jobs while allowing a failed handoff to be
-// retried from the one shared save action.
+// Mirror the vendor lifecycle: normal Save & Run OCR submits new evidence,
+// retries a failed handoff, and may recover a request that has remained queued
+// for two minutes. Active work remains protected from duplicate submissions.
 const shouldSubmitCoordinatorOcr = (record) => {
   if (!record) return false;
-  if (record.ocr_status === 'not_configured') return true;
+  if (['not_configured', 'failed'].includes(record.ocr_status)) return true;
   if (record.ocr_status !== 'queued') return false;
   const requestedAt = record.ocr_requested_at
     ? new Date(record.ocr_requested_at).getTime()
