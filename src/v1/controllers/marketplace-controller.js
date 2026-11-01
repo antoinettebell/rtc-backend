@@ -2294,7 +2294,7 @@ const decorateRepositoryFiles = async (attachments = []) => {
 };
 
 const getVendorMarketplaceFoodTruck = async (userId, options = {}) => {
-  const { enforceCompliance = true } = options;
+  const { enforceCompliance = true, allowMissingCoiForBrowse = false } = options;
   const vendorUser = await UserService.getById(userId);
   if (
     !vendorUser ||
@@ -2327,8 +2327,11 @@ const getVendorMarketplaceFoodTruck = async (userId, options = {}) => {
 
   if (enforceCompliance) {
     const summary = await VendorComplianceService.calculateComplianceSummary(foodTruck);
-    if (!summary.eligible || !summary.can_bid) {
-      const error = buildError(summary.message || 'Please update your compliance paperwork.', 409);
+    if (!summary.eligible || (!summary.can_bid && !allowMissingCoiForBrowse)) {
+      const message = summary.eligible && !summary.can_bid
+        ? 'A verified, unexpired Certificate of Insurance is required before submitting a marketplace bid or application.'
+        : summary.message || 'Please update your compliance paperwork.';
+      const error = buildError(message, 409);
       error.compliance = summary;
       throw error;
     }
@@ -5647,7 +5650,10 @@ exports.getOpenEvents = async (req, res, next) => {
       throw buildError('Only vendors can view open marketplace events', 403);
     }
 
-    await getVendorMarketplaceFoodTruck(req.user._id);
+    const foodTruck = await getVendorMarketplaceFoodTruck(req.user._id, {
+      allowMissingCoiForBrowse: true,
+    });
+    const compliance = await VendorComplianceService.calculateComplianceSummary(foodTruck);
     await closeExpiredMarketplaceEvents();
 
     const [vendorBids, vendorApplications] = await Promise.all([
@@ -5720,6 +5726,12 @@ exports.getOpenEvents = async (req, res, next) => {
         total,
         page,
         totalPages: Math.max(1, Math.ceil(total / limit)),
+        marketplaceEligibility: {
+          canApply: compliance.can_bid === true,
+          message: compliance.can_bid
+            ? null
+            : 'A verified, unexpired Certificate of Insurance is required before submitting a marketplace bid or application.',
+        },
       },
       'Open marketplace events'
     );

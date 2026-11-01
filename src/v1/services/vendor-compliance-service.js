@@ -197,6 +197,11 @@ const getInternalCoreDocumentTypes = (foodTruck = {}) => [
 
 const AUTOMATED_IDENTITY_DOCUMENT_TYPES = ['BUSINESS_LICENSE', 'DRIVER_LICENSE_FRONT'];
 const AUTOMATED_CORE_DOCUMENT_TYPES = [...AUTOMATED_IDENTITY_DOCUMENT_TYPES, 'W9'];
+// COI is a marketplace-specific eligibility document. It is intentionally
+// outside the 100% legal-payee score, but still uses the same OCR handoff and
+// verification workflow before a vendor may submit a marketplace bid or
+// application.
+const AUTOMATED_OCR_DOCUMENT_TYPES = [...AUTOMATED_CORE_DOCUMENT_TYPES, 'COI'];
 
 const getVerificationCycle = (foodTruck = {}) =>
   Math.max(1, Number(foodTruck.compliance_verification_cycle || 1));
@@ -1250,10 +1255,10 @@ const uploadComplianceDocument = async ({
 
   const isSanitationGrade = documentType === 'HEALTH_PERMIT';
   // A unit's operating permit is a recordkeeping/review document, never a
-  // second identity document.  OCR and core-compliance processing apply only
-  // to legal-payee uploads.
-  const automatedCoreDocument = documentScope === 'PAYEE' &&
-    AUTOMATED_CORE_DOCUMENT_TYPES.includes(documentType);
+  // second identity document. OCR applies only to legal-payee uploads,
+  // including the marketplace-specific COI.
+  const automatedOcrDocument = documentScope === 'PAYEE' &&
+    AUTOMATED_OCR_DOCUMENT_TYPES.includes(documentType);
   const adminRequestedPendingReview =
     user.userType === 'SUPER_ADMIN' && body.review_status === 'pending_review';
   const vendorEnteredIssueDate = asDate(body.issue_date);
@@ -1282,18 +1287,18 @@ const uploadComplianceDocument = async ({
     extracted_fields: {},
     uploaded_by_user_id: user._id,
     review_status:
-      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview && !automatedCoreDocument
+      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview && !automatedOcrDocument
         ? 'verified'
         : 'pending_review',
     reviewed_by_user_id:
-      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview && !automatedCoreDocument
+      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview && !automatedOcrDocument
         ? user._id
         : null,
     reviewed_at:
-      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview && !automatedCoreDocument
+      user.userType === 'SUPER_ADMIN' && !adminRequestedPendingReview && !automatedOcrDocument
         ? new Date()
         : null,
-    ocr_status: user.userType === 'SUPER_ADMIN' && !automatedCoreDocument ? 'not_configured' : undefined,
+    ocr_status: user.userType === 'SUPER_ADMIN' && !automatedOcrDocument ? 'not_configured' : undefined,
   });
 
   const manualSanitationGrade = getManualSanitationGrade(body);
@@ -1545,12 +1550,16 @@ const submitComplianceDocumentsForOcr = async ({ foodTruck, user, documentTypes 
   for (const document of Object.values(latestByType)) {
     const requirement = getComplianceRequirement(document.document_type);
     if (!requirement) continue;
-    if (!AUTOMATED_CORE_DOCUMENT_TYPES.includes(document.document_type)) continue;
+    if (!AUTOMATED_OCR_DOCUMENT_TYPES.includes(document.document_type)) continue;
     // A legal payee has exactly one active identity route. A saved EIN means
     // Business License + W-9; a saved SSN means Driver License + W-9. Older
     // inactive identity uploads remain retained for audit/history but never
     // enter a new OCR run or affect current compliance.
-    if (document.document_type !== 'W9' && document.document_type !== requiredIdentityDocumentType) {
+    if (
+      document.document_type !== 'W9' &&
+      document.document_type !== 'COI' &&
+      document.document_type !== requiredIdentityDocumentType
+    ) {
       continue;
     }
     if (isExplicitDocumentRetry && !requestedDocumentTypes.has(document.document_type)) {
@@ -1637,10 +1646,10 @@ const reviewComplianceDocument = async ({
 
   if (
     reviewStatus === 'verified' &&
-    AUTOMATED_CORE_DOCUMENT_TYPES.includes(document.document_type)
+    AUTOMATED_OCR_DOCUMENT_TYPES.includes(document.document_type)
   ) {
     throw buildComplianceError(
-      'This core compliance document is verified only by the automated OCR and profile-matching workflow.',
+      'This compliance document is verified only by the automated OCR and profile-matching workflow.',
       409
     );
   }

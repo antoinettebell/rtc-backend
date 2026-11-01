@@ -151,8 +151,13 @@ assert.match(
 );
 assert.match(
   serviceSource,
-  /document\.document_type !== 'W9' && document\.document_type !== requiredIdentityDocumentType/,
-  'OCR submission must ignore an inactive legacy identity-document route'
+  /const AUTOMATED_OCR_DOCUMENT_TYPES = \[\.\.\.AUTOMATED_CORE_DOCUMENT_TYPES, 'COI'\]/,
+  'COI must use the same automated OCR handoff without becoming a core-score document'
+);
+assert.match(
+  serviceSource,
+  /document\.document_type !== 'W9'[\s\S]*document\.document_type !== 'COI'[\s\S]*document\.document_type !== requiredIdentityDocumentType/,
+  'OCR submission must process COI while ignoring an inactive legacy identity-document route'
 );
 
 const ocrHelperSource = fs.readFileSync(

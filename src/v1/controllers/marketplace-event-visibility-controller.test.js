@@ -694,6 +694,26 @@ const runFoodVendorTests = async () => {
 
 	{
 		const state = createFoodState();
+		addFoodVendor(state, 'coi-required', {
+			compliance: { eligible: true, can_bid: false, message: 'Vendor core compliance is complete.' },
+		});
+		state.events.push(makeFoodEvent('food-event'));
+		const controller = loadMarketplaceController(state);
+		const browse = await runController(controller.getOpenEvents, foodRequest('coi-required'));
+		assert.equal(browse.error, undefined);
+		assert.deepStrictEqual(browse.response.payload.marketplaceEventList.map((event) => event.event_id), ['food-event']);
+		assert.equal(browse.response.payload.marketplaceEligibility.canApply, false);
+		assert.match(browse.response.payload.marketplaceEligibility.message, /Certificate of Insurance/);
+		const submit = await runController(controller.submitBid, foodRequest('coi-required', {
+			params: { eventId: 'food-event' },
+			body: { amount: 100 },
+		}));
+		assert.equal(submit.error && submit.error.code, 409);
+		assert.match(submit.error.message, /Certificate of Insurance/);
+	}
+
+	{
+		const state = createFoodState();
 		addFoodVendor(state, 'not-selected');
 		state.events.push(makeFoodEvent('application-event'));
 		state.applications.push({
