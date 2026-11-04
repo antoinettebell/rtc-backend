@@ -14,6 +14,7 @@ const queryResult = (value) => ({
 
 let completedOrder = null;
 let searchResults = [];
+let searchError = null;
 let sentNotification = null;
 const updates = [];
 
@@ -46,7 +47,10 @@ mockModule('./custom-notification', {
 });
 mockModule('./cybersource-payment-helper', {
   APPROVED_STATUSES: new Set(['AUTHORIZED', 'SETTLED']),
-  searchTransactionsByReference: async () => searchResults,
+  searchTransactionsByReference: async () => {
+    if (searchError) throw searchError;
+    return searchResults;
+  },
 });
 
 const {
@@ -88,6 +92,14 @@ const attempt = {
   const noProviderResult = await reconcileTapToPayAttempt(attempt);
   assert.strictEqual(noProviderResult.status, 'RETRY');
   assert.strictEqual(sentNotification, null);
+
+  searchError = Object.assign(new Error('CyberSource connection reset'), {
+    code: 'ECONNRESET',
+  });
+  const transportFailure = await reconcileTapToPayAttempt(attempt);
+  assert.strictEqual(transportFailure.status, 'RETRY');
+  assert.strictEqual(sentNotification, null);
+  searchError = null;
 
   searchResults = [{ id: 'txn-declined', status: 'DECLINED' }];
   sentNotification = null;

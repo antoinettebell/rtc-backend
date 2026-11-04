@@ -5,6 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "nodemon src/app.js",
+    "postinstall": "node scripts/apply-cybersource-sdk-guard.js",
+    "test:cybersource-guard": "node scripts/apply-cybersource-sdk-guard.js && node src/helper/tap-to-pay-interruption-helper.test.js",
     "test:earnings": "node src/helper/vendor-earnings-helper.test.js && node src/helper/vendor-sales-summary-helper.test.js",
     "test:plans": "node src/helper/vendor-plan-helper.test.js",
     "test:sms": "node src/helper/sms-helper.test.js",
