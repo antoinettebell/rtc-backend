@@ -53,7 +53,12 @@ const {
   roundCurrency,
 } = require('../../helper/order-bogo-pricing-helper');
 const VendorComplianceService = require('../services/vendor-compliance-service');
-const { OrderModel, TapToPayPaymentAttemptModel, CustomerOrderSupportIssueModel } = require('../../models');
+const {
+  OrderModel,
+  TapToPayPaymentAttemptModel,
+  TapToPayTerminalModel,
+  CustomerOrderSupportIssueModel,
+} = require('../../models');
 const {
   SUPPORT_PHONE_NUMBER,
   ROLLING_WINDOW_MS,
@@ -3874,6 +3879,7 @@ exports.add = async (req, res, next) => {
         invoiceNumber = null,
         accountNumber = null,
         accountType = null,
+        tapToPayDeviceId = null,
         tapToPayAttemptId = null,
         locationId,
         couponId,
@@ -4398,6 +4404,8 @@ exports.add = async (req, res, next) => {
     total = roundCurrency(total + normalizedFoodTruckTip);
 
     let tapToPayAttempt = null;
+    let verifiedTapToPayTransaction = null;
+    let verifiedTapToPayTerminal = null;
     if (vendorPosOrder && normalizedPaymentMethod === 'TAP_TO_PAY') {
       tapToPayAttempt = await TapToPayPaymentAttemptModel.findOne({
         _id: tapToPayAttemptId,
@@ -4509,7 +4517,7 @@ exports.add = async (req, res, next) => {
       }
 
       try {
-        await CyberSourcePaymentHelper.verifyTransaction({
+        verifiedTapToPayTransaction = await CyberSourcePaymentHelper.verifyTransaction({
           transactionId: nativeTransactionId,
           expectedAmount: total,
           expectedCurrency: 'USD',
@@ -4534,6 +4542,24 @@ exports.add = async (req, res, next) => {
           new Error('Tap to Pay could not be verified with the payment processor.'),
           502
         );
+      }
+
+      const normalizedDeviceId = String(tapToPayDeviceId || '').trim();
+      if (normalizedDeviceId) {
+        try {
+          verifiedTapToPayTerminal = await TapToPayTerminalModel.findOne({
+            food_truck_id: foodTruck._id,
+            device_id: normalizedDeviceId,
+            status: 'ACTIVE',
+          })
+            .select('_id device_id')
+            .lean();
+        } catch (terminalLookupError) {
+          // A reconciliation snapshot must never reject a verified payment.
+          console.warn('Tap to Pay terminal snapshot lookup failed', {
+            code: terminalLookupError?.code || null,
+          });
+        }
       }
     }
 
@@ -4628,10 +4654,15 @@ exports.add = async (req, res, next) => {
       paymentMethod: normalizedPaymentMethod,
       paymentStatus: normalizedPaymentStatus,
       transactionId,
-      authCode,
+      authCode: verifiedTapToPayTransaction?.authCode || authCode,
       invoiceNumber,
       accountNumber,
       accountType,
+      cybersourceNetworkTransactionId:
+        verifiedTapToPayTransaction?.networkTransactionId || null,
+      cybersourceTerminalId: verifiedTapToPayTransaction?.terminalId || null,
+      tapToPayDeviceId: verifiedTapToPayTerminal?.device_id || null,
+      tapToPayTerminalRecordId: verifiedTapToPayTerminal?._id || null,
       statusTime: buildInitialStatusTime(initialOrderStatus),
     });
 

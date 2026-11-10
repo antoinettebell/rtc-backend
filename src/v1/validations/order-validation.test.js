@@ -29,10 +29,12 @@ test('Tap to Pay orders accept the provider transaction ID without an auth code'
     ...validOrder,
     paymentMethod: 'TAP_TO_PAY',
     tapToPayAttemptId: 'attempt-1',
+    tapToPayDeviceId: 'registered-device-1',
   });
 
   assert.equal(value.transactionId, 'tap-transaction-1');
   assert.equal(value.authCode, undefined);
+  assert.equal(value.tapToPayDeviceId, 'registered-device-1');
 });
 
 test('Tap to Pay orders accept unavailable optional native provider metadata', async () => {

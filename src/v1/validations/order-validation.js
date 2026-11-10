@@ -82,6 +82,7 @@ module.exports = {
       invoiceNumber: Joi.string().optional().allow(null, ''),
       accountNumber: Joi.string().optional().allow(null, ''),
       accountType: Joi.string().optional().allow(null, ''),
+      tapToPayDeviceId: Joi.string().max(256).optional().allow(null, ''),
       tapToPayAttemptId: Joi.string().when('paymentMethod', {
         is: 'TAP_TO_PAY',
         then: Joi.string().required(),

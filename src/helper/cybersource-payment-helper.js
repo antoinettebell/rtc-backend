@@ -197,6 +197,13 @@ const normalizeTransaction = (transaction = {}) => {
     currency: String(amountDetails.currency || amountDetails.settlementCurrency || '').toUpperCase(),
     reference: String(transaction.clientReferenceInformation?.code || ''),
     authCode: String(transaction.processorInformation?.approvalCode || '') || null,
+    networkTransactionId:
+      String(
+        transaction.processorInformation?.networkTransactionId ||
+          transaction.processorInformation?.transactionId ||
+          ''
+      ) || null,
+    terminalId: String(transaction.pointOfSaleInformation?.terminalId || '') || null,
     accountNumber: accountSuffix ? `XXXX${accountSuffix}` : null,
     accountType: String(card.brandName || card.type || '').toUpperCase() || null,
     reasonCode:

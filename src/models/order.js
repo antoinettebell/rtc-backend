@@ -484,6 +484,28 @@ const mSchema = mongoose.Schema(
       type: String,
       default: null,
     },
+    // Processor-supplied reconciliation identifiers. These are written only
+    // after the backend verifies a completed Tap to Pay transaction.
+    cybersourceNetworkTransactionId: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    cybersourceTerminalId: {
+      type: String,
+      default: null,
+    },
+    // RTC's registered device record; this is not represented as CyberSource's
+    // portal-only terminal serial number.
+    tapToPayDeviceId: {
+      type: String,
+      default: null,
+    },
+    tapToPayTerminalRecordId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'tap_to_pay_terminals',
+      default: null,
+    },
     accountNumber: {
       type: String,
       default: null,

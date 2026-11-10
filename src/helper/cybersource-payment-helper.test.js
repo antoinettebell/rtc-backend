@@ -59,7 +59,11 @@ const restoreEnvironment = () => {
             amountDetails: { totalAmount: '125.50', currency: 'USD' },
           },
           clientReferenceInformation: { code: 'payment-123' },
-          processorInformation: { approvalCode: 'A12345' },
+          processorInformation: {
+            approvalCode: 'A12345',
+            networkTransactionId: 'network-transaction-123',
+          },
+          pointOfSaleInformation: { terminalId: 'terminal-123' },
           paymentInformation: {
             card: { suffix: '1516', brandName: 'Visa' },
           },
@@ -70,6 +74,8 @@ const restoreEnvironment = () => {
     );
     assert.strictEqual(verified.id, 'txn-123');
     assert.strictEqual(verified.authCode, 'A12345');
+    assert.strictEqual(verified.networkTransactionId, 'network-transaction-123');
+    assert.strictEqual(verified.terminalId, 'terminal-123');
     assert.strictEqual(verified.accountNumber, 'XXXX1516');
     assert.strictEqual(verified.accountType, 'VISA');
     assert.strictEqual(verified.reasonCode, '100');
