@@ -966,7 +966,7 @@ exports.awardApplication = async (req, res, next) => {
       event_id: event.event_id, application_id: application.application_id,
       payer_user_id: application.vendor_user_id, payer_type: 'VENDOR',
       payment_type: 'VENDOR_EVENT_FEE', base_amount: subtotal,
-      fee_rate: 3.5, fee_amount: fee, total_amount: Math.round((subtotal + fee) * 100) / 100,
+      fee_rate: 0, fee_amount: fee, total_amount: Math.round((subtotal + fee) * 100) / 100,
       coordinator_payout_amount: subtotal, payment_status: 'PENDING',
     });
     application.status = 'PAYMENT_DUE'; application.payment_id = payment.payment_id; await application.save();

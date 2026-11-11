@@ -4487,7 +4487,7 @@ const applyEventVendorApplicationSelections = async (
         payer_type: 'VENDOR',
         payment_type: 'VENDOR_EVENT_FEE',
         base_amount: subtotal,
-        fee_rate: 3.5,
+        fee_rate: 0,
         fee_amount: fee,
         total_amount: roundMoney(subtotal + fee),
         coordinator_payout_amount: subtotal,
