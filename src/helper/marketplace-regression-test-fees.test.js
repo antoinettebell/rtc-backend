@@ -11,8 +11,8 @@ const {
 assert.equal(COORDINATOR_AWARD_FEE_RATE, 0.035);
 assert.equal(FINAL_EVENT_PAYMENT_FEE_RATE, 0.035);
 assert.equal(getCoordinatorAwardFeeAmount(4000), 140);
-assert.equal(getCustomerTicketProcessingFeeAmount(100), 0.01);
-assert.equal(getMarketplaceVendorApplicationCheckoutFeeAmount(60), 0.01);
+assert.equal(getCustomerTicketProcessingFeeAmount(100), 0);
+assert.equal(getMarketplaceVendorApplicationCheckoutFeeAmount(60), 0);
 
 const awardedBid = { full_bid_amount: 1000 };
 assert.deepEqual(getFinalEventPaymentAmounts(awardedBid.full_bid_amount, 25), {

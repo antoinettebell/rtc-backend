@@ -8,13 +8,14 @@ const FINAL_EVENT_PAYMENT_FEE_RATE = 0.035;
 const getCoordinatorAwardFeeAmount = (baseAmount) =>
   roundMoney(baseAmount * COORDINATOR_AWARD_FEE_RATE);
 
-// Marketplace Vendor application checkout fee.
+// Marketplace Vendor application checkout has no platform surcharge. The
+// vendor pays the event's configured fee exactly as entered.
 const getMarketplaceVendorApplicationCheckoutFeeAmount = () =>
-  0.01;
+  0;
 
-// Customer ticket processing remains configured by the ticket-sales plan.
+// Customer ticket checkout has no default processing surcharge.
 const getCustomerTicketProcessingFeeAmount = () =>
-  0.01;
+  0;
 
 // The coordinator pays the final awarded amount and optional tip. RTC retains
 // the 3.5% POS fee, so that fee is excluded from the vendor payout.
