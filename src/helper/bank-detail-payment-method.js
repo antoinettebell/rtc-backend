@@ -1,4 +1,7 @@
-const BANK_METHODS = ['ACH', 'CHECK'];
+// Every available payout method requires the supporting bank details.  The
+// selected payout method is still preserved; Cash App, PayPal, and Venmo are
+// not converted to ACH.
+const BANK_METHODS = ['ACH', 'CHECK', 'CASHAPP', 'PAYPAL', 'VENMO'];
 const REMITTANCE_METHODS = ['CASHAPP', 'PAYPAL', 'VENMO'];
 
 const buildBankDetailUpdate = (values) => {

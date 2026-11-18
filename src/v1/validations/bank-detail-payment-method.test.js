@@ -28,7 +28,8 @@ const walletValues = {
 const validate = (body) => UserValidation.bankDetail.body.validate(body);
 
 ['CASHAPP', 'PAYPAL', 'VENMO'].forEach((paymentMethod) => {
-  assert.equal(validate({ paymentMethod, ...walletValues }).error, undefined);
+  assert.equal(validate({ paymentMethod, ...bankValues, ...walletValues }).error, undefined);
+  assert.ok(validate({ paymentMethod, ...walletValues }).error);
   assert.ok(validate({ paymentMethod, ...walletValues, remittanceEmail: '' }).error);
   assert.ok(validate({ paymentMethod, ...walletValues, currency: '' }).error);
   assert.ok(validate({
@@ -67,8 +68,8 @@ const walletUpdate = buildBankDetailUpdate({
 });
 assert.equal(walletUpdate.remittanceEmail, walletValues.remittanceEmail);
 assert.equal(walletUpdate.walletPaymentHandle, '$truck');
-assert.equal('accountHolderName' in walletUpdate, false);
-assert.equal('bankName' in walletUpdate, false);
+assert.equal(walletUpdate.accountHolderName, bankValues.accountHolderName);
+assert.equal(walletUpdate.bankName, bankValues.bankName);
 const bankUpdate = buildBankDetailUpdate({
   ...allValues,
   paymentMethod: 'ACH',

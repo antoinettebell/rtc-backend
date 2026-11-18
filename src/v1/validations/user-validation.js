@@ -145,7 +145,7 @@ module.exports = {
   bankDetail: {
     body: Joi.object({
       accountHolderName: Joi.when('paymentMethod', {
-        is: Joi.valid('ACH', 'CHECK'),
+        is: Joi.valid('ACH', 'CHECK', 'CASHAPP', 'PAYPAL', 'VENMO'),
         then: Joi.string().trim().required(),
         otherwise: Joi.string().trim().allow('', null).optional(),
       }),
@@ -163,22 +163,22 @@ module.exports = {
         otherwise: Joi.string().allow('', null).optional(),
       }),
       bankName: Joi.when('paymentMethod', {
-        is: Joi.valid('ACH', 'CHECK'),
+        is: Joi.valid('ACH', 'CHECK', 'CASHAPP', 'PAYPAL', 'VENMO'),
         then: Joi.string().required(),
         otherwise: Joi.string().allow('').optional(),
       }),
       accountNumber: Joi.when('paymentMethod', {
-        is: Joi.valid('ACH', 'CHECK'),
+        is: Joi.valid('ACH', 'CHECK', 'CASHAPP', 'PAYPAL', 'VENMO'),
         then: Joi.string().min(8).required(),
         otherwise: Joi.string().allow('').optional(),
       }),
       routingNumber: Joi.when('paymentMethod', {
-        is: Joi.valid('ACH', 'CHECK'),
+        is: Joi.valid('ACH', 'CHECK', 'CASHAPP', 'PAYPAL', 'VENMO'),
         then: Joi.string().length(9).required(),
         otherwise: Joi.string().allow('').optional(),
       }),
       accountType: Joi.when('paymentMethod', {
-        is: Joi.valid('ACH', 'CHECK'),
+        is: Joi.valid('ACH', 'CHECK', 'CASHAPP', 'PAYPAL', 'VENMO'),
         then: Joi.string().valid('CHECKING', 'SAVINGS').required(),
         otherwise: Joi.string().allow('').optional(),
       }),
@@ -200,14 +200,14 @@ module.exports = {
       }),
 
       bankAddressLine1: Joi.when('paymentMethod', {
-        is: Joi.valid('ACH', 'CHECK'),
+        is: Joi.valid('ACH', 'CHECK', 'CASHAPP', 'PAYPAL', 'VENMO'),
         then: Joi.string().trim().required(),
         otherwise: Joi.string().allow('').optional(),
       }),
       bankAddressLine2: Joi.string().trim().allow('').optional(),
-      bankCity: Joi.when('paymentMethod', { is: Joi.valid('ACH', 'CHECK'), then: Joi.string().trim().required(), otherwise: Joi.string().allow('').optional() }),
-      bankState: Joi.when('paymentMethod', { is: Joi.valid('ACH', 'CHECK'), then: Joi.string().trim().required(), otherwise: Joi.string().allow('').optional() }),
-      bankPostal: Joi.when('paymentMethod', { is: Joi.valid('ACH', 'CHECK'), then: Joi.string().trim().required(), otherwise: Joi.string().allow('').optional() }),
+      bankCity: Joi.when('paymentMethod', { is: Joi.valid('ACH', 'CHECK', 'CASHAPP', 'PAYPAL', 'VENMO'), then: Joi.string().trim().required(), otherwise: Joi.string().allow('').optional() }),
+      bankState: Joi.when('paymentMethod', { is: Joi.valid('ACH', 'CHECK', 'CASHAPP', 'PAYPAL', 'VENMO'), then: Joi.string().trim().required(), otherwise: Joi.string().allow('').optional() }),
+      bankPostal: Joi.when('paymentMethod', { is: Joi.valid('ACH', 'CHECK', 'CASHAPP', 'PAYPAL', 'VENMO'), then: Joi.string().trim().required(), otherwise: Joi.string().allow('').optional() }),
 
       swiftCode: Joi.string().trim().uppercase()
         .pattern(/^[A-Z0-9]{8}([A-Z0-9]{3})?$/)
