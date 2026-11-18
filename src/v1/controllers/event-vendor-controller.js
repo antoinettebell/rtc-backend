@@ -1436,7 +1436,7 @@ exports.adminListProfiles = async (req, res, next) => {
     const query = buildAdminProfileQuery(status);
     const [profiles, total] = await Promise.all([
       EventVendorProfileModel.find(query)
-        .populate('vendor_user_id', 'firstName lastName email countryCode mobileNumber vendorSubtype requestStatus')
+        .populate('vendor_user_id', 'firstName lastName email countryCode mobileNumber vendorSubtype requestStatus referralCode')
         .sort({ submitted_at: -1, updated_at: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
@@ -1450,7 +1450,7 @@ exports.adminListProfiles = async (req, res, next) => {
 exports.adminGetProfile = async (req, res, next) => {
   try {
     const profile = await EventVendorProfileModel.findOne({ profile_id: req.params.profileId, status: 'ACTIVE' })
-      .populate('vendor_user_id', 'firstName lastName email countryCode mobileNumber vendorSubtype requestStatus')
+      .populate('vendor_user_id', 'firstName lastName email countryCode mobileNumber vendorSubtype requestStatus referralCode')
       .lean();
     if (!profile) throw error('Marketplace Vendor profile not found', 404);
     const photos = await EventVendorPhotoModel.find({

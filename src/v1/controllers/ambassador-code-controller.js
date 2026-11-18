@@ -1,4 +1,5 @@
 const { AmbassadorCodeService: Service } = require('../services');
+const { UserModel } = require('../../models');
 
 const normalizeCode = (value) => String(value || '').trim().toUpperCase();
 const publicCode = (item) => ({
@@ -92,6 +93,42 @@ exports.archive = async (req, res, next) => {
     item.isActive = false;
     await item.save();
     return res.data({ ambassadorCode: item }, 'Ambassador code archived');
+  } catch (error) {
+    return next(error);
+  }
+};
+
+// Admin-only attribution correction for accounts created without a referral
+// code. This is intentionally separate from the mobile-profile APIs.
+exports.assignToUser = async (req, res, next) => {
+  try {
+    const user = await UserModel.findById(req.params.userId);
+    if (!user || user.userType === 'SUPER_ADMIN') {
+      return res.error(new Error('Eligible vendor or event coordinator not found.'), 404);
+    }
+    if (user.userType !== 'VENDOR' && user.isEventCoordinator !== true) {
+      return res.error(new Error('Referral attribution is available only for vendors and event coordinators.'), 422);
+    }
+
+    const code = normalizeCode(req.body.referralCode);
+    if (!code) {
+      user.referralCode = null;
+      user.referralAmbassadorCodeId = null;
+      await user.save();
+      return res.data({ user }, 'Referral attribution cleared');
+    }
+
+    const ambassadorCode = await Service.getByData(
+      { code, isActive: true, deletedAt: null },
+      { singleResult: true }
+    );
+    if (!ambassadorCode) {
+      return res.error(new Error('Referral code is invalid or inactive.'), 409);
+    }
+    user.referralCode = ambassadorCode.code;
+    user.referralAmbassadorCodeId = ambassadorCode._id;
+    await user.save();
+    return res.data({ user, ambassador: publicCode(ambassadorCode) }, 'Referral attribution updated');
   } catch (error) {
     return next(error);
   }
