@@ -152,12 +152,25 @@ exports.add = async (req, res, next) => {
         eventCoordinatorAddressZip,
         eventCoordinatorFormattedAddress,
         eventCoordinatorPlaceId,
+        referralCode,
       },
       file,
     } = req;
 
     const customError = new Error();
     customError.code = 422;
+
+    const normalizedReferralCode = String(referralCode || '').trim().toUpperCase();
+    const referralAmbassador = normalizedReferralCode
+      ? await require('../services').AmbassadorCodeService.getByData(
+          { code: normalizedReferralCode, isActive: true, deletedAt: null },
+          { singleResult: true }
+        )
+      : null;
+    if (normalizedReferralCode && !referralAmbassador) {
+      customError.message = 'Referral code is invalid or inactive.';
+      throw customError;
+    }
 
     const emailDomain = email.split('@')[1];
 
@@ -248,6 +261,8 @@ exports.add = async (req, res, next) => {
       user.mobileNumber = mobileNumber;
       user.countryCode = countryCode;
       user.subscribedForOffGrid = subscribedForOffGrid;
+      user.referralCode = normalizedReferralCode || null;
+      user.referralAmbassadorCodeId = referralAmbassador?._id || null;
       user.isEventCoordinator = isEventCoordinator;
       Object.assign(user, coordinatorProfileFields);
       user.profilePic = profilePic || null;
@@ -264,6 +279,8 @@ exports.add = async (req, res, next) => {
         countryCode,
         profilePic: profilePic || null,
         subscribedForOffGrid: subscribedForOffGrid,
+        referralCode: normalizedReferralCode || null,
+        referralAmbassadorCodeId: referralAmbassador?._id || null,
         isEventCoordinator,
         ...coordinatorProfileFields,
         userType: 'CUSTOMER',
@@ -327,11 +344,24 @@ exports.addVendor = async (req, res, next) => {
         addressPostal,
         // mailing,
         subscribedForOffGrid = false,
+        referralCode,
       },
     } = req;
 
     const customError = new Error();
     customError.code = 422;
+
+    const normalizedReferralCode = String(referralCode || '').trim().toUpperCase();
+    const referralAmbassador = normalizedReferralCode
+      ? await require('../services').AmbassadorCodeService.getByData(
+          { code: normalizedReferralCode, isActive: true, deletedAt: null },
+          { singleResult: true }
+        )
+      : null;
+    if (normalizedReferralCode && !referralAmbassador) {
+      customError.message = 'Referral code is invalid or inactive.';
+      throw customError;
+    }
 
     const selectedPlan = planId ? await PlanModel.findById(planId).lean() : null;
     const resolvedVendorSubtype =
@@ -396,6 +426,8 @@ exports.addVendor = async (req, res, next) => {
       user.mobileNumber = mobileNumber;
       user.countryCode = countryCode;
       user.subscribedForOffGrid = subscribedForOffGrid;
+      user.referralCode = normalizedReferralCode || null;
+      user.referralAmbassadorCodeId = referralAmbassador?._id || null;
       user.profilePic = profilePic || null;
       user.vendorSubtype = resolvedVendorSubtype;
       user.eventVendorBusinessName = resolvedVendorSubtype === 'EVENT_VENDOR' ? eventVendorBusinessName : null;
@@ -412,6 +444,8 @@ exports.addVendor = async (req, res, next) => {
         countryCode,
         profilePic: profilePic || null,
         subscribedForOffGrid: subscribedForOffGrid,
+        referralCode: normalizedReferralCode || null,
+        referralAmbassadorCodeId: referralAmbassador?._id || null,
         userType: 'VENDOR',
         vendorSubtype: resolvedVendorSubtype,
         eventVendorBusinessName: resolvedVendorSubtype === 'EVENT_VENDOR' ? eventVendorBusinessName : null,

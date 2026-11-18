@@ -70,6 +70,9 @@ exports.CouponService = require('./coupon-service');
 /** Define coupon-usage service */
 exports.CouponUsageService = require('./coupon-usage-service');
 
+/** Define ambassador-code service */
+exports.AmbassadorCodeService = require('./ambassador-code-service');
+
 /** Define bank-detail service */
 exports.BankDetailService = require('./bank-detail-service');
 

@@ -45,6 +45,13 @@ const mSchema = mongoose.Schema(
       default: null,
       set: toPhoneDigits,
     },
+    referralCode: { type: String, default: null, trim: true, uppercase: true, index: true },
+    referralAmbassadorCodeId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'ambassador-codes',
+      default: null,
+      index: true,
+    },
     userType: {
       type: String,
       enum: ['SUPER_ADMIN', 'VENDOR', 'CUSTOMER'],

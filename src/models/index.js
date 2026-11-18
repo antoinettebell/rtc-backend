@@ -78,6 +78,7 @@ exports.CouponModel = require('./coupon');
 
 /** Define coupon-usage model */
 exports.CouponUsageModel = require('./coupon-usages');
+exports.AmbassadorCodeModel = require('./ambassador-code');
 
 /** Define bank-detail model */
 exports.BankDetailModel = require('./bank-detail');

@@ -45,6 +45,7 @@ exports.CommonDataListController = require('./common-data-list-controller');
 
 /** Define coupon controller */
 exports.CouponController = require('./coupon-controller');
+exports.AmbassadorCodeController = require('./ambassador-code-controller');
 
 /** Define review controller */
 exports.ReviewController = require('./review-controller');

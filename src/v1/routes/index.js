@@ -17,6 +17,7 @@ const dietRoutes = require('./diet');
 const categoriesRoutes = require('./categories');
 const fileRoutes = require('./file');
 const couponRoutes = require('./coupon');
+const ambassadorCodeRoutes = require('./ambassador-code');
 const reviewRoutes = require('./review');
 const taxRatesRoutes = require('./tax-rates');
 const meatRoutes = require('./meat');
@@ -88,6 +89,9 @@ router.use('/categories', categoriesRoutes);
 
 /** coupon routes */
 router.use('/coupon', couponRoutes);
+
+/** Admin-managed referral codes */
+router.use('/ambassador-code', ambassadorCodeRoutes);
 
 /** review routes */
 router.use('/review', reviewRoutes);

@@ -17,6 +17,7 @@ const {
   AddOnsController,
   MarketplaceController,
   MarketplaceTicketController,
+  AmbassadorCodeController,
 } = require('../controllers');
 const {
   FoodTruckValidation,
@@ -111,6 +112,9 @@ router.get('/agreement', SettingController.getAgreement);
 
 /** [GET] /api/v1/public/plan */
 router.get('/plan', PlanController.list);
+
+/** Validates an optional referral code before account registration. */
+router.get('/ambassador-code/validate', AmbassadorCodeController.validate);
 
 /** [GET] /api/v1/public/banner */
 router.get('/banner', BannerController.list);
