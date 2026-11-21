@@ -13,9 +13,9 @@ const getCoordinatorAwardFeeAmount = (baseAmount) =>
 const getMarketplaceVendorApplicationCheckoutFeeAmount = () =>
   0;
 
-// Customer ticket checkout has no default processing surcharge.
-const getCustomerTicketProcessingFeeAmount = () =>
-  0;
+// Customer ticket checkout includes the platform processing surcharge.
+const getCustomerTicketProcessingFeeAmount = (ticketSubtotal) =>
+  roundMoney(ticketSubtotal * COORDINATOR_AWARD_FEE_RATE);
 
 // The coordinator pays the final awarded amount and optional tip. RTC retains
 // the 3.5% POS fee, so that fee is excluded from the vendor payout.
